@@ -26,15 +26,16 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
+
       # ============================================================
-      # Source repository
+      # Checkout Ultron
       # ============================================================
 
       - name: Checkout Ultron
         uses: actions/checkout@v7
 
       # ============================================================
-      # Java
+      # Java 17
       # ============================================================
 
       - name: Setup Java 17
@@ -44,7 +45,7 @@ jobs:
           java-version: "17"
 
       # ============================================================
-      # Android SDK / NDK
+      # Android SDK
       # ============================================================
 
       - name: Setup Android SDK
@@ -64,11 +65,7 @@ jobs:
             "ndk;${ANDROID_NDK_VERSION}"
 
       # ============================================================
-      # Fresh dependency tree
-      #
-      # Important:
-      # The Ultron repository's own RmlUi is NOT modified.
-      # Dependencies are cloned into RUNNER_TEMP.
+      # Prepare fresh Android project + dependencies
       # ============================================================
 
       - name: Prepare Android project and dependencies
@@ -98,7 +95,8 @@ jobs:
             "${RUNNER_TEMP}/SDL/android-project" \
             "${ANDROID_PROJECT}"
 
-          rm -rf "${ANDROID_PROJECT}/app/jni/SDL"
+          rm -rf \
+            "${ANDROID_PROJECT}/app/jni/SDL"
 
           git clone \
             --depth 1 \
@@ -136,8 +134,7 @@ jobs:
             "https://github.com/mikke89/RmlUi.git" \
             "${ANDROID_PROJECT}/app/jni/RmlUi"
 
-          # No need to keep dependency git metadata in the temporary
-          # Android project.
+          # Remove git metadata from temporary dependency copies.
           rm -rf \
             "${ANDROID_PROJECT}/app/jni/SDL/.git" \
             "${ANDROID_PROJECT}/app/jni/SDL_image/.git" \
@@ -147,7 +144,7 @@ jobs:
           echo "ANDROID_PROJECT=${ANDROID_PROJECT}" >> "${GITHUB_ENV}"
 
       # ============================================================
-      # Android project configuration
+      # Configure Android project
       # ============================================================
 
       - name: Configure Android project
@@ -180,7 +177,7 @@ jobs:
             "${ANDROID_PROJECT}/app/build.gradle"
 
           # --------------------------------------------------------
-          # Gradle settings
+          # Gradle properties
           # --------------------------------------------------------
 
           cat > "${ANDROID_PROJECT}/gradle.properties" <<'EOF'
@@ -190,7 +187,7 @@ jobs:
           EOF
 
           # ========================================================
-          # Main CMake project
+          # Main CMakeLists.txt
           # ========================================================
 
           cat > "${ANDROID_PROJECT}/app/jni/CMakeLists.txt" <<'CMAKE'
@@ -202,12 +199,13 @@ jobs:
           )
 
           # ========================================================
-          # Global C++ configuration
+          # Global C++20
           # ========================================================
 
           set(CMAKE_CXX_STANDARD 20 CACHE STRING "" FORCE)
           set(CMAKE_CXX_STANDARD_REQUIRED ON CACHE BOOL "" FORCE)
           set(CMAKE_CXX_EXTENSIONS OFF CACHE BOOL "" FORCE)
+
           set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
           # ========================================================
@@ -216,11 +214,12 @@ jobs:
 
           set(SDL_SHARED ON CACHE BOOL "" FORCE)
           set(SDL_STATIC OFF CACHE BOOL "" FORCE)
+
           set(SDL_TESTS OFF CACHE BOOL "" FORCE)
           set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
           set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
 
-          # RmlUi Android build uses the GL3/OpenGL ES backend.
+          # RmlUi GL3 backend is used instead of SDL_GPU here.
           set(SDL_GPU OFF CACHE BOOL "" FORCE)
 
           add_subdirectory(
@@ -264,10 +263,12 @@ jobs:
           set(SDLIMAGE_INSTALL OFF CACHE BOOL "" FORCE)
           set(SDLIMAGE_SAMPLES OFF CACHE BOOL "" FORCE)
           set(SDLIMAGE_TESTS OFF CACHE BOOL "" FORCE)
+
+          # We don't need SDL_image to download its own dependency
+          # tree during this initial Android build.
           set(SDLIMAGE_VENDORED OFF CACHE BOOL "" FORCE)
 
-          # First Android bring-up build:
-          # disable optional image formats and their dependencies.
+          # Disable optional formats for minimal first build.
           set(SDLIMAGE_ANI OFF CACHE BOOL "" FORCE)
           set(SDLIMAGE_AVIF OFF CACHE BOOL "" FORCE)
           set(SDLIMAGE_BMP OFF CACHE BOOL "" FORCE)
@@ -309,7 +310,15 @@ jobs:
           set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 
           set(RMLUI_SAMPLES OFF CACHE BOOL "" FORCE)
-          set(RMLUI_FONT_ENGINE "freetype" CACHE STRING "" FORCE)
+
+          set(
+              RMLUI_FONT_ENGINE
+              "freetype"
+              CACHE STRING
+              ""
+              FORCE
+          )
+
           set(RMLUI_PRECOMPILED_HEADERS OFF CACHE BOOL "" FORCE)
           set(RMLUI_LUA_BINDINGS OFF CACHE BOOL "" FORCE)
           set(RMLUI_TRACY_PROFILING OFF CACHE BOOL "" FORCE)
@@ -322,15 +331,17 @@ jobs:
           )
 
           # ========================================================
-          # Ultron application
+          # Application
           # ========================================================
 
           add_subdirectory(src)
           CMAKE
 
           # ========================================================
-          # Application target
+          # Application CMakeLists.txt
           # ========================================================
+
+          mkdir -p "${ANDROID_PROJECT}/app/jni/src"
 
           cat > "${ANDROID_PROJECT}/app/jni/src/CMakeLists.txt" <<'CMAKE'
           cmake_minimum_required(VERSION 3.16)
@@ -351,11 +362,24 @@ jobs:
               ../RmlUi/Backends/RmlUi_Backend_SDL_GL3.cpp
           )
 
+          # ========================================================
+          # Include paths
+          # ========================================================
+
           target_include_directories(
               main
               PRIVATE
+
               ../RmlUi/Backends
+
+              # RmlUi_Backend_SDL_GL3.cpp directly includes
+              # <SDL3_image/SDL_image.h>.
+              ../SDL_image/include
           )
+
+          # ========================================================
+          # C++20
+          # ========================================================
 
           target_compile_features(
               main
@@ -363,11 +387,27 @@ jobs:
               cxx_std_20
           )
 
+          # ========================================================
+          # IMPORTANT:
+          # Tell the RmlUi SDL backend that we are using SDL3.
+          # ========================================================
+
+          target_compile_definitions(
+              main
+              PRIVATE
+              RMLUI_SDL_VERSION_MAJOR=3
+          )
+
+          # ========================================================
+          # Libraries
+          # ========================================================
+
           target_link_libraries(
               main
               PRIVATE
 
               RmlUi::RmlUi
+
               SDL3::SDL3
               SDL3_image::SDL3_image
 
@@ -378,10 +418,12 @@ jobs:
           CMAKE
 
           # ========================================================
-          # Minimal first UI
+          # Main application source
           # ========================================================
 
           cat > "${ANDROID_PROJECT}/app/jni/src/main.cpp" <<'CPP'
+          #include <SDL3/SDL.h>
+
           #include <RmlUi/Core/Context.h>
           #include <RmlUi/Core/Core.h>
 
@@ -392,17 +434,27 @@ jobs:
               (void)argc;
               (void)argv;
 
-              constexpr int width = 1280;
-              constexpr int height = 720;
+              constexpr int initial_width = 1280;
+              constexpr int initial_height = 720;
+
+              // ----------------------------------------------------
+              // Initialize SDL + RmlUi OpenGL ES 3 backend.
+              //
+              // allow_resize = true so the window can adapt.
+              // ----------------------------------------------------
 
               if (!Backend::Initialize(
                       "Personal AI",
-                      width,
-                      height,
-                      false))
+                      initial_width,
+                      initial_height,
+                      true))
               {
                   return 1;
               }
+
+              // ----------------------------------------------------
+              // Register RmlUi interfaces.
+              // ----------------------------------------------------
 
               Rml::SetSystemInterface(
                   Backend::GetSystemInterface());
@@ -416,44 +468,113 @@ jobs:
                   return 2;
               }
 
-              Rml::Context* context =
-                  Rml::CreateContext(
-                      "main",
-                      Rml::Vector2i(
-                          width,
-                          height));
+              // ----------------------------------------------------
+              // Get the SDL window.
+              // ----------------------------------------------------
 
-              if (!context)
+              int window_count = 0;
+
+              SDL_Window** windows =
+                  SDL_GetWindows(&window_count);
+
+              SDL_Window* window = nullptr;
+
+              if (windows && window_count > 0)
+              {
+                  window = windows[0];
+              }
+
+              if (windows)
+              {
+                  SDL_free(windows);
+              }
+
+              if (!window)
               {
                   Rml::Shutdown();
                   Backend::Shutdown();
                   return 3;
               }
 
+              // ----------------------------------------------------
+              // Get actual drawable pixel dimensions.
+              //
+              // This makes the RmlUi context follow the real
+              // Android display rather than staying locked to
+              // 1280x720.
+              // ----------------------------------------------------
+
+              int window_width = initial_width;
+              int window_height = initial_height;
+
+              SDL_GetWindowSizeInPixels(
+                  window,
+                  &window_width,
+                  &window_height);
+
+              if (window_width < 1)
+              {
+                  window_width = initial_width;
+              }
+
+              if (window_height < 1)
+              {
+                  window_height = initial_height;
+              }
+
+              // ----------------------------------------------------
+              // Create RmlUi context using actual window size.
+              // ----------------------------------------------------
+
+              Rml::Context* context =
+                  Rml::CreateContext(
+                      "main",
+                      Rml::Vector2i(
+                          window_width,
+                          window_height));
+
+              if (!context)
+              {
+                  Rml::Shutdown();
+                  Backend::Shutdown();
+                  return 4;
+              }
+
+              // ----------------------------------------------------
+              // Initial responsive UI.
+              // ----------------------------------------------------
+
               const Rml::String ui = R"rml(
               <rml>
+
                 <head>
+
                   <style>
 
                     body
                     {
                       margin: 0px;
+
                       width: 100%;
                       height: 100%;
+
                       background-color: #0B1020;
                     }
 
                     .panel
                     {
                       position: absolute;
+
                       left: 8%;
                       top: 8%;
+
                       width: 84%;
                       height: 84%;
 
                       background-color: #151E38;
 
                       border: 2px solid #345CFF;
+
                       border-radius: 24px;
                     }
 
@@ -463,10 +584,12 @@ jobs:
 
                       left: 12%;
                       top: 14%;
+
                       width: 20%;
                       height: 7%;
 
                       background-color: #35D0BA;
+
                       border-radius: 14px;
                     }
 
@@ -476,10 +599,12 @@ jobs:
 
                       left: 12%;
                       top: 30%;
+
                       width: 34%;
                       height: 22%;
 
                       background-color: #202C4D;
+
                       border-radius: 18px;
                     }
 
@@ -489,10 +614,12 @@ jobs:
 
                       right: 12%;
                       top: 30%;
+
                       width: 34%;
                       height: 22%;
 
                       background-color: #202C4D;
+
                       border-radius: 18px;
                     }
 
@@ -502,14 +629,17 @@ jobs:
 
                       left: 12%;
                       bottom: 14%;
+
                       width: 76%;
                       height: 8%;
 
                       background-color: #26365C;
+
                       border-radius: 16px;
                     }
 
                   </style>
+
                 </head>
 
                 <body>
@@ -527,8 +657,13 @@ jobs:
                   </div>
 
                 </body>
+
               </rml>
               )rml";
+
+              // ----------------------------------------------------
+              // Load embedded UI.
+              // ----------------------------------------------------
 
               Rml::ElementDocument* document =
                   context->LoadDocumentFromMemory(
@@ -540,16 +675,58 @@ jobs:
                   Rml::RemoveContext("main");
                   Rml::Shutdown();
                   Backend::Shutdown();
-                  return 4;
+                  return 5;
               }
 
               document->Show();
+
+              // ----------------------------------------------------
+              // Main loop.
+              // ----------------------------------------------------
 
               while (Backend::ProcessEvents(
                   context,
                   nullptr,
                   false))
               {
+                  // ------------------------------------------------
+                  // Query actual drawable size every frame.
+                  //
+                  // This catches:
+                  // - portrait
+                  // - landscape
+                  // - rotation
+                  // - Android resize
+                  // - different display densities/sizes
+                  // ------------------------------------------------
+
+                  int new_width = 0;
+                  int new_height = 0;
+
+                  if (SDL_GetWindowSizeInPixels(
+                          window,
+                          &new_width,
+                          &new_height))
+                  {
+                      if (new_width > 0 &&
+                          new_height > 0 &&
+                          (new_width != window_width ||
+                           new_height != window_height))
+                      {
+                          window_width = new_width;
+                          window_height = new_height;
+
+                          context->SetDimensions(
+                              Rml::Vector2i(
+                                  window_width,
+                                  window_height));
+                      }
+                  }
+
+                  // ------------------------------------------------
+                  // Update + render.
+                  // ------------------------------------------------
+
                   context->Update();
 
                   Backend::BeginFrame();
@@ -558,6 +735,10 @@ jobs:
 
                   Backend::PresentFrame();
               }
+
+              // ----------------------------------------------------
+              // Shutdown.
+              // ----------------------------------------------------
 
               Rml::RemoveContext("main");
 
@@ -581,12 +762,14 @@ jobs:
           echo "========================================"
           echo "Java"
           echo "========================================"
+
           java -version
 
           echo
           echo "========================================"
           echo "Gradle"
           echo "========================================"
+
           grep "distributionUrl=" \
             "${ANDROID_PROJECT}/gradle/wrapper/gradle-wrapper.properties"
 
@@ -594,21 +777,25 @@ jobs:
           echo "========================================"
           echo "Android SDK"
           echo "========================================"
+
           echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}"
 
           echo
           echo "========================================"
           echo "Android NDK"
           echo "========================================"
+
           test -d \
             "${ANDROID_SDK_ROOT}/ndk/${ANDROID_NDK_VERSION}"
 
-          echo "NDK ${ANDROID_NDK_VERSION} found"
+          echo \
+            "NDK ${ANDROID_NDK_VERSION} found"
 
           echo
           echo "========================================"
           echo "Dependencies"
           echo "========================================"
+
           echo "RmlUi      : ${RMLUI_VERSION}"
           echo "SDL3       : ${SDL_VERSION}"
           echo "SDL3_image : ${SDL_IMAGE_VERSION}"
@@ -661,7 +848,7 @@ jobs:
           echo "${GITHUB_WORKSPACE}/personal-ai-debug.apk"
 
       # ============================================================
-      # Upload artifact
+      # Upload APK
       # ============================================================
 
       - name: Upload APK
