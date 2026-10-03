@@ -2,13 +2,16 @@ name: Android APK
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
   contents: read
 
 env:
+  APP_NAME: "Personal AI"
+
   RMLUI_VERSION: "6.3"
   SDL_VERSION: "3.4.16"
   SDL_IMAGE_VERSION: "3.4.6"
@@ -16,35 +19,26 @@ env:
 
   ANDROID_API: "35"
   ANDROID_NDK_VERSION: "28.2.13676358"
+  CMAKE_VERSION: "3.22.1"
 
-  APP_NAME: "Personal AI"
+  ANDROID_ABI: "arm64-v8a"
 
 jobs:
   build-android:
     runs-on: ubuntu-24.04
 
     steps:
-      # ------------------------------------------------------------
-      # 1. Checkout YOUR repository
-      # ------------------------------------------------------------
       - name: Checkout application repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
-      # ------------------------------------------------------------
-      # 2. Java
-      # ------------------------------------------------------------
       - name: Setup Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "17"
-          cache: gradle
 
-      # ------------------------------------------------------------
-      # 3. Android SDK / NDK
-      # ------------------------------------------------------------
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       - name: Install Android SDK packages
         shell: bash
@@ -57,15 +51,9 @@ jobs:
             "platform-tools" \
             "platforms;android-${ANDROID_API}" \
             "build-tools;35.0.0" \
-            "ndk;${ANDROID_NDK_VERSION}"
+            "ndk;${ANDROID_NDK_VERSION}" \
+            "cmake;${CMAKE_VERSION}"
 
-      # ------------------------------------------------------------
-      # 4. Fresh dependency clones
-      #
-      # IMPORTANT:
-      # Your repository's existing RmlUi is NOT used.
-      # Everything below is placed in RUNNER_TEMP.
-      # ------------------------------------------------------------
       - name: Clone fresh SDL3, SDL3_image, FreeType and RmlUi
         shell: bash
         run: |
@@ -74,34 +62,26 @@ jobs:
           export ANDROID_PROJECT="${RUNNER_TEMP}/android-project"
 
           rm -rf "${ANDROID_PROJECT}"
+          rm -rf "${RUNNER_TEMP}/SDL"
+          rm -rf "${RUNNER_TEMP}/RmlUi"
+          rm -rf "${RUNNER_TEMP}/SDL_image"
+          rm -rf "${RUNNER_TEMP}/freetype"
 
-          # --------------------------------------------------------
-          # SDL3
-          # --------------------------------------------------------
           git clone \
             --depth 1 \
             --branch "release-${SDL_VERSION}" \
             "https://github.com/libsdl-org/SDL.git" \
             "${RUNNER_TEMP}/SDL"
 
-          # Copy official SDL Android project
           cp -a \
             "${RUNNER_TEMP}/SDL/android-project" \
             "${ANDROID_PROJECT}"
 
-          # --------------------------------------------------------
-          # Fresh RmlUi 6.3
-          # --------------------------------------------------------
           git clone \
             --depth 1 \
             --branch "${RMLUI_VERSION}" \
             "https://github.com/mikke89/RmlUi.git" \
-            "${ANDROID_PROJECT}/app/jni/RmlUi"
-
-          # --------------------------------------------------------
-          # Fresh SDL3
-          # --------------------------------------------------------
-          rm -rf "${ANDROID_PROJECT}/app/jni/SDL"
+            "${RUNNER_TEMP}/RmlUi"
 
           git clone \
             --depth 1 \
@@ -109,93 +89,105 @@ jobs:
             "https://github.com/libsdl-org/SDL.git" \
             "${ANDROID_PROJECT}/app/jni/SDL"
 
-          # --------------------------------------------------------
-          # Fresh SDL3_image
-          # --------------------------------------------------------
           git clone \
             --depth 1 \
             --branch "release-${SDL_IMAGE_VERSION}" \
             "https://github.com/libsdl-org/SDL_image.git" \
             "${ANDROID_PROJECT}/app/jni/SDL_image"
 
-          # --------------------------------------------------------
-          # Fresh FreeType
-          # --------------------------------------------------------
           git clone \
             --depth 1 \
             --branch "${FREETYPE_VERSION}" \
             "https://github.com/freetype/freetype.git" \
             "${ANDROID_PROJECT}/app/jni/freetype"
 
+          cp -a \
+            "${RUNNER_TEMP}/RmlUi" \
+            "${ANDROID_PROJECT}/app/jni/RmlUi"
+
+          rm -rf \
+            "${ANDROID_PROJECT}/app/jni/RmlUi/.git" \
+            "${ANDROID_PROJECT}/app/jni/SDL/.git" \
+            "${ANDROID_PROJECT}/app/jni/SDL_image/.git" \
+            "${ANDROID_PROJECT}/app/jni/freetype/.git"
+
           echo "ANDROID_PROJECT=${ANDROID_PROJECT}" >> "${GITHUB_ENV}"
 
-      # ------------------------------------------------------------
-      # 5. Configure official SDL Android project
-      # ------------------------------------------------------------
       - name: Configure Android project
         shell: bash
         run: |
           set -euo pipefail
 
-          # --------------------------------------------------------
-          # Application name
-          # --------------------------------------------------------
+          # App name
           sed -i \
-            "s#<string name=\"app_name\">Game</string>#<string name=\"app_name\">${APP_NAME}</string>#" \
+            's#<string name="app_name">[^<]*</string>#<string name="app_name">Personal AI</string>#' \
             "${ANDROID_PROJECT}/app/src/main/res/values/strings.xml"
 
-          # --------------------------------------------------------
-          # OpenGL ES 3.2 requirement
-          # --------------------------------------------------------
+          # Require OpenGL ES 3.2 for the RmlUi Android GL3 backend.
           sed -i \
             's/android:glEsVersion="0x00020000"/android:glEsVersion="0x00030002"/' \
             "${ANDROID_PROJECT}/app/src/main/AndroidManifest.xml"
 
-          # --------------------------------------------------------
-          # Force C++20 in CMake
-          # --------------------------------------------------------
+          # Force C++20.
           sed -i \
             's/arguments "-DANDROID_PLATFORM=android-21", "-DANDROID_STL=c++_static"/arguments "-DANDROID_PLATFORM=android-21", "-DANDROID_STL=c++_static", "-DCMAKE_CXX_STANDARD=20", "-DCMAKE_CXX_STANDARD_REQUIRED=ON", "-DCMAKE_CXX_EXTENSIONS=OFF"/' \
             "${ANDROID_PROJECT}/app/build.gradle"
 
-          # --------------------------------------------------------
-          # Gradle memory/cache
-          # --------------------------------------------------------
+          # Pin the CMake version used by Android Gradle Plugin.
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("${ANDROID_PROJECT}/app/build.gradle")
+          text = path.read_text()
+
+          old = """            cmake {
+                path 'jni/CMakeLists.txt'
+            }"""
+
+          new = """            cmake {
+                path 'jni/CMakeLists.txt'
+                version '3.22.1'
+            }"""
+
+          if old not in text:
+              raise SystemExit("Could not find expected CMake configuration block in app/build.gradle")
+
+          path.write_text(text.replace(old, new, 1))
+          PY
+
+          # Stable Gradle settings for CI.
           cat > "${ANDROID_PROJECT}/gradle.properties" <<'EOF'
           org.gradle.jvmargs=-Xmx4096m
           org.gradle.caching=true
           org.gradle.parallel=true
           EOF
 
-          # --------------------------------------------------------
-          # Root JNI CMake
-          # --------------------------------------------------------
+          # Main Android CMake project.
           cat > "${ANDROID_PROJECT}/app/jni/CMakeLists.txt" <<'CMAKE'
           cmake_minimum_required(VERSION 3.16)
 
           project(PersonalAI LANGUAGES C CXX)
 
-          # ========================================================
-          # C++20
-          # ========================================================
+          # ============================================================
+          # Global C++ settings
+          # ============================================================
+
           set(CMAKE_CXX_STANDARD 20 CACHE STRING "" FORCE)
           set(CMAKE_CXX_STANDARD_REQUIRED ON CACHE BOOL "" FORCE)
           set(CMAKE_CXX_EXTENSIONS OFF CACHE BOOL "" FORCE)
-
-          # Android shared-library/PIC compatibility
           set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-          # ========================================================
+          # ============================================================
           # SDL3
-          #
-          # SDL3 itself is kept as a shared Android library,
-          # matching the official SDL Android project structure.
-          # ========================================================
+          # ============================================================
+
           set(SDL_SHARED ON CACHE BOOL "" FORCE)
           set(SDL_STATIC OFF CACHE BOOL "" FORCE)
           set(SDL_TESTS OFF CACHE BOOL "" FORCE)
           set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
           set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
+
+          # Initial Android renderer is RmlUi OpenGL ES 3.x.
           set(SDL_GPU OFF CACHE BOOL "" FORCE)
 
           add_subdirectory(
@@ -204,20 +196,20 @@ jobs:
               EXCLUDE_FROM_ALL
           )
 
-          # ========================================================
+          # ============================================================
           # FreeType
-          #
-          # Static build.
-          #
-          # Unneeded optional compression/shaping dependencies are
-          # disabled for the first clean Android GUI build.
-          # ========================================================
+          # ============================================================
+
           set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 
+          # Disable optional compression/shaping dependencies so the
+          # Android build stays self-contained and predictable.
+          set(FT_DISABLE_ZLIB ON CACHE BOOL "" FORCE)
           set(FT_DISABLE_BZIP2 ON CACHE BOOL "" FORCE)
           set(FT_DISABLE_PNG ON CACHE BOOL "" FORCE)
           set(FT_DISABLE_HARFBUZZ ON CACHE BOOL "" FORCE)
           set(FT_DISABLE_BROTLI ON CACHE BOOL "" FORCE)
+          set(FT_DISABLE_HVF ON CACHE BOOL "" FORCE)
 
           add_subdirectory(
               "${CMAKE_CURRENT_LIST_DIR}/freetype"
@@ -225,16 +217,14 @@ jobs:
               EXCLUDE_FROM_ALL
           )
 
-          # RmlUi expects this standard CMake target name.
           if(NOT TARGET Freetype::Freetype)
               add_library(Freetype::Freetype ALIAS freetype)
           endif()
 
-          # ========================================================
+          # ============================================================
           # SDL3_image
-          #
-          # Static build.
-          # ========================================================
+          # ============================================================
+
           set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 
           set(SDLIMAGE_INSTALL OFF CACHE BOOL "" FORCE)
@@ -242,7 +232,7 @@ jobs:
           set(SDLIMAGE_TESTS OFF CACHE BOOL "" FORCE)
           set(SDLIMAGE_VENDORED OFF CACHE BOOL "" FORCE)
 
-          # Keep optional image libraries out of this first build.
+          # Keep the first CI build minimal.
           set(SDLIMAGE_AVIF OFF CACHE BOOL "" FORCE)
           set(SDLIMAGE_BMP OFF CACHE BOOL "" FORCE)
           set(SDLIMAGE_GIF OFF CACHE BOOL "" FORCE)
@@ -277,9 +267,12 @@ jobs:
               EXCLUDE_FROM_ALL
           )
 
-          # ========================================================
-          # RmlUi 6.3
-          # ========================================================
+          # ============================================================
+          # RmlUi
+          # ============================================================
+
+          set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+
           set(RMLUI_SAMPLES OFF CACHE BOOL "" FORCE)
           set(RMLUI_FONT_ENGINE "freetype" CACHE STRING "" FORCE)
           set(RMLUI_PRECOMPILED_HEADERS OFF CACHE BOOL "" FORCE)
@@ -293,31 +286,24 @@ jobs:
               EXCLUDE_FROM_ALL
           )
 
-          # ========================================================
+          # ============================================================
           # Application
-          # ========================================================
+          # ============================================================
+
           add_subdirectory(src)
           CMAKE
 
-          # --------------------------------------------------------
-          # Application CMake
-          # --------------------------------------------------------
+          # Application target.
           cat > "${ANDROID_PROJECT}/app/jni/src/CMakeLists.txt" <<'CMAKE'
           cmake_minimum_required(VERSION 3.16)
 
           project(PersonalAIApp LANGUAGES CXX)
 
           add_library(main SHARED
-
               main.cpp
 
-              # RmlUi SDL platform layer
               ../RmlUi/Backends/RmlUi_Platform_SDL.cpp
-
-              # RmlUi OpenGL 3 renderer
               ../RmlUi/Backends/RmlUi_Renderer_GL3.cpp
-
-              # SDL + OpenGL 3 backend
               ../RmlUi/Backends/RmlUi_Backend_SDL_GL3.cpp
           )
 
@@ -330,25 +316,18 @@ jobs:
           )
 
           target_link_libraries(main PRIVATE
-
-              # RmlUi itself
               RmlUi::RmlUi
-
-              # SDL3
               SDL3::SDL3
-
-              # SDL3_image
               SDL3_image::SDL3_image
 
-              # Android system libraries
+              # Android system libraries.
+              GLESv3
               android
               log
           )
           CMAKE
 
-          # --------------------------------------------------------
-          # Minimal C++20 application
-          # --------------------------------------------------------
+          # Minimal embedded RmlUi test application.
           cat > "${ANDROID_PROJECT}/app/jni/src/main.cpp" <<'CPP'
           #include <RmlUi/Core/Context.h>
           #include <RmlUi/Core/Core.h>
@@ -362,9 +341,6 @@ jobs:
               constexpr int width = 1280;
               constexpr int height = 720;
 
-              // ----------------------------------------------------
-              // SDL3 + OpenGL ES 3.2
-              // ----------------------------------------------------
               if (!Backend::Initialize(
                       "Personal AI",
                       width,
@@ -374,9 +350,6 @@ jobs:
                   return 1;
               }
 
-              // ----------------------------------------------------
-              // RmlUi interfaces
-              // ----------------------------------------------------
               Rml::SetSystemInterface(
                   Backend::GetSystemInterface());
 
@@ -389,9 +362,6 @@ jobs:
                   return 2;
               }
 
-              // ----------------------------------------------------
-              // RmlUi context
-              // ----------------------------------------------------
               Rml::Context* context =
                   Rml::CreateContext(
                       "main",
@@ -404,15 +374,10 @@ jobs:
                   return 3;
               }
 
-              // ----------------------------------------------------
-              // Embedded RML + RCSS
-              // ----------------------------------------------------
               const Rml::String ui = R"rml(
               <rml>
                 <head>
-
                   <style>
-
                     body
                     {
                       margin: 0px;
@@ -424,106 +389,72 @@ jobs:
                     .panel
                     {
                       position: absolute;
-
                       left: 8%;
                       top: 8%;
-
                       width: 84%;
                       height: 84%;
-
                       background-color: #151E38;
-
                       border: 2px solid #345CFF;
-
                       border-radius: 24px;
                     }
 
                     .accent
                     {
                       position: absolute;
-
                       left: 12%;
                       top: 14%;
-
                       width: 20%;
                       height: 7%;
-
                       background-color: #35D0BA;
-
                       border-radius: 14px;
                     }
 
                     .card1
                     {
                       position: absolute;
-
                       left: 12%;
                       top: 30%;
-
                       width: 34%;
                       height: 22%;
-
                       background-color: #202C4D;
-
                       border-radius: 18px;
                     }
 
                     .card2
                     {
                       position: absolute;
-
                       right: 12%;
                       top: 30%;
-
                       width: 34%;
                       height: 22%;
-
                       background-color: #202C4D;
-
                       border-radius: 18px;
                     }
 
                     .bottom
                     {
                       position: absolute;
-
                       left: 12%;
                       bottom: 14%;
-
                       width: 76%;
                       height: 8%;
-
                       background-color: #26365C;
-
                       border-radius: 16px;
                     }
-
                   </style>
-
                 </head>
 
                 <body>
-
                   <div class="panel">
-
                     <div class="accent"></div>
-
                     <div class="card1"></div>
-
                     <div class="card2"></div>
-
                     <div class="bottom"></div>
-
                   </div>
-
                 </body>
-
               </rml>
               )rml";
 
-              // ----------------------------------------------------
-              // Load RML
-              // ----------------------------------------------------
               Rml::ElementDocument* document =
                   context->LoadDocumentFromMemory(
                       ui,
@@ -539,9 +470,6 @@ jobs:
 
               document->Show();
 
-              // ----------------------------------------------------
-              // Main loop
-              // ----------------------------------------------------
               while (Backend::ProcessEvents(
                   context,
                   nullptr,
@@ -556,22 +484,14 @@ jobs:
                   Backend::PresentFrame();
               }
 
-              // ----------------------------------------------------
-              // Shutdown
-              // ----------------------------------------------------
               Rml::RemoveContext("main");
-
               Rml::Shutdown();
-
               Backend::Shutdown();
 
               return 0;
           }
           CPP
 
-      # ------------------------------------------------------------
-      # 6. Show toolchain versions
-      # ------------------------------------------------------------
       - name: Show toolchain versions
         shell: bash
         run: |
@@ -586,12 +506,18 @@ jobs:
             "${ANDROID_PROJECT}/gradle/wrapper/gradle-wrapper.properties"
 
           echo
+          echo "===== Android SDK ====="
+          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}"
+
+          echo
           echo "===== Android NDK ====="
-          ls -1 "${ANDROID_SDK_ROOT}/ndk"
+          test -d "${ANDROID_SDK_ROOT}/ndk/${ANDROID_NDK_VERSION}"
+          echo "NDK ${ANDROID_NDK_VERSION} found"
 
           echo
           echo "===== CMake ====="
-          ls -1 "${ANDROID_SDK_ROOT}/cmake" 2>/dev/null || true
+          test -d "${ANDROID_SDK_ROOT}/cmake/${CMAKE_VERSION}"
+          echo "CMake ${CMAKE_VERSION} found"
 
           echo
           echo "===== Dependencies ====="
@@ -600,9 +526,6 @@ jobs:
           echo "SDL3_image : ${SDL_IMAGE_VERSION}"
           echo "FreeType   : ${FREETYPE_VERSION}"
 
-      # ------------------------------------------------------------
-      # 7. Build APK
-      # ------------------------------------------------------------
       - name: Build APK
         shell: bash
         working-directory: ${{ env.ANDROID_PROJECT }}
@@ -617,9 +540,6 @@ jobs:
             -PBUILD_WITH_CMAKE \
             assembleDebug
 
-      # ------------------------------------------------------------
-      # 8. Collect APK
-      # ------------------------------------------------------------
       - name: Collect APK
         shell: bash
         run: |
@@ -634,14 +554,12 @@ jobs:
           )"
 
           test -n "${APK}"
+          test -f "${APK}"
 
           cp \
             "${APK}" \
             "${GITHUB_WORKSPACE}/personal-ai-debug.apk"
 
-      # ------------------------------------------------------------
-      # 9. Upload APK
-      # ------------------------------------------------------------
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
