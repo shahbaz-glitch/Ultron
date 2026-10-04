@@ -146,7 +146,7 @@ jobs:
           echo "ANDROID_PROJECT=${ANDROID_PROJECT}" >> "${GITHUB_ENV}"
 
       # ============================================================
-      # GENERATE ANDROID BUILD CONFIGURATION
+      # ANDROID BUILD CONFIGURATION
       # ============================================================
 
       - name: Configure Android project
@@ -155,7 +155,7 @@ jobs:
           set -euo pipefail
 
           # ========================================================
-          # build.gradle
+          # app/build.gradle
           # ========================================================
 
           cat > \
@@ -170,6 +170,8 @@ jobs:
               namespace = "${APPLICATION_ID}"
 
               compileSdkVersion ${ANDROID_API}
+
+              buildToolsVersion "${BUILD_TOOLS_VERSION}"
 
               ndkVersion = "${ANDROID_NDK_VERSION}"
 
@@ -248,6 +250,9 @@ jobs:
           # strings.xml
           # ========================================================
 
+          mkdir -p \
+            "${ANDROID_PROJECT}/app/src/main/res/values"
+
           cat > \
             "${ANDROID_PROJECT}/app/src/main/res/values/strings.xml" <<EOF
           <resources>
@@ -269,32 +274,26 @@ jobs:
               android:versionName="${APP_VERSION_NAME}"
               android:installLocation="auto">
 
-              <!-- OpenGL ES 3.2 -->
               <uses-feature
                   android:glEsVersion="0x00030002"
                   android:required="true" />
 
-              <!-- Touchscreen -->
               <uses-feature
                   android:name="android.hardware.touchscreen"
                   android:required="false" />
 
-              <!-- Bluetooth -->
               <uses-feature
                   android:name="android.hardware.bluetooth"
                   android:required="false" />
 
-              <!-- Gamepad -->
               <uses-feature
                   android:name="android.hardware.gamepad"
                   android:required="false" />
 
-              <!-- USB host -->
               <uses-feature
                   android:name="android.hardware.usb.host"
                   android:required="false" />
 
-              <!-- PC-style mouse -->
               <uses-feature
                   android:name="android.hardware.type.pc"
                   android:required="false" />
@@ -352,10 +351,6 @@ jobs:
               LANGUAGES C CXX
           )
 
-          # ========================================================
-          # C++20
-          # ========================================================
-
           set(
               CMAKE_CXX_STANDARD
               20
@@ -393,10 +388,7 @@ jobs:
               FORCE
           )
 
-          # ========================================================
-          # RmlUi SDL3
-          # ========================================================
-
+          # RmlUi SDL3 backend selection.
           add_compile_definitions(
               RMLUI_SDL_VERSION_MAJOR=3
           )
@@ -599,7 +591,7 @@ jobs:
           CMAKE
 
       # ============================================================
-      # APPLICATION CMAKE TARGET
+      # APPLICATION TARGET
       # ============================================================
 
       - name: Generate Ultron native target
@@ -664,7 +656,7 @@ jobs:
           CMAKE
 
       # ============================================================
-      # MAIN NATIVE SOURCE
+      # NATIVE SOURCE
       # ============================================================
 
       - name: Generate Ultron native source
@@ -677,6 +669,8 @@ jobs:
           #include <SDL3/SDL.h>
           #include <SDL3/SDL_main.h>
 
+          #include <atomic>
+
           #include <RmlUi/Core/Context.h>
           #include <RmlUi/Core/Core.h>
           #include <RmlUi/Core/ElementDocument.h>
@@ -686,6 +680,59 @@ jobs:
 
           namespace
           {
+              std::atomic_bool g_running{true};
+              std::atomic_bool g_paused{false};
+
+              bool HandleAppEvents(
+                  void* userdata,
+                  SDL_Event* event)
+              {
+                  (void)userdata;
+
+                  switch (event->type)
+                  {
+                      case SDL_EVENT_WILL_ENTER_BACKGROUND:
+                          g_paused.store(
+                              true,
+                              std::memory_order_relaxed);
+                          break;
+
+                      case SDL_EVENT_DID_ENTER_BACKGROUND:
+                          g_paused.store(
+                              true,
+                              std::memory_order_relaxed);
+                          break;
+
+                      case SDL_EVENT_WILL_ENTER_FOREGROUND:
+                          g_paused.store(
+                              true,
+                              std::memory_order_relaxed);
+                          break;
+
+                      case SDL_EVENT_DID_ENTER_FOREGROUND:
+                          g_paused.store(
+                              false,
+                              std::memory_order_relaxed);
+                          break;
+
+                      case SDL_EVENT_LOW_MEMORY:
+                          SDL_Log(
+                              "Android low-memory notification received.");
+                          break;
+
+                      case SDL_EVENT_TERMINATING:
+                          g_running.store(
+                              false,
+                              std::memory_order_relaxed);
+                          break;
+
+                      default:
+                          break;
+                  }
+
+                  return true;
+              }
+
               int Fail(
                   SDL_Window* window,
                   SDL_GLContext gl_context,
@@ -756,6 +803,10 @@ jobs:
                       "SDL_Init failed");
               }
 
+              SDL_SetEventFilter(
+                  HandleAppEvents,
+                  nullptr);
+
               SDL_SetHint(
                   SDL_HINT_IME_IMPLEMENTED_UI,
                   "composition");
@@ -793,19 +844,6 @@ jobs:
                   1);
 
               // ====================================================
-              // Display scale
-              // ====================================================
-
-              float display_scale =
-                  SDL_GetDisplayContentScale(
-                      SDL_GetPrimaryDisplay());
-
-              if (display_scale <= 0.0f)
-              {
-                  display_scale = 1.0f;
-              }
-
-              // ====================================================
               // Window properties
               // ====================================================
 
@@ -836,19 +874,17 @@ jobs:
                   SDL_PROP_WINDOW_CREATE_Y_NUMBER,
                   SDL_WINDOWPOS_CENTERED);
 
+              // Do NOT multiply a logical size by display scale here.
+              // Android/SDL will expose the real drawable size below.
               SDL_SetNumberProperty(
                   properties,
                   SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER,
-                  static_cast<int>(
-                      initial_width *
-                      display_scale));
+                  initial_width);
 
               SDL_SetNumberProperty(
                   properties,
                   SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER,
-                  static_cast<int>(
-                      initial_height *
-                      display_scale));
+                  initial_height);
 
               SDL_SetBooleanProperty(
                   properties,
@@ -1199,9 +1235,9 @@ jobs:
                   // Main loop
                   // ==================================================
 
-                  bool running = true;
-
-                  while (running)
+                  while (
+                      g_running.load(
+                          std::memory_order_relaxed))
                   {
                       SDL_Event event;
 
@@ -1210,7 +1246,9 @@ jobs:
                           if (event.type ==
                               SDL_EVENT_QUIT)
                           {
-                              running = false;
+                              g_running.store(
+                                  false,
+                                  std::memory_order_relaxed);
 
                               continue;
                           }
@@ -1219,6 +1257,21 @@ jobs:
                               context,
                               window,
                               event);
+                      }
+
+                      if (!g_running.load(
+                              std::memory_order_relaxed))
+                      {
+                          break;
+                      }
+
+                      // Do not run OpenGL/RmlUi rendering while
+                      // Android has the app in the background.
+                      if (g_paused.load(
+                              std::memory_order_relaxed))
+                      {
+                          SDL_Delay(16);
+                          continue;
                       }
 
                       // ----------------------------------------------
@@ -1399,7 +1452,7 @@ jobs:
 
           echo
           echo "========================================"
-          echo "C++20 / SDL / PACKAGE CONFIGURATION"
+          echo "RUNTIME / PACKAGE CONFIGURATION"
           echo "========================================"
 
           grep -q \
@@ -1408,6 +1461,22 @@ jobs:
 
           grep -q \
             '#include <SDL3/SDL_main.h>' \
+            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
+
+          grep -q \
+            '#include <RmlUi/Core/ElementDocument.h>' \
+            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
+
+          grep -q \
+            'SDL_SetEventFilter' \
+            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
+
+          grep -q \
+            'SDL_EVENT_WILL_ENTER_BACKGROUND' \
+            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
+
+          grep -q \
+            'SDL_EVENT_DID_ENTER_FOREGROUND' \
             "${ANDROID_PROJECT}/app/jni/src/main.cpp"
 
           grep -q \
