@@ -34,7 +34,7 @@ jobs:
         uses: actions/checkout@v7
 
       # ============================================================
-      # Java
+      # Java 17
       # ============================================================
 
       - name: Setup Java 17
@@ -103,7 +103,7 @@ jobs:
             "${ANDROID_PROJECT}/app/jni/SDL"
 
           # --------------------------------------------------------
-          # FreeType
+          # FreeType 2.14.1
           # --------------------------------------------------------
 
           git clone \
@@ -143,7 +143,7 @@ jobs:
           set -euo pipefail
 
           # --------------------------------------------------------
-          # App name
+          # Application name
           # --------------------------------------------------------
 
           sed -i \
@@ -159,7 +159,7 @@ jobs:
             "${ANDROID_PROJECT}/app/src/main/AndroidManifest.xml"
 
           # --------------------------------------------------------
-          # Force C++20
+          # C++20
           # --------------------------------------------------------
 
           sed -i \
@@ -167,7 +167,7 @@ jobs:
             "${ANDROID_PROJECT}/app/build.gradle"
 
           # --------------------------------------------------------
-          # Gradle
+          # Gradle properties
           # --------------------------------------------------------
 
           cat > "${ANDROID_PROJECT}/gradle.properties" <<'EOF'
@@ -229,7 +229,8 @@ jobs:
           # ========================================================
           # RmlUi SDL3 selection
           #
-          # This MUST be defined before compiling the SDL backend.
+          # RmlUi 6.3 SDL backend needs SDL major version 3.
+          # Define it before RmlUi backend sources are compiled.
           # ========================================================
 
           add_compile_definitions(
@@ -479,7 +480,7 @@ jobs:
           )
 
           # ========================================================
-          # RmlUi SDL3
+          # SDL3 definition
           # ========================================================
 
           target_compile_definitions(
@@ -489,7 +490,7 @@ jobs:
           )
 
           # ========================================================
-          # Link
+          # Libraries
           # ========================================================
 
           target_link_libraries(
@@ -503,11 +504,12 @@ jobs:
               GLESv3
               android
               log
+              ${CMAKE_DL_LIBS}
           )
           CMAKE
 
           # ========================================================
-          # Main application
+          # Main application source
           # ========================================================
 
           cat > "${ANDROID_PROJECT}/app/jni/src/main.cpp" <<'CPP'
@@ -515,6 +517,7 @@ jobs:
 
           #include <RmlUi/Core/Context.h>
           #include <RmlUi/Core/Core.h>
+          #include <RmlUi/Core/ElementDocument.h>
 
           #include "RmlUi_Platform_SDL.h"
           #include "RmlUi_Renderer_GL3.h"
@@ -528,10 +531,12 @@ jobs:
               constexpr int initial_height = 720;
 
               // ====================================================
-              // SDL initialization
+              // SDL
               // ====================================================
 
-              if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS))
+              if (!SDL_Init(
+                      SDL_INIT_VIDEO |
+                      SDL_INIT_EVENTS))
               {
                   return 1;
               }
@@ -573,20 +578,26 @@ jobs:
                   1);
 
               // ====================================================
-              // Create Android window
+              // Android window
               // ====================================================
 
-              const float display_scale =
+              float display_scale =
                   SDL_GetDisplayContentScale(
                       SDL_GetPrimaryDisplay());
 
-              const float safe_scale =
-                  display_scale > 0.0f
-                      ? display_scale
-                      : 1.0f;
+              if (display_scale <= 0.0f)
+              {
+                  display_scale = 1.0f;
+              }
 
               SDL_PropertiesID properties =
                   SDL_CreateProperties();
+
+              if (properties == 0)
+              {
+                  SDL_Quit();
+                  return 2;
+              }
 
               SDL_SetStringProperty(
                   properties,
@@ -607,13 +618,15 @@ jobs:
                   properties,
                   SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER,
                   static_cast<int>(
-                      initial_width * safe_scale));
+                      initial_width *
+                      display_scale));
 
               SDL_SetNumberProperty(
                   properties,
                   SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER,
                   static_cast<int>(
-                      initial_height * safe_scale));
+                      initial_height *
+                      display_scale));
 
               SDL_SetBooleanProperty(
                   properties,
@@ -639,11 +652,11 @@ jobs:
               if (window == nullptr)
               {
                   SDL_Quit();
-                  return 2;
+                  return 3;
               }
 
               // ====================================================
-              // Create OpenGL context
+              // OpenGL context
               // ====================================================
 
               SDL_GLContext gl_context =
@@ -653,7 +666,7 @@ jobs:
               {
                   SDL_DestroyWindow(window);
                   SDL_Quit();
-                  return 3;
+                  return 4;
               }
 
               if (!SDL_GL_MakeCurrent(
@@ -663,13 +676,13 @@ jobs:
                   SDL_GL_DestroyContext(gl_context);
                   SDL_DestroyWindow(window);
                   SDL_Quit();
-                  return 4;
+                  return 5;
               }
 
               SDL_GL_SetSwapInterval(1);
 
               // ====================================================
-              // Initialize RmlUi GL loader
+              // RmlUi OpenGL loader
               // ====================================================
 
               if (!RmlGL3::Initialize())
@@ -677,7 +690,7 @@ jobs:
                   SDL_GL_DestroyContext(gl_context);
                   SDL_DestroyWindow(window);
                   SDL_Quit();
-                  return 5;
+                  return 6;
               }
 
               {
@@ -685,7 +698,8 @@ jobs:
                   // RmlUi interfaces
                   // ==================================================
 
-                  SystemInterface_SDL system_interface(window);
+                  SystemInterface_SDL system_interface(
+                      window);
 
                   RenderInterface_GL3 render_interface;
 
@@ -699,7 +713,7 @@ jobs:
                       SDL_DestroyWindow(window);
                       SDL_Quit();
 
-                      return 6;
+                      return 7;
                   }
 
                   // ==================================================
@@ -733,7 +747,7 @@ jobs:
                       height);
 
                   // ==================================================
-                  // Register interfaces
+                  // Register RmlUi interfaces
                   // ==================================================
 
                   Rml::SetSystemInterface(
@@ -752,11 +766,11 @@ jobs:
                       SDL_DestroyWindow(window);
                       SDL_Quit();
 
-                      return 7;
+                      return 8;
                   }
 
                   // ==================================================
-                  // Create context
+                  // Create RmlUi context
                   // ==================================================
 
                   Rml::Context* context =
@@ -778,11 +792,11 @@ jobs:
                       SDL_DestroyWindow(window);
                       SDL_Quit();
 
-                      return 8;
+                      return 9;
                   }
 
                   // ==================================================
-                  // Android display density
+                  // Density
                   // ==================================================
 
                   const float window_scale =
@@ -796,7 +810,7 @@ jobs:
                   }
 
                   // ==================================================
-                  // Responsive UI
+                  // Responsive test UI
                   // ==================================================
 
                   const Rml::String ui = R"rml(
@@ -917,7 +931,11 @@ jobs:
                   )rml";
 
                   // ==================================================
-                  // Load UI
+                  // Load document
+                  //
+                  // IMPORTANT:
+                  // ElementDocument.h is included above because
+                  // Context.h only forward-declares ElementDocument.
                   // ==================================================
 
                   Rml::ElementDocument* document =
@@ -938,7 +956,7 @@ jobs:
                       SDL_DestroyWindow(window);
                       SDL_Quit();
 
-                      return 9;
+                      return 10;
                   }
 
                   document->Show();
@@ -955,7 +973,8 @@ jobs:
 
                       while (SDL_PollEvent(&event))
                       {
-                          if (event.type == SDL_EVENT_QUIT)
+                          if (event.type ==
+                              SDL_EVENT_QUIT)
                           {
                               running = false;
                               continue;
@@ -967,9 +986,9 @@ jobs:
                               event);
                       }
 
-                      // ------------------------------------------------
-                      // Query current drawable pixel size.
-                      // ------------------------------------------------
+                      // ----------------------------------------------
+                      // Actual Android drawable size
+                      // ----------------------------------------------
 
                       int new_width = 0;
                       int new_height = 0;
@@ -987,24 +1006,28 @@ jobs:
                               width = new_width;
                               height = new_height;
 
-                              // Update RmlUi logical dimensions.
+                              // Update RmlUi logical context size.
                               context->SetDimensions(
                                   Rml::Vector2i(
                                       width,
                                       height));
 
-                              // Update OpenGL viewport/projection.
+                              // Update GL viewport/projection.
                               render_interface.SetViewport(
                                   width,
                                   height);
                           }
                       }
 
-                      // ------------------------------------------------
-                      // Render frame
-                      // ------------------------------------------------
+                      // ----------------------------------------------
+                      // Update
+                      // ----------------------------------------------
 
                       context->Update();
+
+                      // ----------------------------------------------
+                      // Render
+                      // ----------------------------------------------
 
                       render_interface.Clear();
 
@@ -1018,24 +1041,22 @@ jobs:
                   }
 
                   // ==================================================
-                  // Shutdown RmlUi
+                  // RmlUi shutdown
                   // ==================================================
 
                   Rml::RemoveContext("main");
 
                   Rml::Shutdown();
-
-                  // render_interface destructor runs here BEFORE
-                  // RmlGL3::Shutdown().
               }
 
-              // ========================================================
-              // Shutdown OpenGL / SDL
-              // ========================================================
+              // ======================================================
+              // GL + SDL shutdown
+              // ======================================================
 
               RmlGL3::Shutdown();
 
-              SDL_GL_DestroyContext(gl_context);
+              SDL_GL_DestroyContext(
+                  gl_context);
 
               SDL_DestroyWindow(window);
 
@@ -1070,7 +1091,7 @@ jobs:
           test -f \
             "${ANDROID_PROJECT}/app/jni/src/main.cpp"
 
-          echo "Android project files OK"
+          echo "Android project files: OK"
 
           echo
           echo "========================================"
@@ -1080,7 +1101,7 @@ jobs:
           test -f \
             "${ANDROID_PROJECT}/app/jni/SDL/include/SDL3/SDL.h"
 
-          echo "SDL3 headers OK"
+          echo "SDL3 headers: OK"
 
           echo
           echo "========================================"
@@ -1096,7 +1117,17 @@ jobs:
           test -f \
             "${ANDROID_PROJECT}/app/jni/RmlUi/Backends/RmlUi_Renderer_GL3.cpp"
 
-          echo "RmlUi backend sources OK"
+          echo "RmlUi sources: OK"
+
+          echo
+          echo "========================================"
+          echo "ElementDocument"
+          echo "========================================"
+
+          test -f \
+            "${ANDROID_PROJECT}/app/jni/RmlUi/Include/RmlUi/Core/ElementDocument.h"
+
+          echo "ElementDocument.h: OK"
 
           echo
           echo "========================================"
@@ -1106,7 +1137,7 @@ jobs:
           test -f \
             "${ANDROID_PROJECT}/app/jni/freetype/CMakeLists.txt"
 
-          echo "FreeType OK"
+          echo "FreeType: OK"
 
           echo
           echo "========================================"
@@ -1122,12 +1153,14 @@ jobs:
           echo "Configuration"
           echo "========================================"
 
-          echo "RmlUi      : ${RMLUI_VERSION}"
-          echo "SDL3       : ${SDL_VERSION}"
-          echo "FreeType   : ${FREETYPE_VERSION}"
-          echo "Android API: ${ANDROID_API}"
-          echo "NDK        : ${ANDROID_NDK_VERSION}"
-          echo "ABI        : ${ANDROID_ABI}"
+          echo "RmlUi       : ${RMLUI_VERSION}"
+          echo "SDL3        : ${SDL_VERSION}"
+          echo "FreeType    : ${FREETYPE_VERSION}"
+          echo "Android API : ${ANDROID_API}"
+          echo "Android NDK : ${ANDROID_NDK_VERSION}"
+          echo "Android ABI : ${ANDROID_ABI}"
+          echo "C++         : 20"
+          echo "OpenGL ES   : 3.2"
 
       # ============================================================
       # Build
@@ -1194,7 +1227,7 @@ jobs:
           if-no-files-found: error
 
       # ============================================================
-      # Always upload build log
+      # Always upload diagnostics
       # ============================================================
 
       - name: Upload build diagnostics
