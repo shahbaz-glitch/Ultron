@@ -1,16 +1,22 @@
-name: Android APK
+name: Build Ultron Android APK
 
 on:
   push:
     branches:
       - main
+
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ultron-android-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
-  APP_NAME: "Personal AI"
+  APP_NAME: "Ultron"
+  APPLICATION_ID: "com.shahbazglitch.ultron"
 
   RMLUI_VERSION: "6.3"
   SDL_VERSION: "3.4.16"
@@ -20,9 +26,13 @@ env:
   ANDROID_NDK_VERSION: "28.2.13676358"
   ANDROID_ABI: "arm64-v8a"
 
+  BUILD_TOOLS_VERSION: "35.0.0"
+
 jobs:
   build-android:
+    name: Build Ultron (${{ env.ANDROID_ABI }})
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
 
     steps:
 
@@ -34,7 +44,7 @@ jobs:
         uses: actions/checkout@v7
 
       # ============================================================
-      # Java 17
+      # Java
       # ============================================================
 
       - name: Setup Java 17
@@ -60,14 +70,14 @@ jobs:
           sdkmanager \
             "platform-tools" \
             "platforms;android-${ANDROID_API}" \
-            "build-tools;35.0.0" \
+            "build-tools;${BUILD_TOOLS_VERSION}" \
             "ndk;${ANDROID_NDK_VERSION}"
 
       # ============================================================
       # Prepare fresh Android project
       # ============================================================
 
-      - name: Prepare Android project and dependencies
+      - name: Prepare Android project
         shell: bash
         run: |
           set -euo pipefail
@@ -75,12 +85,9 @@ jobs:
           export ANDROID_PROJECT="${RUNNER_TEMP}/android-project"
 
           rm -rf "${ANDROID_PROJECT}"
-          rm -rf "${RUNNER_TEMP}/SDL"
-          rm -rf "${RUNNER_TEMP}/RmlUi"
-          rm -rf "${RUNNER_TEMP}/freetype"
 
           # --------------------------------------------------------
-          # SDL3 3.4.16
+          # SDL3
           # --------------------------------------------------------
 
           git clone \
@@ -103,7 +110,7 @@ jobs:
             "${ANDROID_PROJECT}/app/jni/SDL"
 
           # --------------------------------------------------------
-          # FreeType 2.14.1
+          # FreeType
           # --------------------------------------------------------
 
           git clone \
@@ -113,7 +120,7 @@ jobs:
             "${ANDROID_PROJECT}/app/jni/freetype"
 
           # --------------------------------------------------------
-          # RmlUi 6.3
+          # RmlUi
           # --------------------------------------------------------
 
           git clone \
@@ -142,79 +149,91 @@ jobs:
         run: |
           set -euo pipefail
 
-          # --------------------------------------------------------
-          # Application name
-          # --------------------------------------------------------
+          # ========================================================
+          # Application identity
+          # ========================================================
 
           sed -i \
-            's#<string name="app_name">[^<]*</string>#<string name="app_name">Personal AI</string>#' \
+            "s/org\.libsdl\.app/${APPLICATION_ID}/g" \
+            "${ANDROID_PROJECT}/app/build.gradle"
+
+          sed -i \
+            "s/org\.libsdl\.app/${APPLICATION_ID}/g" \
+            "${ANDROID_PROJECT}/app/src/main/AndroidManifest.xml"
+
+          sed -i \
+            "s/<string name=\"app_name\">[^<]*<\/string>/<string name=\"app_name\">${APP_NAME}<\/string>/" \
             "${ANDROID_PROJECT}/app/src/main/res/values/strings.xml"
 
-          # --------------------------------------------------------
+          # ========================================================
           # OpenGL ES 3.2
-          # --------------------------------------------------------
+          # ========================================================
 
           sed -i \
             's/android:glEsVersion="0x00020000"/android:glEsVersion="0x00030002"/' \
             "${ANDROID_PROJECT}/app/src/main/AndroidManifest.xml"
 
-          # --------------------------------------------------------
-          # C++20
-          # --------------------------------------------------------
+          # ========================================================
+          # Create custom Ultron Activity
+          # ========================================================
+
+          mkdir -p \
+            "${ANDROID_PROJECT}/app/src/main/java/com/shahbazglitch/ultron"
+
+          cat > \
+            "${ANDROID_PROJECT}/app/src/main/java/com/shahbazglitch/ultron/UltronActivity.java" <<'JAVA'
+          package com.shahbazglitch.ultron;
+
+          import org.libsdl.app.SDLActivity;
+
+          public class UltronActivity extends SDLActivity {
+          }
+          JAVA
+
+          # Use the custom Activity.
+          sed -i \
+            's/android:name="SDLActivity"/android:name="com.shahbazglitch.ultron.UltronActivity"/' \
+            "${ANDROID_PROJECT}/app/src/main/AndroidManifest.xml"
+
+          # ========================================================
+          # CMake / C++20
+          # ========================================================
+
+          sed -i \
+            's/arguments "APP_PLATFORM=android-21"/arguments "APP_PLATFORM=android-21"/' \
+            "${ANDROID_PROJECT}/app/build.gradle"
 
           sed -i \
             's/arguments "-DANDROID_PLATFORM=android-21", "-DANDROID_STL=c++_static"/arguments "-DANDROID_PLATFORM=android-21", "-DANDROID_STL=c++_static", "-DCMAKE_CXX_STANDARD=20", "-DCMAKE_CXX_STANDARD_REQUIRED=ON", "-DCMAKE_CXX_EXTENSIONS=OFF"/' \
             "${ANDROID_PROJECT}/app/build.gradle"
 
-          # --------------------------------------------------------
-          # Gradle properties
-          # --------------------------------------------------------
+          # ========================================================
+          # Gradle
+          # ========================================================
 
-          cat > "${ANDROID_PROJECT}/gradle.properties" <<'EOF'
+          cat > \
+            "${ANDROID_PROJECT}/gradle.properties" <<'EOF'
           org.gradle.jvmargs=-Xmx4096m
           org.gradle.caching=true
           org.gradle.parallel=true
           EOF
 
           # ========================================================
-          # Main CMakeLists.txt
+          # Main CMake
           # ========================================================
 
-          cat > "${ANDROID_PROJECT}/app/jni/CMakeLists.txt" <<'CMAKE'
+          cat > \
+            "${ANDROID_PROJECT}/app/jni/CMakeLists.txt" <<'CMAKE'
           cmake_minimum_required(VERSION 3.16)
 
           project(
-              PersonalAI
+              Ultron
               LANGUAGES C CXX
           )
 
-          # ========================================================
-          # C++20
-          # ========================================================
-
-          set(
-              CMAKE_CXX_STANDARD
-              20
-              CACHE STRING
-              ""
-              FORCE
-          )
-
-          set(
-              CMAKE_CXX_STANDARD_REQUIRED
-              ON
-              CACHE BOOL
-              ""
-              FORCE
-          )
-
-          set(
-              CMAKE_CXX_EXTENSIONS
-              OFF
-              CACHE BOOL
-              ""
-              FORCE
-          )
+          set(CMAKE_CXX_STANDARD 20 CACHE STRING "" FORCE)
+          set(CMAKE_CXX_STANDARD_REQUIRED ON CACHE BOOL "" FORCE)
+          set(CMAKE_CXX_EXTENSIONS OFF CACHE BOOL "" FORCE)
 
           set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
@@ -227,10 +246,7 @@ jobs:
           )
 
           # ========================================================
-          # RmlUi SDL3 selection
-          #
-          # RmlUi 6.3 SDL backend needs SDL major version 3.
-          # Define it before RmlUi backend sources are compiled.
+          # RmlUi SDL3
           # ========================================================
 
           add_compile_definitions(
@@ -435,16 +451,18 @@ jobs:
           CMAKE
 
           # ========================================================
-          # Application CMakeLists.txt
+          # Application CMake
           # ========================================================
 
-          mkdir -p "${ANDROID_PROJECT}/app/jni/src"
+          mkdir -p \
+            "${ANDROID_PROJECT}/app/jni/src"
 
-          cat > "${ANDROID_PROJECT}/app/jni/src/CMakeLists.txt" <<'CMAKE'
+          cat > \
+            "${ANDROID_PROJECT}/app/jni/src/CMakeLists.txt" <<'CMAKE'
           cmake_minimum_required(VERSION 3.16)
 
           project(
-              PersonalAIApp
+              UltronApp
               LANGUAGES CXX
           )
 
@@ -458,10 +476,6 @@ jobs:
               ../RmlUi/Backends/RmlUi_Renderer_GL3.cpp
           )
 
-          # ========================================================
-          # Include directories
-          # ========================================================
-
           target_include_directories(
               main
               PRIVATE
@@ -469,19 +483,11 @@ jobs:
               ../RmlUi/Backends
           )
 
-          # ========================================================
-          # C++20
-          # ========================================================
-
           target_compile_features(
               main
               PRIVATE
               cxx_std_20
           )
-
-          # ========================================================
-          # SDL3 definition
-          # ========================================================
 
           target_compile_definitions(
               main
@@ -489,16 +495,11 @@ jobs:
               RMLUI_SDL_VERSION_MAJOR=3
           )
 
-          # ========================================================
-          # Libraries
-          # ========================================================
-
           target_link_libraries(
               main
               PRIVATE
 
               RmlUi::RmlUi
-
               SDL3::SDL3-shared
 
               GLESv3
@@ -509,11 +510,13 @@ jobs:
           CMAKE
 
           # ========================================================
-          # Main application source
+          # Main native source
           # ========================================================
 
-          cat > "${ANDROID_PROJECT}/app/jni/src/main.cpp" <<'CPP'
+          cat > \
+            "${ANDROID_PROJECT}/app/jni/src/main.cpp" <<'CPP'
           #include <SDL3/SDL.h>
+          #include <SDL3/SDL_main.h>
 
           #include <RmlUi/Core/Context.h>
           #include <RmlUi/Core/Core.h>
@@ -521,6 +524,40 @@ jobs:
 
           #include "RmlUi_Platform_SDL.h"
           #include "RmlUi_Renderer_GL3.h"
+
+          namespace
+          {
+              int Fail(SDL_Window* window,
+                       SDL_GLContext gl_context,
+                       int code,
+                       const char* message)
+              {
+                  SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                               "Ultron startup failure: %s",
+                               message);
+
+                  if (SDL_GetError()[0] != '\0')
+                  {
+                      SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                                   "SDL error: %s",
+                                   SDL_GetError());
+                  }
+
+                  if (gl_context != nullptr)
+                  {
+                      SDL_GL_DestroyContext(gl_context);
+                  }
+
+                  if (window != nullptr)
+                  {
+                      SDL_DestroyWindow(window);
+                  }
+
+                  SDL_Quit();
+
+                  return code;
+              }
+          }
 
           int main(int argc, char** argv)
           {
@@ -530,15 +567,19 @@ jobs:
               constexpr int initial_width = 1280;
               constexpr int initial_height = 720;
 
-              // ====================================================
-              // SDL
-              // ====================================================
+              SDL_SetLogPriority(
+                  SDL_LOG_CATEGORY_APPLICATION,
+                  SDL_LOG_PRIORITY_INFO);
 
-              if (!SDL_Init(
-                      SDL_INIT_VIDEO |
-                      SDL_INIT_EVENTS))
+              SDL_Log("Ultron starting...");
+
+              if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS))
               {
-                  return 1;
+                  return Fail(
+                      nullptr,
+                      nullptr,
+                      1,
+                      "SDL_Init failed");
               }
 
               SDL_SetHint(
@@ -552,6 +593,12 @@ jobs:
               SDL_SetHint(
                   SDL_HINT_TOUCH_MOUSE_EVENTS,
                   "0");
+
+              #if defined(__ANDROID__)
+              SDL_SetHint(
+                  SDL_HINT_ANDROID_TRAP_BACK_BUTTON,
+                  "0");
+              #endif
 
               // ====================================================
               // OpenGL ES 3.2
@@ -577,10 +624,6 @@ jobs:
                   SDL_GL_DOUBLEBUFFER,
                   1);
 
-              // ====================================================
-              // Android window
-              // ====================================================
-
               float display_scale =
                   SDL_GetDisplayContentScale(
                       SDL_GetPrimaryDisplay());
@@ -595,14 +638,17 @@ jobs:
 
               if (properties == 0)
               {
-                  SDL_Quit();
-                  return 2;
+                  return Fail(
+                      nullptr,
+                      nullptr,
+                      2,
+                      "SDL_CreateProperties failed");
               }
 
               SDL_SetStringProperty(
                   properties,
                   SDL_PROP_WINDOW_CREATE_TITLE_STRING,
-                  "Personal AI");
+                  "Ultron");
 
               SDL_SetNumberProperty(
                   properties,
@@ -618,15 +664,13 @@ jobs:
                   properties,
                   SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER,
                   static_cast<int>(
-                      initial_width *
-                      display_scale));
+                      initial_width * display_scale));
 
               SDL_SetNumberProperty(
                   properties,
                   SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER,
                   static_cast<int>(
-                      initial_height *
-                      display_scale));
+                      initial_height * display_scale));
 
               SDL_SetBooleanProperty(
                   properties,
@@ -651,8 +695,11 @@ jobs:
 
               if (window == nullptr)
               {
-                  SDL_Quit();
-                  return 3;
+                  return Fail(
+                      nullptr,
+                      nullptr,
+                      3,
+                      "SDL_CreateWindowWithProperties failed");
               }
 
               // ====================================================
@@ -664,61 +711,47 @@ jobs:
 
               if (gl_context == nullptr)
               {
-                  SDL_DestroyWindow(window);
-                  SDL_Quit();
-                  return 4;
+                  return Fail(
+                      window,
+                      nullptr,
+                      4,
+                      "SDL_GL_CreateContext failed");
               }
 
               if (!SDL_GL_MakeCurrent(
                       window,
                       gl_context))
               {
-                  SDL_GL_DestroyContext(gl_context);
-                  SDL_DestroyWindow(window);
-                  SDL_Quit();
-                  return 5;
+                  return Fail(
+                      window,
+                      gl_context,
+                      5,
+                      "SDL_GL_MakeCurrent failed");
               }
 
               SDL_GL_SetSwapInterval(1);
 
+              SDL_Log(
+                  "OpenGL context created successfully.");
+
               // ====================================================
-              // RmlUi OpenGL loader
+              // RmlUi GL loader
               // ====================================================
 
               if (!RmlGL3::Initialize())
               {
-                  SDL_GL_DestroyContext(gl_context);
-                  SDL_DestroyWindow(window);
-                  SDL_Quit();
-                  return 6;
+                  return Fail(
+                      window,
+                      gl_context,
+                      6,
+                      "RmlGL3::Initialize failed");
               }
 
               {
-                  // ==================================================
-                  // RmlUi interfaces
-                  // ==================================================
-
                   SystemInterface_SDL system_interface(
                       window);
 
                   RenderInterface_GL3 render_interface;
-
-                  if (!render_interface)
-                  {
-                      RmlGL3::Shutdown();
-
-                      SDL_GL_DestroyContext(
-                          gl_context);
-
-                      SDL_DestroyWindow(window);
-                      SDL_Quit();
-
-                      return 7;
-                  }
-
-                  // ==================================================
-                  // Actual drawable size
-                  // ==================================================
 
                   int width = 0;
                   int height = 0;
@@ -746,10 +779,6 @@ jobs:
                       width,
                       height);
 
-                  // ==================================================
-                  // Register RmlUi interfaces
-                  // ==================================================
-
                   Rml::SetSystemInterface(
                       &system_interface);
 
@@ -760,18 +789,12 @@ jobs:
                   {
                       RmlGL3::Shutdown();
 
-                      SDL_GL_DestroyContext(
-                          gl_context);
-
-                      SDL_DestroyWindow(window);
-                      SDL_Quit();
-
-                      return 8;
+                      return Fail(
+                          window,
+                          gl_context,
+                          7,
+                          "Rml::Initialise failed");
                   }
-
-                  // ==================================================
-                  // Create RmlUi context
-                  // ==================================================
 
                   Rml::Context* context =
                       Rml::CreateContext(
@@ -783,21 +806,14 @@ jobs:
                   if (context == nullptr)
                   {
                       Rml::Shutdown();
-
                       RmlGL3::Shutdown();
 
-                      SDL_GL_DestroyContext(
-                          gl_context);
-
-                      SDL_DestroyWindow(window);
-                      SDL_Quit();
-
-                      return 9;
+                      return Fail(
+                          window,
+                          gl_context,
+                          8,
+                          "Rml::CreateContext failed");
                   }
-
-                  // ==================================================
-                  // Density
-                  // ==================================================
 
                   const float window_scale =
                       SDL_GetWindowDisplayScale(
@@ -810,7 +826,7 @@ jobs:
                   }
 
                   // ==================================================
-                  // Responsive test UI
+                  // Responsive Ultron test UI
                   // ==================================================
 
                   const Rml::String ui = R"rml(
@@ -823,86 +839,105 @@ jobs:
                         body
                         {
                           margin: 0px;
-
                           width: 100%;
                           height: 100%;
 
-                          background-color: #0B1020;
+                          background-color: #080B14;
+                          color: #EAF0FF;
                         }
 
                         .panel
                         {
                           position: absolute;
 
-                          left: 8%;
-                          top: 8%;
+                          left: 6%;
+                          top: 6%;
 
-                          width: 84%;
-                          height: 84%;
+                          width: 88%;
+                          height: 88%;
 
-                          background-color: #151E38;
+                          background-color: #111827;
 
-                          border: 2px solid #345CFF;
+                          border: 2px solid #26385F;
 
-                          border-radius: 24px;
+                          border-radius: 26px;
                         }
 
-                        .accent
+                        .top
                         {
                           position: absolute;
 
-                          left: 12%;
-                          top: 14%;
+                          left: 5%;
+                          top: 5%;
 
-                          width: 20%;
-                          height: 7%;
+                          width: 90%;
+                          height: 13%;
+
+                          background-color: #16213B;
+
+                          border-radius: 18px;
+                        }
+
+                        .indicator
+                        {
+                          position: absolute;
+
+                          left: 5%;
+                          top: 24%;
+
+                          width: 90%;
+                          height: 2%;
 
                           background-color: #35D0BA;
 
-                          border-radius: 14px;
+                          border-radius: 10px;
                         }
 
-                        .card1
+                        .card_left
                         {
                           position: absolute;
 
-                          left: 12%;
-                          top: 30%;
+                          left: 5%;
+                          top: 31%;
 
-                          width: 34%;
-                          height: 22%;
+                          width: 42%;
+                          height: 33%;
 
-                          background-color: #202C4D;
+                          background-color: #182440;
 
-                          border-radius: 18px;
+                          border-radius: 20px;
+
+                          border: 1px solid #2A3D68;
                         }
 
-                        .card2
+                        .card_right
                         {
                           position: absolute;
 
-                          right: 12%;
-                          top: 30%;
+                          right: 5%;
+                          top: 31%;
 
-                          width: 34%;
-                          height: 22%;
+                          width: 42%;
+                          height: 33%;
 
-                          background-color: #202C4D;
+                          background-color: #182440;
 
-                          border-radius: 18px;
+                          border-radius: 20px;
+
+                          border: 1px solid #2A3D68;
                         }
 
-                        .bottom
+                        .footer
                         {
                           position: absolute;
 
-                          left: 12%;
-                          bottom: 14%;
+                          left: 5%;
+                          bottom: 5%;
 
-                          width: 76%;
-                          height: 8%;
+                          width: 90%;
+                          height: 11%;
 
-                          background-color: #26365C;
+                          background-color: #14203A;
 
                           border-radius: 16px;
                         }
@@ -915,13 +950,15 @@ jobs:
 
                       <div class="panel">
 
-                        <div class="accent"></div>
+                        <div class="top"></div>
 
-                        <div class="card1"></div>
+                        <div class="indicator"></div>
 
-                        <div class="card2"></div>
+                        <div class="card_left"></div>
 
-                        <div class="bottom"></div>
+                        <div class="card_right"></div>
+
+                        <div class="footer"></div>
 
                       </div>
 
@@ -930,36 +967,28 @@ jobs:
                   </rml>
                   )rml";
 
-                  // ==================================================
-                  // Load document
-                  //
-                  // IMPORTANT:
-                  // ElementDocument.h is included above because
-                  // Context.h only forward-declares ElementDocument.
-                  // ==================================================
-
                   Rml::ElementDocument* document =
                       context->LoadDocumentFromMemory(
                           ui,
-                          "[embedded-test-ui.rml]");
+                          "[embedded-ultron-ui.rml]");
 
                   if (document == nullptr)
                   {
                       Rml::RemoveContext("main");
                       Rml::Shutdown();
-
                       RmlGL3::Shutdown();
 
-                      SDL_GL_DestroyContext(
-                          gl_context);
-
-                      SDL_DestroyWindow(window);
-                      SDL_Quit();
-
-                      return 10;
+                      return Fail(
+                          window,
+                          gl_context,
+                          9,
+                          "LoadDocumentFromMemory failed");
                   }
 
                   document->Show();
+
+                  SDL_Log(
+                      "Ultron UI initialized successfully.");
 
                   // ==================================================
                   // Main loop
@@ -986,10 +1015,6 @@ jobs:
                               event);
                       }
 
-                      // ----------------------------------------------
-                      // Actual Android drawable size
-                      // ----------------------------------------------
-
                       int new_width = 0;
                       int new_height = 0;
 
@@ -1006,28 +1031,18 @@ jobs:
                               width = new_width;
                               height = new_height;
 
-                              // Update RmlUi logical context size.
                               context->SetDimensions(
                                   Rml::Vector2i(
                                       width,
                                       height));
 
-                              // Update GL viewport/projection.
                               render_interface.SetViewport(
                                   width,
                                   height);
                           }
                       }
 
-                      // ----------------------------------------------
-                      // Update
-                      // ----------------------------------------------
-
                       context->Update();
-
-                      // ----------------------------------------------
-                      // Render
-                      // ----------------------------------------------
 
                       render_interface.Clear();
 
@@ -1040,18 +1055,9 @@ jobs:
                       SDL_GL_SwapWindow(window);
                   }
 
-                  // ==================================================
-                  // RmlUi shutdown
-                  // ==================================================
-
                   Rml::RemoveContext("main");
-
                   Rml::Shutdown();
               }
-
-              // ======================================================
-              // GL + SDL shutdown
-              // ======================================================
 
               RmlGL3::Shutdown();
 
@@ -1062,6 +1068,8 @@ jobs:
 
               SDL_Quit();
 
+              SDL_Log("Ultron shutdown cleanly.");
+
               return 0;
           }
           CPP
@@ -1070,46 +1078,31 @@ jobs:
       # Verify generated project
       # ============================================================
 
-      - name: Verify generated Android project
+      - name: Verify generated project
         shell: bash
         run: |
           set -euo pipefail
 
           echo "========================================"
-          echo "Android project"
+          echo "Ultron configuration"
           echo "========================================"
 
-          test -f \
-            "${ANDROID_PROJECT}/app/build.gradle"
-
-          test -f \
-            "${ANDROID_PROJECT}/app/jni/CMakeLists.txt"
-
-          test -f \
-            "${ANDROID_PROJECT}/app/jni/src/CMakeLists.txt"
-
-          test -f \
-            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
-
-          echo "Android project files: OK"
-
-          echo
-          echo "========================================"
-          echo "SDL3"
-          echo "========================================"
+          echo "App name    : ${APP_NAME}"
+          echo "Package     : ${APPLICATION_ID}"
+          echo "RmlUi       : ${RMLUI_VERSION}"
+          echo "SDL3        : ${SDL_VERSION}"
+          echo "FreeType    : ${FREETYPE_VERSION}"
+          echo "Android API : ${ANDROID_API}"
+          echo "NDK         : ${ANDROID_NDK_VERSION}"
+          echo "ABI         : ${ANDROID_ABI}"
+          echo "C++         : 20"
+          echo "OpenGL ES   : 3.2"
 
           test -f \
             "${ANDROID_PROJECT}/app/jni/SDL/include/SDL3/SDL.h"
 
-          echo "SDL3 headers: OK"
-
-          echo
-          echo "========================================"
-          echo "RmlUi"
-          echo "========================================"
-
           test -f \
-            "${ANDROID_PROJECT}/app/jni/RmlUi/CMakeLists.txt"
+            "${ANDROID_PROJECT}/app/jni/SDL/include/SDL3/SDL_main.h"
 
           test -f \
             "${ANDROID_PROJECT}/app/jni/RmlUi/Backends/RmlUi_Platform_SDL.cpp"
@@ -1117,50 +1110,35 @@ jobs:
           test -f \
             "${ANDROID_PROJECT}/app/jni/RmlUi/Backends/RmlUi_Renderer_GL3.cpp"
 
-          echo "RmlUi sources: OK"
-
-          echo
-          echo "========================================"
-          echo "ElementDocument"
-          echo "========================================"
-
           test -f \
             "${ANDROID_PROJECT}/app/jni/RmlUi/Include/RmlUi/Core/ElementDocument.h"
-
-          echo "ElementDocument.h: OK"
-
-          echo
-          echo "========================================"
-          echo "FreeType"
-          echo "========================================"
 
           test -f \
             "${ANDROID_PROJECT}/app/jni/freetype/CMakeLists.txt"
 
-          echo "FreeType: OK"
+          test -f \
+            "${ANDROID_PROJECT}/app/jni/src/CMakeLists.txt"
+
+          test -f \
+            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
+
+          test -f \
+            "${ANDROID_PROJECT}/app/src/main/java/com/shahbazglitch/ultron/UltronActivity.java"
+
+          grep -q \
+            '#include <SDL3/SDL_main.h>' \
+            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
+
+          grep -q \
+            'RMLUI_SDL_VERSION_MAJOR=3' \
+            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
+
+          grep -q \
+            'UltronActivity' \
+            "${ANDROID_PROJECT}/app/src/main/AndroidManifest.xml"
 
           echo
-          echo "========================================"
-          echo "SDL3 definition"
-          echo "========================================"
-
-          grep -R \
-            "RMLUI_SDL_VERSION_MAJOR=3" \
-            "${ANDROID_PROJECT}/app/jni"
-
-          echo
-          echo "========================================"
-          echo "Configuration"
-          echo "========================================"
-
-          echo "RmlUi       : ${RMLUI_VERSION}"
-          echo "SDL3        : ${SDL_VERSION}"
-          echo "FreeType    : ${FREETYPE_VERSION}"
-          echo "Android API : ${ANDROID_API}"
-          echo "Android NDK : ${ANDROID_NDK_VERSION}"
-          echo "Android ABI : ${ANDROID_ABI}"
-          echo "C++         : 20"
-          echo "OpenGL ES   : 3.2"
+          echo "Generated project verification: PASSED"
 
       # ============================================================
       # Build
@@ -1184,10 +1162,10 @@ jobs:
             2>&1 | tee "${RUNNER_TEMP}/gradle-build.log"
 
       # ============================================================
-      # Collect APK
+      # Validate APK
       # ============================================================
 
-      - name: Collect APK
+      - name: Validate APK
         shell: bash
         run: |
           set -euo pipefail
@@ -1204,36 +1182,51 @@ jobs:
           test -n "${APK}"
           test -f "${APK}"
 
+          mkdir -p "${GITHUB_WORKSPACE}/artifacts"
+
           cp \
             "${APK}" \
-            "${GITHUB_WORKSPACE}/personal-ai-debug.apk"
+            "${GITHUB_WORKSPACE}/artifacts/ultron-debug.apk"
+
+          "${ANDROID_HOME}/build-tools/${BUILD_TOOLS_VERSION}/aapt" \
+            dump badging \
+            "${GITHUB_WORKSPACE}/artifacts/ultron-debug.apk" \
+            | tee "${RUNNER_TEMP}/apk-badging.txt"
+
+          grep -q \
+            "com.shahbazglitch.ultron" \
+            "${RUNNER_TEMP}/apk-badging.txt"
 
           echo
           echo "========================================"
-          echo "APK CREATED"
+          echo "APK VALIDATION PASSED"
           echo "========================================"
 
-          echo "${GITHUB_WORKSPACE}/personal-ai-debug.apk"
+          ls -lh \
+            "${GITHUB_WORKSPACE}/artifacts/ultron-debug.apk"
 
       # ============================================================
       # Upload APK
       # ============================================================
 
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
+      - name: Upload Ultron APK
+        uses: actions/upload-artifact@v7
         with:
           name: ultron-android-debug
-          path: personal-ai-debug.apk
+          path: artifacts/ultron-debug.apk
           if-no-files-found: error
+          compression-level: 0
 
       # ============================================================
-      # Always upload diagnostics
+      # Diagnostics
       # ============================================================
 
       - name: Upload build diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ultron-build-diagnostics
-          path: ${{ runner.temp }}/gradle-build.log
+          path: |
+            ${{ runner.temp }}/gradle-build.log
+            ${{ runner.temp }}/apk-badging.txt
           if-no-files-found: warn
