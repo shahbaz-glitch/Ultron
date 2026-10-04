@@ -1455,9 +1455,12 @@ jobs:
           echo "RUNTIME / PACKAGE CONFIGURATION"
           echo "========================================"
 
+          # IMPORTANT:
+          # RMLUI_SDL_VERSION_MAJOR=3 is defined in CMake,
+          # not inside main.cpp.
           grep -q \
             'RMLUI_SDL_VERSION_MAJOR=3' \
-            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
+            "${ANDROID_PROJECT}/app/jni/src/CMakeLists.txt"
 
           grep -q \
             '#include <SDL3/SDL_main.h>' \
