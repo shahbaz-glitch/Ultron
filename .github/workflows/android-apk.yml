@@ -47,7 +47,7 @@ jobs:
         uses: actions/checkout@v7
 
       # ============================================================
-      # JAVA
+      # JAVA 17
       # ============================================================
 
       - name: Setup Java 17
@@ -155,7 +155,7 @@ jobs:
           set -euo pipefail
 
           # ========================================================
-          # Build.gradle
+          # build.gradle
           # ========================================================
 
           cat > \
@@ -170,6 +170,7 @@ jobs:
               namespace = "${APPLICATION_ID}"
 
               compileSdkVersion ${ANDROID_API}
+
               ndkVersion = "${ANDROID_NDK_VERSION}"
 
               defaultConfig {
@@ -204,21 +205,17 @@ jobs:
                       minifyEnabled false
 
                       proguardFiles \
-                          getDefaultProguardFile('proguard-android-optimize.txt'), \
+                          getDefaultProguardFile(
+                              'proguard-android-optimize.txt'
+                          ),
                           'proguard-rules.pro'
                   }
               }
 
-              if (!project.hasProperty('EXCLUDE_NATIVE_LIBS')) {
-                  sourceSets.main {
-                      jniLibs.srcDir 'libs'
-                  }
-
+              if (buildWithCMake) {
                   externalNativeBuild {
-                      if (buildWithCMake) {
-                          cmake {
-                              path 'jni/CMakeLists.txt'
-                          }
+                      cmake {
+                          path 'jni/CMakeLists.txt'
                       }
                   }
               }
@@ -248,7 +245,7 @@ jobs:
           EOF
 
           # ========================================================
-          # Application strings
+          # strings.xml
           # ========================================================
 
           cat > \
@@ -277,7 +274,7 @@ jobs:
                   android:glEsVersion="0x00030002"
                   android:required="true" />
 
-              <!-- Touch -->
+              <!-- Touchscreen -->
               <uses-feature
                   android:name="android.hardware.touchscreen"
                   android:required="false" />
@@ -314,7 +311,7 @@ jobs:
                   android:enableOnBackInvokedCallback="false">
 
                   <activity
-                      android:name="${APPLICATION_ID}.UltronActivity"
+                      android:name="org.libsdl.app.SDLActivity"
                       android:label="@string/app_name"
                       android:alwaysRetainTaskState="true"
                       android:launchMode="singleInstance"
@@ -323,7 +320,8 @@ jobs:
                       android:exported="true">
 
                       <intent-filter>
-                          <action android:name="android.intent.action.MAIN" />
+                          <action
+                              android:name="android.intent.action.MAIN" />
 
                           <category
                               android:name="android.intent.category.LAUNCHER" />
@@ -335,30 +333,6 @@ jobs:
 
           </manifest>
           EOF
-
-          # ========================================================
-          # Custom Ultron Activity
-          # ========================================================
-
-          mkdir -p \
-            "${ANDROID_PROJECT}/app/src/main/java/com/shahbazglitch/ultron"
-
-          cat > \
-            "${ANDROID_PROJECT}/app/src/main/java/com/shahbazglitch/ultron/UltronActivity.java" <<'JAVA'
-          package com.shahbazglitch.ultron;
-
-          import org.libsdl.app.SDLActivity;
-
-          /**
-           * Ultron Android entry Activity.
-           *
-           * SDL owns the native lifecycle and JNI bridge.
-           * Ultron only subclasses SDLActivity so the Android
-           * application has its own clean identity.
-           */
-          public class UltronActivity extends SDLActivity {
-          }
-          JAVA
 
       # ============================================================
       # MAIN CMAKE
@@ -617,11 +591,15 @@ jobs:
               EXCLUDE_FROM_ALL
           )
 
+          # ========================================================
+          # Application
+          # ========================================================
+
           add_subdirectory(src)
           CMAKE
 
       # ============================================================
-      # APPLICATION CMAKE
+      # APPLICATION CMAKE TARGET
       # ============================================================
 
       - name: Generate Ultron native target
@@ -764,7 +742,7 @@ jobs:
                   "Ultron starting...");
 
               // ====================================================
-              // SDL initialization
+              // SDL
               // ====================================================
 
               if (!SDL_Init(
@@ -828,7 +806,7 @@ jobs:
               }
 
               // ====================================================
-              // Window
+              // Window properties
               // ====================================================
 
               SDL_PropertiesID properties =
@@ -937,7 +915,7 @@ jobs:
                   "OpenGL context created.");
 
               // ====================================================
-              // RmlUi OpenGL loader
+              // RmlUi GL3
               // ====================================================
 
               if (!RmlGL3::Initialize())
@@ -950,10 +928,6 @@ jobs:
               }
 
               {
-                  // ==================================================
-                  // RmlUi interfaces
-                  // ==================================================
-
                   SystemInterface_SDL system_interface(
                       window);
 
@@ -990,7 +964,7 @@ jobs:
                       height);
 
                   // ==================================================
-                  // Register interfaces
+                  // RmlUi interfaces
                   // ==================================================
 
                   Rml::SetSystemInterface(
@@ -1011,7 +985,7 @@ jobs:
                   }
 
                   // ==================================================
-                  // Create context
+                  // Context
                   // ==================================================
 
                   Rml::Context* context =
@@ -1248,7 +1222,7 @@ jobs:
                       }
 
                       // ----------------------------------------------
-                      // Detect drawable-size changes
+                      // Responsive drawable size
                       // ----------------------------------------------
 
                       int new_width = 0;
@@ -1332,7 +1306,7 @@ jobs:
           CPP
 
       # ============================================================
-      # VERIFY PROJECT BEFORE BUILD
+      # VERIFY GENERATED PROJECT
       # ============================================================
 
       - name: Verify generated project
@@ -1341,7 +1315,7 @@ jobs:
           set -euo pipefail
 
           echo "========================================"
-          echo "ULTRON BUILD CONFIGURATION"
+          echo "ULTRON CONFIGURATION"
           echo "========================================"
 
           echo "Application : ${APP_NAME}"
@@ -1354,10 +1328,12 @@ jobs:
           echo "NDK         : ${ANDROID_NDK_VERSION}"
           echo "ABI         : ${ANDROID_ABI}"
           echo "C++         : 20"
-          echo "OpenGL ES   : 3.2"
+          echo "Renderer    : OpenGL ES 3.2"
 
           echo
-          echo "Checking files..."
+          echo "========================================"
+          echo "PROJECT FILES"
+          echo "========================================"
 
           test -f \
             "${ANDROID_PROJECT}/app/build.gradle"
@@ -1369,9 +1345,6 @@ jobs:
             "${ANDROID_PROJECT}/app/src/main/res/values/strings.xml"
 
           test -f \
-            "${ANDROID_PROJECT}/app/src/main/java/com/shahbazglitch/ultron/UltronActivity.java"
-
-          test -f \
             "${ANDROID_PROJECT}/app/jni/CMakeLists.txt"
 
           test -f \
@@ -1380,10 +1353,12 @@ jobs:
           test -f \
             "${ANDROID_PROJECT}/app/jni/src/main.cpp"
 
-          echo "Project files: OK"
+          echo "Project files: PASSED"
 
           echo
-          echo "Checking SDL3..."
+          echo "========================================"
+          echo "SDL3"
+          echo "========================================"
 
           test -f \
             "${ANDROID_PROJECT}/app/jni/SDL/include/SDL3/SDL.h"
@@ -1391,10 +1366,12 @@ jobs:
           test -f \
             "${ANDROID_PROJECT}/app/jni/SDL/include/SDL3/SDL_main.h"
 
-          echo "SDL3: OK"
+          echo "SDL3: PASSED"
 
           echo
-          echo "Checking RmlUi..."
+          echo "========================================"
+          echo "RMLUI"
+          echo "========================================"
 
           test -f \
             "${ANDROID_PROJECT}/app/jni/RmlUi/CMakeLists.txt"
@@ -1408,69 +1385,48 @@ jobs:
           test -f \
             "${ANDROID_PROJECT}/app/jni/RmlUi/Include/RmlUi/Core/ElementDocument.h"
 
-          echo "RmlUi: OK"
+          echo "RmlUi: PASSED"
 
           echo
-          echo "Checking FreeType..."
+          echo "========================================"
+          echo "FREETYPE"
+          echo "========================================"
 
           test -f \
             "${ANDROID_PROJECT}/app/jni/freetype/CMakeLists.txt"
 
-          echo "FreeType: OK"
+          echo "FreeType: PASSED"
 
           echo
-          echo "Checking SDL main entry..."
+          echo "========================================"
+          echo "C++20 / SDL / PACKAGE CONFIGURATION"
+          echo "========================================"
+
+          grep -q \
+            'RMLUI_SDL_VERSION_MAJOR=3' \
+            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
 
           grep -q \
             '#include <SDL3/SDL_main.h>' \
             "${ANDROID_PROJECT}/app/jni/src/main.cpp"
 
-          echo "SDL_main.h: OK"
-
-          echo
-          echo "Checking application ID..."
-
           grep -q \
-            "applicationId \"${APPLICATION_ID}\"" \
+            'applicationId "${APPLICATION_ID}"' \
             "${ANDROID_PROJECT}/app/build.gradle"
 
-          echo "Application ID: OK"
-
-          echo
-          echo "Checking namespace..."
-
           grep -q \
-            "namespace = \"${APPLICATION_ID}\"" \
+            'namespace = "${APPLICATION_ID}"' \
             "${ANDROID_PROJECT}/app/build.gradle"
-
-          echo "Namespace: OK"
-
-          echo
-          echo "Checking Activity..."
-
-          grep -q \
-            "${APPLICATION_ID}.UltronActivity" \
-            "${ANDROID_PROJECT}/app/src/main/AndroidManifest.xml"
-
-          echo "Activity: OK"
-
-          echo
-          echo "Checking application label..."
-
-          grep -q \
-            "<string name=\"app_name\">${APP_NAME}</string>" \
-            "${ANDROID_PROJECT}/app/src/main/res/values/strings.xml"
-
-          echo "Application label: OK"
-
-          echo
-          echo "Checking OpenGL ES 3.2..."
 
           grep -q \
             'android:glEsVersion="0x00030002"' \
             "${ANDROID_PROJECT}/app/src/main/AndroidManifest.xml"
 
-          echo "OpenGL ES 3.2: OK"
+          grep -q \
+            '<string name="app_name">${APP_NAME}</string>' \
+            "${ANDROID_PROJECT}/app/src/main/res/values/strings.xml"
+
+          echo "Configuration checks: PASSED"
 
           echo
           echo "========================================"
@@ -1499,85 +1455,70 @@ jobs:
             2>&1 | tee "${RUNNER_TEMP}/gradle-build.log"
 
       # ============================================================
-      # COLLECT APK
+      # VERIFY APK EXISTS
       # ============================================================
 
-      - name: Collect APK
-        if: always()
+      - name: Verify APK output
         shell: bash
         run: |
           set -euo pipefail
 
+          APK="${ANDROID_PROJECT}/app/build/outputs/apk/debug/app-debug.apk"
+
+          echo "========================================"
+          echo "APK OUTPUT"
+          echo "========================================"
+
+          test -f "${APK}"
+
+          echo "APK exists:"
+          echo "${APK}"
+
+          echo
+          ls -lh "${APK}"
+
+      # ============================================================
+      # COPY APK TO WORKSPACE
+      # ============================================================
+
+      - name: Prepare APK artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APK="${ANDROID_PROJECT}/app/build/outputs/apk/debug/app-debug.apk"
+
           mkdir -p \
             "${GITHUB_WORKSPACE}/artifacts"
 
-          APK=""
+          test -f "${APK}"
 
-          if [ -d \
-            "${ANDROID_PROJECT}/app/build/outputs/apk/debug"
-          ]; then
+          cp \
+            "${APK}" \
+            "${GITHUB_WORKSPACE}/artifacts/ultron-debug.apk"
 
-            APK="$(
-              find \
-                "${ANDROID_PROJECT}/app/build/outputs/apk/debug" \
-                -type f \
-                -name "*.apk" \
-                -print \
-                -quit
-            )"
+          test -f \
+            "${GITHUB_WORKSPACE}/artifacts/ultron-debug.apk"
 
-          fi
+          echo "========================================"
+          echo "APK READY FOR ARTIFACT UPLOAD"
+          echo "========================================"
 
-          if [ -n "${APK}" ] &&
-             [ -f "${APK}" ]; then
-
-            cp \
-              "${APK}" \
-              "${GITHUB_WORKSPACE}/artifacts/ultron-debug.apk"
-
-            echo "APK found:"
-            echo "${APK}"
-
-            echo
-            echo "Collected APK:"
-            ls -lh \
-              "${GITHUB_WORKSPACE}/artifacts/ultron-debug.apk"
-
-          else
-
-            echo "No APK was found."
-
-          fi
-
-      # ============================================================
-      # UPLOAD APK
-      # ============================================================
-
-      - name: Upload Ultron APK
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: ultron-android-debug
-          path: artifacts/ultron-debug.apk
-          if-no-files-found: warn
-          compression-level: 0
+          ls -lh \
+            "${GITHUB_WORKSPACE}/artifacts/ultron-debug.apk"
 
       # ============================================================
       # VALIDATE APK
       # ============================================================
 
       - name: Validate APK
-        if: always()
         shell: bash
         run: |
           set -euo pipefail
 
           APK="${GITHUB_WORKSPACE}/artifacts/ultron-debug.apk"
 
-          if [ ! -f "${APK}" ]; then
-            echo "ERROR: APK does not exist."
-            exit 1
-          fi
+          test -f "${APK}"
 
           echo "========================================"
           echo "APK BADGING"
@@ -1637,7 +1578,21 @@ jobs:
           echo "APK VALIDATION PASSED"
           echo "========================================"
 
-          ls -lh "${APK}"
+          ls -lh \
+            "${APK}"
+
+      # ============================================================
+      # UPLOAD APK
+      # ============================================================
+
+      - name: Upload Ultron APK
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ultron-android-debug
+          path: artifacts/ultron-debug.apk
+          if-no-files-found: warn
+          compression-level: 0
 
       # ============================================================
       # BUILD SUMMARY
