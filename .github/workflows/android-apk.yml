@@ -1480,11 +1480,11 @@ jobs:
             "${ANDROID_PROJECT}/app/jni/src/main.cpp"
 
           grep -q \
-            'applicationId "${APPLICATION_ID}"' \
+            "applicationId \"${APPLICATION_ID}\"" \
             "${ANDROID_PROJECT}/app/build.gradle"
 
           grep -q \
-            'namespace = "${APPLICATION_ID}"' \
+            "namespace = \"${APPLICATION_ID}\"" \
             "${ANDROID_PROJECT}/app/build.gradle"
 
           grep -q \
@@ -1492,7 +1492,7 @@ jobs:
             "${ANDROID_PROJECT}/app/src/main/AndroidManifest.xml"
 
           grep -q \
-            '<string name="app_name">${APP_NAME}</string>' \
+            "<string name=\"app_name\">${APP_NAME}</string>" \
             "${ANDROID_PROJECT}/app/src/main/res/values/strings.xml"
 
           echo "Configuration checks: PASSED"
