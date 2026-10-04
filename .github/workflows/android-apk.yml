@@ -30,7 +30,7 @@ env:
 
 jobs:
   build-android:
-    name: Build Ultron (${{ env.ANDROID_ABI }})
+    name: Build Ultron
     runs-on: ubuntu-24.04
     timeout-minutes: 30
 
@@ -44,7 +44,7 @@ jobs:
         uses: actions/checkout@v7
 
       # ============================================================
-      # Java
+      # Java 17
       # ============================================================
 
       - name: Setup Java 17
@@ -85,9 +85,10 @@ jobs:
           export ANDROID_PROJECT="${RUNNER_TEMP}/android-project"
 
           rm -rf "${ANDROID_PROJECT}"
+          rm -rf "${RUNNER_TEMP}/SDL"
 
           # --------------------------------------------------------
-          # SDL3
+          # SDL3 3.4.16
           # --------------------------------------------------------
 
           git clone \
@@ -110,7 +111,7 @@ jobs:
             "${ANDROID_PROJECT}/app/jni/SDL"
 
           # --------------------------------------------------------
-          # FreeType
+          # FreeType 2.14.1
           # --------------------------------------------------------
 
           git clone \
@@ -120,7 +121,7 @@ jobs:
             "${ANDROID_PROJECT}/app/jni/freetype"
 
           # --------------------------------------------------------
-          # RmlUi
+          # RmlUi 6.3
           # --------------------------------------------------------
 
           git clone \
@@ -150,19 +151,11 @@ jobs:
           set -euo pipefail
 
           # ========================================================
-          # Application identity
+          # Application name
           # ========================================================
 
           sed -i \
-            "s/org\.libsdl\.app/${APPLICATION_ID}/g" \
-            "${ANDROID_PROJECT}/app/build.gradle"
-
-          sed -i \
-            "s/org\.libsdl\.app/${APPLICATION_ID}/g" \
-            "${ANDROID_PROJECT}/app/src/main/AndroidManifest.xml"
-
-          sed -i \
-            "s/<string name=\"app_name\">[^<]*<\/string>/<string name=\"app_name\">${APP_NAME}<\/string>/" \
+            "s#<string name=\"app_name\">[^<]*</string>#<string name=\"app_name\">${APP_NAME}</string>#" \
             "${ANDROID_PROJECT}/app/src/main/res/values/strings.xml"
 
           # ========================================================
@@ -174,41 +167,15 @@ jobs:
             "${ANDROID_PROJECT}/app/src/main/AndroidManifest.xml"
 
           # ========================================================
-          # Create custom Ultron Activity
-          # ========================================================
-
-          mkdir -p \
-            "${ANDROID_PROJECT}/app/src/main/java/com/shahbazglitch/ultron"
-
-          cat > \
-            "${ANDROID_PROJECT}/app/src/main/java/com/shahbazglitch/ultron/UltronActivity.java" <<'JAVA'
-          package com.shahbazglitch.ultron;
-
-          import org.libsdl.app.SDLActivity;
-
-          public class UltronActivity extends SDLActivity {
-          }
-          JAVA
-
-          # Use the custom Activity.
-          sed -i \
-            's/android:name="SDLActivity"/android:name="com.shahbazglitch.ultron.UltronActivity"/' \
-            "${ANDROID_PROJECT}/app/src/main/AndroidManifest.xml"
-
-          # ========================================================
           # CMake / C++20
           # ========================================================
-
-          sed -i \
-            's/arguments "APP_PLATFORM=android-21"/arguments "APP_PLATFORM=android-21"/' \
-            "${ANDROID_PROJECT}/app/build.gradle"
 
           sed -i \
             's/arguments "-DANDROID_PLATFORM=android-21", "-DANDROID_STL=c++_static"/arguments "-DANDROID_PLATFORM=android-21", "-DANDROID_STL=c++_static", "-DCMAKE_CXX_STANDARD=20", "-DCMAKE_CXX_STANDARD_REQUIRED=ON", "-DCMAKE_CXX_EXTENSIONS=OFF"/' \
             "${ANDROID_PROJECT}/app/build.gradle"
 
           # ========================================================
-          # Gradle
+          # Gradle properties
           # ========================================================
 
           cat > \
@@ -219,7 +186,7 @@ jobs:
           EOF
 
           # ========================================================
-          # Main CMake
+          # Main CMakeLists.txt
           # ========================================================
 
           cat > \
@@ -231,11 +198,38 @@ jobs:
               LANGUAGES C CXX
           )
 
-          set(CMAKE_CXX_STANDARD 20 CACHE STRING "" FORCE)
-          set(CMAKE_CXX_STANDARD_REQUIRED ON CACHE BOOL "" FORCE)
-          set(CMAKE_CXX_EXTENSIONS OFF CACHE BOOL "" FORCE)
+          # ========================================================
+          # C++20
+          # ========================================================
 
-          set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+          set(
+              CMAKE_CXX_STANDARD
+              20
+              CACHE STRING
+              ""
+              FORCE
+          )
+
+          set(
+              CMAKE_CXX_STANDARD_REQUIRED
+              ON
+              CACHE BOOL
+              ""
+              FORCE
+          )
+
+          set(
+              CMAKE_CXX_EXTENSIONS
+              OFF
+              CACHE BOOL
+              ""
+              FORCE
+          )
+
+          set(
+              CMAKE_POSITION_INDEPENDENT_CODE
+              ON
+          )
 
           set(
               CMAKE_EXPORT_COMPILE_COMMANDS
@@ -451,7 +445,7 @@ jobs:
           CMAKE
 
           # ========================================================
-          # Application CMake
+          # Application CMakeLists.txt
           # ========================================================
 
           mkdir -p \
@@ -510,7 +504,7 @@ jobs:
           CMAKE
 
           # ========================================================
-          # Main native source
+          # Native application
           # ========================================================
 
           cat > \
@@ -527,20 +521,26 @@ jobs:
 
           namespace
           {
-              int Fail(SDL_Window* window,
-                       SDL_GLContext gl_context,
-                       int code,
-                       const char* message)
+              int Fail(
+                  SDL_Window* window,
+                  SDL_GLContext gl_context,
+                  int code,
+                  const char* message)
               {
-                  SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                               "Ultron startup failure: %s",
-                               message);
+                  SDL_LogError(
+                      SDL_LOG_CATEGORY_APPLICATION,
+                      "Ultron startup failure: %s",
+                      message);
 
-                  if (SDL_GetError()[0] != '\0')
+                  const char* sdl_error = SDL_GetError();
+
+                  if (sdl_error != nullptr &&
+                      sdl_error[0] != '\0')
                   {
-                      SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                                   "SDL error: %s",
-                                   SDL_GetError());
+                      SDL_LogError(
+                          SDL_LOG_CATEGORY_APPLICATION,
+                          "SDL error: %s",
+                          sdl_error);
                   }
 
                   if (gl_context != nullptr)
@@ -573,7 +573,13 @@ jobs:
 
               SDL_Log("Ultron starting...");
 
-              if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS))
+              // ====================================================
+              // SDL
+              // ====================================================
+
+              if (!SDL_Init(
+                      SDL_INIT_VIDEO |
+                      SDL_INIT_EVENTS))
               {
                   return Fail(
                       nullptr,
@@ -593,12 +599,6 @@ jobs:
               SDL_SetHint(
                   SDL_HINT_TOUCH_MOUSE_EVENTS,
                   "0");
-
-              #if defined(__ANDROID__)
-              SDL_SetHint(
-                  SDL_HINT_ANDROID_TRAP_BACK_BUTTON,
-                  "0");
-              #endif
 
               // ====================================================
               // OpenGL ES 3.2
@@ -624,6 +624,10 @@ jobs:
                   SDL_GL_DOUBLEBUFFER,
                   1);
 
+              // ====================================================
+              // Initial display scale
+              // ====================================================
+
               float display_scale =
                   SDL_GetDisplayContentScale(
                       SDL_GetPrimaryDisplay());
@@ -632,6 +636,10 @@ jobs:
               {
                   display_scale = 1.0f;
               }
+
+              // ====================================================
+              // Window properties
+              // ====================================================
 
               SDL_PropertiesID properties =
                   SDL_CreateProperties();
@@ -691,7 +699,8 @@ jobs:
                   SDL_CreateWindowWithProperties(
                       properties);
 
-              SDL_DestroyProperties(properties);
+              SDL_DestroyProperties(
+                  properties);
 
               if (window == nullptr)
               {
@@ -732,10 +741,10 @@ jobs:
               SDL_GL_SetSwapInterval(1);
 
               SDL_Log(
-                  "OpenGL context created successfully.");
+                  "OpenGL context created.");
 
               // ====================================================
-              // RmlUi GL loader
+              // RmlUi GL3
               // ====================================================
 
               if (!RmlGL3::Initialize())
@@ -752,6 +761,10 @@ jobs:
                       window);
 
                   RenderInterface_GL3 render_interface;
+
+                  // ==================================================
+                  // Drawable size
+                  // ==================================================
 
                   int width = 0;
                   int height = 0;
@@ -779,6 +792,10 @@ jobs:
                       width,
                       height);
 
+                  // ==================================================
+                  // RmlUi interfaces
+                  // ==================================================
+
                   Rml::SetSystemInterface(
                       &system_interface);
 
@@ -795,6 +812,10 @@ jobs:
                           7,
                           "Rml::Initialise failed");
                   }
+
+                  // ==================================================
+                  // RmlUi context
+                  // ==================================================
 
                   Rml::Context* context =
                       Rml::CreateContext(
@@ -826,7 +847,7 @@ jobs:
                   }
 
                   // ==================================================
-                  // Responsive Ultron test UI
+                  // Responsive test UI
                   // ==================================================
 
                   const Rml::String ui = R"rml(
@@ -967,6 +988,10 @@ jobs:
                   </rml>
                   )rml";
 
+                  // ==================================================
+                  // Load UI
+                  // ==================================================
+
                   Rml::ElementDocument* document =
                       context->LoadDocumentFromMemory(
                           ui,
@@ -988,7 +1013,7 @@ jobs:
                   document->Show();
 
                   SDL_Log(
-                      "Ultron UI initialized successfully.");
+                      "Ultron UI initialized.");
 
                   // ==================================================
                   // Main loop
@@ -1014,6 +1039,10 @@ jobs:
                               window,
                               event);
                       }
+
+                      // ----------------------------------------------
+                      // Responsive drawable size
+                      // ----------------------------------------------
 
                       int new_width = 0;
                       int new_height = 0;
@@ -1042,7 +1071,15 @@ jobs:
                           }
                       }
 
+                      // ----------------------------------------------
+                      // Update
+                      // ----------------------------------------------
+
                       context->Update();
+
+                      // ----------------------------------------------
+                      // Render
+                      // ----------------------------------------------
 
                       render_interface.Clear();
 
@@ -1052,23 +1089,36 @@ jobs:
 
                       render_interface.EndFrame();
 
-                      SDL_GL_SwapWindow(window);
+                      SDL_GL_SwapWindow(
+                          window);
                   }
 
-                  Rml::RemoveContext("main");
+                  // ==================================================
+                  // RmlUi shutdown
+                  // ==================================================
+
+                  Rml::RemoveContext(
+                      "main");
+
                   Rml::Shutdown();
               }
+
+              // ======================================================
+              // GL + SDL shutdown
+              // ======================================================
 
               RmlGL3::Shutdown();
 
               SDL_GL_DestroyContext(
                   gl_context);
 
-              SDL_DestroyWindow(window);
+              SDL_DestroyWindow(
+                  window);
 
               SDL_Quit();
 
-              SDL_Log("Ultron shutdown cleanly.");
+              SDL_Log(
+                  "Ultron shutdown cleanly.");
 
               return 0;
           }
@@ -1098,11 +1148,39 @@ jobs:
           echo "C++         : 20"
           echo "OpenGL ES   : 3.2"
 
+          echo
+          echo "Checking project files..."
+
+          test -f \
+            "${ANDROID_PROJECT}/app/build.gradle"
+
+          test -f \
+            "${ANDROID_PROJECT}/app/jni/CMakeLists.txt"
+
+          test -f \
+            "${ANDROID_PROJECT}/app/jni/src/CMakeLists.txt"
+
+          test -f \
+            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
+
+          echo "Android project: OK"
+
+          echo
+          echo "Checking SDL3..."
+
           test -f \
             "${ANDROID_PROJECT}/app/jni/SDL/include/SDL3/SDL.h"
 
           test -f \
             "${ANDROID_PROJECT}/app/jni/SDL/include/SDL3/SDL_main.h"
+
+          echo "SDL3: OK"
+
+          echo
+          echo "Checking RmlUi..."
+
+          test -f \
+            "${ANDROID_PROJECT}/app/jni/RmlUi/CMakeLists.txt"
 
           test -f \
             "${ANDROID_PROJECT}/app/jni/RmlUi/Backends/RmlUi_Platform_SDL.cpp"
@@ -1113,35 +1191,37 @@ jobs:
           test -f \
             "${ANDROID_PROJECT}/app/jni/RmlUi/Include/RmlUi/Core/ElementDocument.h"
 
+          echo "RmlUi: OK"
+
+          echo
+          echo "Checking FreeType..."
+
           test -f \
             "${ANDROID_PROJECT}/app/jni/freetype/CMakeLists.txt"
 
-          test -f \
-            "${ANDROID_PROJECT}/app/jni/src/CMakeLists.txt"
+          echo "FreeType: OK"
 
-          test -f \
-            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
-
-          test -f \
-            "${ANDROID_PROJECT}/app/src/main/java/com/shahbazglitch/ultron/UltronActivity.java"
+          echo
+          echo "Checking SDL main entry point..."
 
           grep -q \
             '#include <SDL3/SDL_main.h>' \
             "${ANDROID_PROJECT}/app/jni/src/main.cpp"
 
-          grep -q \
-            'RMLUI_SDL_VERSION_MAJOR=3' \
-            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
+          echo "SDL_main.h: OK"
 
-          grep -q \
-            'UltronActivity' \
-            "${ANDROID_PROJECT}/app/src/main/AndroidManifest.xml"
+          echo
+          echo "Checking RmlUi SDL3 definition..."
+
+          grep -R \
+            "RMLUI_SDL_VERSION_MAJOR=3" \
+            "${ANDROID_PROJECT}/app/jni"
 
           echo
           echo "Generated project verification: PASSED"
 
       # ============================================================
-      # Build
+      # Build Debug APK
       # ============================================================
 
       - name: Build Debug APK
@@ -1182,7 +1262,8 @@ jobs:
           test -n "${APK}"
           test -f "${APK}"
 
-          mkdir -p "${GITHUB_WORKSPACE}/artifacts"
+          mkdir -p \
+            "${GITHUB_WORKSPACE}/artifacts"
 
           cp \
             "${APK}" \
@@ -1218,7 +1299,7 @@ jobs:
           compression-level: 0
 
       # ============================================================
-      # Diagnostics
+      # Upload diagnostics
       # ============================================================
 
       - name: Upload build diagnostics
