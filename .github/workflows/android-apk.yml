@@ -84,11 +84,12 @@ jobs:
 
           export ANDROID_PROJECT="${RUNNER_TEMP}/android-project"
 
-          rm -rf "${ANDROID_PROJECT}"
-          rm -rf "${RUNNER_TEMP}/SDL"
+          rm -rf \
+            "${ANDROID_PROJECT}" \
+            "${RUNNER_TEMP}/SDL"
 
           # --------------------------------------------------------
-          # SDL3 3.4.16
+          # SDL3
           # --------------------------------------------------------
 
           git clone \
@@ -111,7 +112,7 @@ jobs:
             "${ANDROID_PROJECT}/app/jni/SDL"
 
           # --------------------------------------------------------
-          # FreeType 2.14.1
+          # FreeType
           # --------------------------------------------------------
 
           git clone \
@@ -121,7 +122,7 @@ jobs:
             "${ANDROID_PROJECT}/app/jni/freetype"
 
           # --------------------------------------------------------
-          # RmlUi 6.3
+          # RmlUi
           # --------------------------------------------------------
 
           git clone \
@@ -150,29 +151,174 @@ jobs:
         run: |
           set -euo pipefail
 
-          # ========================================================
-          # Application name
-          # ========================================================
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
 
-          sed -i \
-            "s#<string name=\"app_name\">[^<]*</string>#<string name=\"app_name\">${APP_NAME}</string>#" \
-            "${ANDROID_PROJECT}/app/src/main/res/values/strings.xml"
+          project = Path(os.environ["ANDROID_PROJECT"])
 
-          # ========================================================
-          # OpenGL ES 3.2
-          # ========================================================
-
-          sed -i \
-            's/android:glEsVersion="0x00020000"/android:glEsVersion="0x00030002"/' \
-            "${ANDROID_PROJECT}/app/src/main/AndroidManifest.xml"
+          app_name = os.environ["APP_NAME"]
+          application_id = os.environ["APPLICATION_ID"]
 
           # ========================================================
-          # CMake / C++20
+          # build.gradle
           # ========================================================
 
-          sed -i \
-            's/arguments "-DANDROID_PLATFORM=android-21", "-DANDROID_STL=c++_static"/arguments "-DANDROID_PLATFORM=android-21", "-DANDROID_STL=c++_static", "-DCMAKE_CXX_STANDARD=20", "-DCMAKE_CXX_STANDARD_REQUIRED=ON", "-DCMAKE_CXX_EXTENSIONS=OFF"/' \
-            "${ANDROID_PROJECT}/app/build.gradle"
+          gradle_path = (
+              project
+              / "app"
+              / "build.gradle"
+          )
+
+          gradle = gradle_path.read_text()
+
+          old_namespace = 'namespace = "org.libsdl.app"'
+          new_namespace = (
+              f'namespace = "{application_id}"'
+          )
+
+          if old_namespace not in gradle:
+              raise RuntimeError(
+                  "Expected SDL namespace was not found."
+              )
+
+          gradle = gradle.replace(
+              old_namespace,
+              new_namespace,
+              1,
+          )
+
+          # Add applicationId exactly inside defaultConfig.
+          if not re.search(
+              r'^\s*applicationId\s+["\']',
+              gradle,
+              flags=re.MULTILINE,
+          ):
+              marker = "    defaultConfig {\n"
+
+              if marker not in gradle:
+                  raise RuntimeError(
+                      "defaultConfig block was not found."
+                  )
+
+              gradle = gradle.replace(
+                  marker,
+                  (
+                      marker
+                      + f'        applicationId "{application_id}"\n'
+                  ),
+                  1,
+              )
+          else:
+              gradle = re.sub(
+                  r'^\s*applicationId\s+["\'][^"\']+["\']',
+                  f'        applicationId "{application_id}"',
+                  gradle,
+                  count=1,
+                  flags=re.MULTILINE,
+              )
+
+          # Add CMake C++20 arguments if not already present.
+          old_cmake_args = (
+              'arguments "-DANDROID_PLATFORM=android-21", '
+              '"-DANDROID_STL=c++_static"'
+          )
+
+          new_cmake_args = (
+              'arguments '
+              '"-DANDROID_PLATFORM=android-21", '
+              '"-DANDROID_STL=c++_static", '
+              '"-DCMAKE_CXX_STANDARD=20", '
+              '"-DCMAKE_CXX_STANDARD_REQUIRED=ON", '
+              '"-DCMAKE_CXX_EXTENSIONS=OFF"'
+          )
+
+          if old_cmake_args in gradle:
+              gradle = gradle.replace(
+                  old_cmake_args,
+                  new_cmake_args,
+                  1,
+              )
+
+          gradle_path.write_text(gradle)
+
+          # ========================================================
+          # strings.xml
+          # ========================================================
+
+          strings_path = (
+              project
+              / "app"
+              / "src"
+              / "main"
+              / "res"
+              / "values"
+              / "strings.xml"
+          )
+
+          strings = strings_path.read_text()
+
+          strings, count = re.subn(
+              r'<string\s+name="app_name">.*?</string>',
+              f'<string name="app_name">{app_name}</string>',
+              strings,
+              count=1,
+          )
+
+          if count != 1:
+              raise RuntimeError(
+                  "Could not update app_name."
+              )
+
+          strings_path.write_text(strings)
+
+          # ========================================================
+          # AndroidManifest.xml
+          # ========================================================
+
+          manifest_path = (
+              project
+              / "app"
+              / "src"
+              / "main"
+              / "AndroidManifest.xml"
+          )
+
+          manifest = manifest_path.read_text()
+
+          old_gles = (
+              'android:glEsVersion="0x00020000"'
+          )
+
+          new_gles = (
+              'android:glEsVersion="0x00030002"'
+          )
+
+          if old_gles in manifest:
+              manifest = manifest.replace(
+                  old_gles,
+                  new_gles,
+                  1,
+              )
+
+          # Keep SDL's proven Android activity.
+          manifest = manifest.replace(
+              'android:name="SDLActivity"',
+              'android:name="org.libsdl.app.SDLActivity"',
+              1,
+          )
+
+          manifest_path.write_text(manifest)
+
+          print("========================================")
+          print("Android configuration complete")
+          print("========================================")
+          print(f"Application : {app_name}")
+          print(f"App ID      : {application_id}")
+          print("")
+
+          PY
 
           # ========================================================
           # Gradle properties
@@ -438,7 +584,7 @@ jobs:
           )
 
           # ========================================================
-          # Application
+          # Ultron application
           # ========================================================
 
           add_subdirectory(src)
@@ -532,25 +678,27 @@ jobs:
                       "Ultron startup failure: %s",
                       message);
 
-                  const char* sdl_error = SDL_GetError();
+                  const char* error = SDL_GetError();
 
-                  if (sdl_error != nullptr &&
-                      sdl_error[0] != '\0')
+                  if (error != nullptr &&
+                      error[0] != '\0')
                   {
                       SDL_LogError(
                           SDL_LOG_CATEGORY_APPLICATION,
                           "SDL error: %s",
-                          sdl_error);
+                          error);
                   }
 
                   if (gl_context != nullptr)
                   {
-                      SDL_GL_DestroyContext(gl_context);
+                      SDL_GL_DestroyContext(
+                          gl_context);
                   }
 
                   if (window != nullptr)
                   {
-                      SDL_DestroyWindow(window);
+                      SDL_DestroyWindow(
+                          window);
                   }
 
                   SDL_Quit();
@@ -625,7 +773,7 @@ jobs:
                   1);
 
               // ====================================================
-              // Initial display scale
+              // Display scale
               // ====================================================
 
               float display_scale =
@@ -672,13 +820,15 @@ jobs:
                   properties,
                   SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER,
                   static_cast<int>(
-                      initial_width * display_scale));
+                      initial_width *
+                      display_scale));
 
               SDL_SetNumberProperty(
                   properties,
                   SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER,
                   static_cast<int>(
-                      initial_height * display_scale));
+                      initial_height *
+                      display_scale));
 
               SDL_SetBooleanProperty(
                   properties,
@@ -716,7 +866,8 @@ jobs:
               // ====================================================
 
               SDL_GLContext gl_context =
-                  SDL_GL_CreateContext(window);
+                  SDL_GL_CreateContext(
+                      window);
 
               if (gl_context == nullptr)
               {
@@ -744,7 +895,7 @@ jobs:
                   "OpenGL context created.");
 
               // ====================================================
-              // RmlUi GL3
+              // RmlUi GL3 initialization
               // ====================================================
 
               if (!RmlGL3::Initialize())
@@ -847,7 +998,7 @@ jobs:
                   }
 
                   // ==================================================
-                  // Responsive test UI
+                  // Embedded responsive UI
                   // ==================================================
 
                   const Rml::String ui = R"rml(
@@ -860,6 +1011,7 @@ jobs:
                         body
                         {
                           margin: 0px;
+
                           width: 100%;
                           height: 100%;
 
@@ -989,7 +1141,7 @@ jobs:
                   )rml";
 
                   // ==================================================
-                  // Load UI
+                  // Load embedded UI
                   // ==================================================
 
                   Rml::ElementDocument* document =
@@ -1041,7 +1193,7 @@ jobs:
                       }
 
                       // ----------------------------------------------
-                      // Responsive drawable size
+                      // Detect drawable-size changes
                       // ----------------------------------------------
 
                       int new_width = 0;
@@ -1121,193 +1273,4 @@ jobs:
                   "Ultron shutdown cleanly.");
 
               return 0;
-          }
-          CPP
-
-      # ============================================================
-      # Verify generated project
-      # ============================================================
-
-      - name: Verify generated project
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "========================================"
-          echo "Ultron configuration"
-          echo "========================================"
-
-          echo "App name    : ${APP_NAME}"
-          echo "Package     : ${APPLICATION_ID}"
-          echo "RmlUi       : ${RMLUI_VERSION}"
-          echo "SDL3        : ${SDL_VERSION}"
-          echo "FreeType    : ${FREETYPE_VERSION}"
-          echo "Android API : ${ANDROID_API}"
-          echo "NDK         : ${ANDROID_NDK_VERSION}"
-          echo "ABI         : ${ANDROID_ABI}"
-          echo "C++         : 20"
-          echo "OpenGL ES   : 3.2"
-
-          echo
-          echo "Checking project files..."
-
-          test -f \
-            "${ANDROID_PROJECT}/app/build.gradle"
-
-          test -f \
-            "${ANDROID_PROJECT}/app/jni/CMakeLists.txt"
-
-          test -f \
-            "${ANDROID_PROJECT}/app/jni/src/CMakeLists.txt"
-
-          test -f \
-            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
-
-          echo "Android project: OK"
-
-          echo
-          echo "Checking SDL3..."
-
-          test -f \
-            "${ANDROID_PROJECT}/app/jni/SDL/include/SDL3/SDL.h"
-
-          test -f \
-            "${ANDROID_PROJECT}/app/jni/SDL/include/SDL3/SDL_main.h"
-
-          echo "SDL3: OK"
-
-          echo
-          echo "Checking RmlUi..."
-
-          test -f \
-            "${ANDROID_PROJECT}/app/jni/RmlUi/CMakeLists.txt"
-
-          test -f \
-            "${ANDROID_PROJECT}/app/jni/RmlUi/Backends/RmlUi_Platform_SDL.cpp"
-
-          test -f \
-            "${ANDROID_PROJECT}/app/jni/RmlUi/Backends/RmlUi_Renderer_GL3.cpp"
-
-          test -f \
-            "${ANDROID_PROJECT}/app/jni/RmlUi/Include/RmlUi/Core/ElementDocument.h"
-
-          echo "RmlUi: OK"
-
-          echo
-          echo "Checking FreeType..."
-
-          test -f \
-            "${ANDROID_PROJECT}/app/jni/freetype/CMakeLists.txt"
-
-          echo "FreeType: OK"
-
-          echo
-          echo "Checking SDL main entry point..."
-
-          grep -q \
-            '#include <SDL3/SDL_main.h>' \
-            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
-
-          echo "SDL_main.h: OK"
-
-          echo
-          echo "Checking RmlUi SDL3 definition..."
-
-          grep -R \
-            "RMLUI_SDL_VERSION_MAJOR=3" \
-            "${ANDROID_PROJECT}/app/jni"
-
-          echo
-          echo "Generated project verification: PASSED"
-
-      # ============================================================
-      # Build Debug APK
-      # ============================================================
-
-      - name: Build Debug APK
-        shell: bash
-        working-directory: ${{ env.ANDROID_PROJECT }}
-        run: |
-          set -euo pipefail
-
-          chmod +x ./gradlew
-
-          ./gradlew \
-            --no-daemon \
-            --stacktrace \
-            --info \
-            --console=plain \
-            -PBUILD_WITH_CMAKE \
-            assembleDebug \
-            2>&1 | tee "${RUNNER_TEMP}/gradle-build.log"
-
-      # ============================================================
-      # Validate APK
-      # ============================================================
-
-      - name: Validate APK
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          APK="$(
-            find \
-              "${ANDROID_PROJECT}/app/build/outputs/apk/debug" \
-              -type f \
-              -name "*.apk" \
-              -print \
-              -quit
-          )"
-
-          test -n "${APK}"
-          test -f "${APK}"
-
-          mkdir -p \
-            "${GITHUB_WORKSPACE}/artifacts"
-
-          cp \
-            "${APK}" \
-            "${GITHUB_WORKSPACE}/artifacts/ultron-debug.apk"
-
-          "${ANDROID_HOME}/build-tools/${BUILD_TOOLS_VERSION}/aapt" \
-            dump badging \
-            "${GITHUB_WORKSPACE}/artifacts/ultron-debug.apk" \
-            | tee "${RUNNER_TEMP}/apk-badging.txt"
-
-          grep -q \
-            "com.shahbazglitch.ultron" \
-            "${RUNNER_TEMP}/apk-badging.txt"
-
-          echo
-          echo "========================================"
-          echo "APK VALIDATION PASSED"
-          echo "========================================"
-
-          ls -lh \
-            "${GITHUB_WORKSPACE}/artifacts/ultron-debug.apk"
-
-      # ============================================================
-      # Upload APK
-      # ============================================================
-
-      - name: Upload Ultron APK
-        uses: actions/upload-artifact@v7
-        with:
-          name: ultron-android-debug
-          path: artifacts/ultron-debug.apk
-          if-no-files-found: error
-          compression-level: 0
-
-      # ============================================================
-      # Upload diagnostics
-      # ============================================================
-
-      - name: Upload build diagnostics
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: ultron-build-diagnostics
-          path: |
-            ${{ runner.temp }}/gradle-build.log
-            ${{ runner.temp }}/apk-badging.txt
-          if-no-files-found: warn
+         
