@@ -261,7 +261,7 @@ jobs:
           EOF
 
           # ========================================================
-          # ICON SOURCE CHECK
+          # ICON SOURCE
           # ========================================================
 
           ICON_SOURCE="${GITHUB_WORKSPACE}/.github/assets/ultron_icon_source.png"
@@ -290,7 +290,7 @@ jobs:
           fi
 
           # ========================================================
-          # ADAPTIVE ICON RESOURCES
+          # ADAPTIVE ICON DIRECTORIES
           # ========================================================
 
           ICON_WORK="${RUNNER_TEMP}/ultron-icon"
@@ -307,48 +307,67 @@ jobs:
             "${ANDROID_PROJECT}/app/src/main/res/mipmap-xxhdpi" \
             "${ANDROID_PROJECT}/app/src/main/res/mipmap-xxxhdpi"
 
-          # --------------------------------------------------------
-          # Crop out the large outer metallic frame.
-          # Keep the inner square containing the brain and chip.
-          # --------------------------------------------------------
+          # ========================================================
+          # CENTER CROP
+          #
+          # The source image contains the large outer metallic
+          # square. A tighter center crop keeps the brain/chip
+          # artwork while removing the unwanted outer frame.
+          # ========================================================
 
           "${MAGICK}" \
             "${ICON_SOURCE}" \
             -gravity center \
-            -crop 67%x67%+0+0 \
+            -crop 58%x58%+0+0 \
             +repage \
-            -resize 820x820 \
-            "${ICON_WORK}/inner.png"
+            -resize 520x520 \
+            "${ICON_WORK}/brain_art.png"
 
-          # --------------------------------------------------------
-          # Transparent adaptive foreground.
-          # The artwork is centered with safe padding.
-          # --------------------------------------------------------
+          # ========================================================
+          # CIRCULAR ARTWORK MASK
+          #
+          # This removes any remaining tiny square edge from
+          # the cropped image. The brain/chip itself stays inside.
+          # ========================================================
+
+          "${MAGICK}" \
+            -size 520x520 \
+            xc:black \
+            -fill white \
+            -draw "circle 260,260 260,0" \
+            "${ICON_WORK}/mask.png"
+
+          "${MAGICK}" \
+            "${ICON_WORK}/brain_art.png" \
+            "${ICON_WORK}/mask.png" \
+            -alpha off \
+            -compose CopyOpacity \
+            -composite \
+            "${ICON_WORK}/brain_masked.png"
+
+          # ========================================================
+          # ADAPTIVE FOREGROUND
+          #
+          # The artwork is centered with generous safe padding so
+          # Android launcher masks do not cut the brain/chip.
+          # ========================================================
 
           "${MAGICK}" \
             -size 1080x1080 \
             xc:none \
-            "${ICON_WORK}/foreground_canvas.png"
-
-          "${MAGICK}" \
-            "${ICON_WORK}/foreground_canvas.png" \
-            "${ICON_WORK}/inner.png" \
+            "${ICON_WORK}/brain_masked.png" \
             -gravity center \
             -composite \
             "${ANDROID_PROJECT}/app/src/main/res/drawable-nodpi/ic_launcher_foreground.png"
 
-          # --------------------------------------------------------
-          # Legacy launcher icon for Android versions below 8.
-          # --------------------------------------------------------
+          # ========================================================
+          # LEGACY ICON
+          # ========================================================
 
           "${MAGICK}" \
             -size 1080x1080 \
             xc:black \
-            "${ICON_WORK}/legacy_canvas.png"
-
-          "${MAGICK}" \
-            "${ICON_WORK}/legacy_canvas.png" \
-            "${ICON_WORK}/inner.png" \
+            "${ICON_WORK}/brain_masked.png" \
             -gravity center \
             -composite \
             "${ICON_WORK}/legacy.png"
@@ -379,7 +398,7 @@ jobs:
             "${ANDROID_PROJECT}/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png"
 
           # ========================================================
-          # Adaptive icon background
+          # ADAPTIVE ICON BLACK BACKGROUND
           # ========================================================
 
           cat > \
@@ -390,7 +409,7 @@ jobs:
           EOF
 
           # ========================================================
-          # Adaptive icon XML
+          # ADAPTIVE ICON XML
           # ========================================================
 
           cat > \
@@ -539,6 +558,7 @@ jobs:
               FORCE
           )
 
+          # RmlUi SDL3 backend selection.
           add_compile_definitions(
               RMLUI_SDL_VERSION_MAJOR=3
           )
@@ -990,7 +1010,7 @@ jobs:
                   1);
 
               // ====================================================
-              // Window
+              // Window properties
               // ====================================================
 
               SDL_PropertiesID properties =
@@ -1202,7 +1222,7 @@ jobs:
                   }
 
                   // ==================================================
-                  // Embedded responsive UI
+                  // Pure-black responsive UI
                   // ==================================================
 
                   const Rml::String ui = R"rml(
@@ -1221,7 +1241,7 @@ jobs:
 
                           background-color: #000000;
 
-                          color: #EAF0FF;
+                          color: #FFFFFF;
                         }
 
                         .panel
@@ -1234,9 +1254,9 @@ jobs:
                           width: 88%;
                           height: 88%;
 
-                          background-color: #111827;
+                          background-color: #000000;
 
-                          border: 2px solid #26385F;
+                          border: 2px solid #000000;
 
                           border-radius: 26px;
                         }
@@ -1251,7 +1271,7 @@ jobs:
                           width: 90%;
                           height: 13%;
 
-                          background-color: #16213B;
+                          background-color: #000000;
 
                           border-radius: 18px;
                         }
@@ -1266,7 +1286,7 @@ jobs:
                           width: 90%;
                           height: 2%;
 
-                          background-color: #35D0BA;
+                          background-color: #000000;
 
                           border-radius: 10px;
                         }
@@ -1281,11 +1301,11 @@ jobs:
                           width: 42%;
                           height: 33%;
 
-                          background-color: #182440;
+                          background-color: #000000;
 
                           border-radius: 20px;
 
-                          border: 1px solid #2A3D68;
+                          border: 1px solid #000000;
                         }
 
                         .card_right
@@ -1298,11 +1318,11 @@ jobs:
                           width: 42%;
                           height: 33%;
 
-                          background-color: #182440;
+                          background-color: #000000;
 
                           border-radius: 20px;
 
-                          border: 1px solid #2A3D68;
+                          border: 1px solid #000000;
                         }
 
                         .footer
@@ -1315,7 +1335,7 @@ jobs:
                           width: 90%;
                           height: 11%;
 
-                          background-color: #14203A;
+                          background-color: #000000;
 
                           border-radius: 16px;
                         }
@@ -1409,7 +1429,8 @@ jobs:
                           break;
                       }
 
-                      // No OpenGL/RmlUi rendering in background.
+                      // Do not render while Android is
+                      // keeping the app in the background.
                       if (g_paused.load(
                               std::memory_order_relaxed))
                       {
@@ -1719,7 +1740,7 @@ jobs:
             2>&1 | tee "${RUNNER_TEMP}/gradle-build.log"
 
       # ============================================================
-      # VERIFY APK OUTPUT
+      # VERIFY APK
       # ============================================================
 
       - name: Verify APK output
