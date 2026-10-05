@@ -178,7 +178,7 @@ jobs:
               defaultConfig {
                   applicationId "${APPLICATION_ID}"
 
-                  minSdkVersion 21
+                  minSdkVersion 26
                   targetSdkVersion ${ANDROID_API}
 
                   versionCode ${APP_VERSION_CODE}
@@ -187,7 +187,7 @@ jobs:
                   externalNativeBuild {
                       cmake {
                           arguments \
-                              "-DANDROID_PLATFORM=android-21", \
+                              "-DANDROID_PLATFORM=android-26", \
                               "-DANDROID_STL=c++_static", \
                               "-DCMAKE_CXX_STANDARD=20", \
                               "-DCMAKE_CXX_STANDARD_REQUIRED=ON", \
@@ -309,12 +309,6 @@ jobs:
 
           # ========================================================
           # PREPARE ICON ARTWORK
-          #
-          # Keep the uploaded image intact.
-          # No crop.
-          #
-          # 720x720 gives a larger launcher artwork than the previous
-          # 620x620 version while retaining useful safe padding.
           # ========================================================
 
           "${MAGICK}" \
@@ -324,13 +318,6 @@ jobs:
 
           # ========================================================
           # ADAPTIVE FOREGROUND
-          #
-          # Transparent canvas.
-          #
-          # IMPORTANT:
-          # There is intentionally NO separate black adaptive
-          # background behind the artwork. This prevents the extra
-          # inner mask/background effect.
           # ========================================================
 
           "${MAGICK}" \
@@ -347,9 +334,6 @@ jobs:
 
           # ========================================================
           # LEGACY ICONS
-          #
-          # Use the same uploaded artwork directly.
-          # No additional black canvas.
           # ========================================================
 
           "${MAGICK}" \
@@ -379,9 +363,6 @@ jobs:
 
           # ========================================================
           # ADAPTIVE ICON XML
-          #
-          # Transparent background removes our additional layer.
-          # Android still applies its normal launcher mask.
           # ========================================================
 
           cat > \
@@ -530,7 +511,6 @@ jobs:
               FORCE
           )
 
-          # RmlUi SDL3 backend selection.
           add_compile_definitions(
               RMLUI_SDL_VERSION_MAJOR=3
           )
@@ -927,9 +907,7 @@ jobs:
               SDL_Log(
                   "Ultron starting...");
 
-              // ====================================================
-              // SDL
-              // ====================================================
+              #if 1
 
               if (!SDL_Init(
                       SDL_INIT_VIDEO |
@@ -1210,7 +1188,7 @@ jobs:
                   }
 
                   // ==================================================
-                  // Completely black RmlUi document.
+                  // Completely black RmlUi document
                   // ==================================================
 
                   const Rml::String ui = R"rml(
@@ -1297,8 +1275,6 @@ jobs:
                       {
                           break;
                       }
-
-                      // Do not render while backgrounded.
 
                       if (g_paused.load(
                               std::memory_order_relaxed))
@@ -1393,6 +1369,12 @@ jobs:
                   "Ultron shutdown cleanly.");
 
               return 0;
+
+              #else
+
+              return 0;
+
+              #endif
           }
           CPP
 
@@ -1416,6 +1398,7 @@ jobs:
           echo "SDL3        : ${SDL_VERSION}"
           echo "FreeType    : ${FREETYPE_VERSION}"
           echo "Android API : ${ANDROID_API}"
+          echo "Min SDK     : 26"
           echo "NDK         : ${ANDROID_NDK_VERSION}"
           echo "ABI         : ${ANDROID_ABI}"
           echo "C++         : 20"
@@ -1586,7 +1569,15 @@ jobs:
             "${ANDROID_PROJECT}/app/build.gradle"
 
           grep -q \
+            'minSdkVersion 26' \
+            "${ANDROID_PROJECT}/app/build.gradle"
+
+          grep -q \
             'targetSdkVersion 36' \
+            "${ANDROID_PROJECT}/app/build.gradle"
+
+          grep -q \
+            '"-DANDROID_PLATFORM=android-26"' \
             "${ANDROID_PROJECT}/app/build.gradle"
 
           grep -q \
@@ -1758,6 +1749,22 @@ jobs:
 
           echo
           echo "========================================"
+          echo "SDK VALIDATION"
+          echo "========================================"
+
+          grep -q \
+            "sdkVersion:'26'" \
+            "${RUNNER_TEMP}/apk-badging.txt"
+
+          grep -q \
+            "targetSdkVersion:'36'" \
+            "${RUNNER_TEMP}/apk-badging.txt"
+
+          echo "Minimum SDK 26: PASSED"
+          echo "Target SDK 36: PASSED"
+
+          echo
+          echo "========================================"
           echo "ICON VALIDATION"
           echo "========================================"
 
@@ -1810,6 +1817,7 @@ jobs:
             echo "| SDL3 | ${SDL_VERSION} |"
             echo "| FreeType | ${FREETYPE_VERSION} |"
             echo "| Android API | ${ANDROID_API} |"
+            echo "| Min SDK | 26 |"
             echo "| NDK | ${ANDROID_NDK_VERSION} |"
             echo "| ABI | ${ANDROID_ABI} |"
             echo "| C++ | 20 |"
