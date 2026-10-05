@@ -264,11 +264,31 @@ jobs:
           # ICON SOURCE
           # ========================================================
 
-          ICON_SOURCE="${GITHUB_WORKSPACE}/.github/assets/ultron_icon_source.png"
+          ICON_SOURCE=""
 
+          if [ -d "${GITHUB_WORKSPACE}/.github/assets" ]; then
+              ICON_SOURCE="$(
+                  find \
+                    "${GITHUB_WORKSPACE}/.github/assets" \
+                    -maxdepth 1 \
+                    -type f \
+                    \( \
+                      -iname "*.png" \
+                      -o -iname "*.jpg" \
+                      -o -iname "*.jpeg" \
+                      -o -iname "*.webp" \
+                    \) \
+                    -print \
+                    | sort \
+                    | head -n 1
+              )
+          fi
+
+          test -n "${ICON_SOURCE}"
           test -f "${ICON_SOURCE}"
 
-          echo "Ultron icon source: PASSED"
+          echo "Icon source:"
+          echo "${ICON_SOURCE}"
 
           # ========================================================
           # IMAGE TOOL
@@ -289,8 +309,11 @@ jobs:
               fi
           fi
 
+          # Validate source image.
+          "${MAGICK}" identify "${ICON_SOURCE}"
+
           # ========================================================
-          # ADAPTIVE ICON DIRECTORIES
+          # ADAPTIVE ICON RESOURCES
           # ========================================================
 
           ICON_WORK="${RUNNER_TEMP}/ultron-icon"
@@ -307,67 +330,47 @@ jobs:
             "${ANDROID_PROJECT}/app/src/main/res/mipmap-xxhdpi" \
             "${ANDROID_PROJECT}/app/src/main/res/mipmap-xxxhdpi"
 
-          # ========================================================
-          # CENTER CROP
+          # --------------------------------------------------------
+          # Keep the new brain image intact.
           #
-          # The source image contains the large outer metallic
-          # square. A tighter center crop keeps the brain/chip
-          # artwork while removing the unwanted outer frame.
-          # ========================================================
+          # It has no outer metallic frame.
+          # Scale it down into a safe adaptive-icon canvas so
+          # Android launcher masks do not cut the brain.
+          # --------------------------------------------------------
 
           "${MAGICK}" \
             "${ICON_SOURCE}" \
-            -gravity center \
-            -crop 58%x58%+0+0 \
-            +repage \
-            -resize 520x520 \
-            "${ICON_WORK}/brain_art.png"
+            -resize 720x720 \
+            "${ICON_WORK}/brain.png"
 
-          # ========================================================
-          # CIRCULAR ARTWORK MASK
-          #
-          # This removes any remaining tiny square edge from
-          # the cropped image. The brain/chip itself stays inside.
-          # ========================================================
-
-          "${MAGICK}" \
-            -size 520x520 \
-            xc:black \
-            -fill white \
-            -draw "circle 260,260 260,0" \
-            "${ICON_WORK}/mask.png"
-
-          "${MAGICK}" \
-            "${ICON_WORK}/brain_art.png" \
-            "${ICON_WORK}/mask.png" \
-            -alpha off \
-            -compose CopyOpacity \
-            -composite \
-            "${ICON_WORK}/brain_masked.png"
-
-          # ========================================================
-          # ADAPTIVE FOREGROUND
-          #
-          # The artwork is centered with generous safe padding so
-          # Android launcher masks do not cut the brain/chip.
-          # ========================================================
+          # --------------------------------------------------------
+          # Transparent adaptive foreground canvas.
+          # --------------------------------------------------------
 
           "${MAGICK}" \
             -size 1080x1080 \
             xc:none \
-            "${ICON_WORK}/brain_masked.png" \
+            "${ICON_WORK}/foreground_canvas.png"
+
+          "${MAGICK}" \
+            "${ICON_WORK}/foreground_canvas.png" \
+            "${ICON_WORK}/brain.png" \
             -gravity center \
             -composite \
             "${ANDROID_PROJECT}/app/src/main/res/drawable-nodpi/ic_launcher_foreground.png"
 
-          # ========================================================
-          # LEGACY ICON
-          # ========================================================
+          # --------------------------------------------------------
+          # Legacy icon for Android versions below API 26.
+          # --------------------------------------------------------
 
           "${MAGICK}" \
             -size 1080x1080 \
             xc:black \
-            "${ICON_WORK}/brain_masked.png" \
+            "${ICON_WORK}/legacy_canvas.png"
+
+          "${MAGICK}" \
+            "${ICON_WORK}/legacy_canvas.png" \
+            "${ICON_WORK}/brain.png" \
             -gravity center \
             -composite \
             "${ICON_WORK}/legacy.png"
@@ -398,7 +401,7 @@ jobs:
             "${ANDROID_PROJECT}/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png"
 
           # ========================================================
-          # ADAPTIVE ICON BLACK BACKGROUND
+          # ADAPTIVE ICON BACKGROUND
           # ========================================================
 
           cat > \
@@ -407,10 +410,6 @@ jobs:
               <color name="ultron_icon_black">#000000</color>
           </resources>
           EOF
-
-          # ========================================================
-          # ADAPTIVE ICON XML
-          # ========================================================
 
           cat > \
             "${ANDROID_PROJECT}/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml" <<'EOF'
@@ -428,7 +427,7 @@ jobs:
           </adaptive-icon>
           EOF
 
-          echo "Adaptive icon: PASSED"
+          echo "Icon resources prepared."
 
           # ========================================================
           # AndroidManifest.xml
@@ -753,6 +752,10 @@ jobs:
               EXCLUDE_FROM_ALL
           )
 
+          # ========================================================
+          # Application
+          # ========================================================
+
           add_subdirectory(src)
           CMAKE
 
@@ -834,6 +837,8 @@ jobs:
             "${ANDROID_PROJECT}/app/jni/src/main.cpp" <<'CPP'
           #include <SDL3/SDL.h>
           #include <SDL3/SDL_main.h>
+
+          #include <GLES3/gl32.h>
 
           #include <atomic>
 
@@ -1010,7 +1015,7 @@ jobs:
                   1);
 
               // ====================================================
-              // Window properties
+              // Window
               // ====================================================
 
               SDL_PropertiesID properties =
@@ -1222,7 +1227,7 @@ jobs:
                   }
 
                   // ==================================================
-                  // Pure-black responsive UI
+                  // Pure black UI
                   // ==================================================
 
                   const Rml::String ui = R"rml(
@@ -1232,135 +1237,28 @@ jobs:
 
                       <style>
 
+                        html,
                         body
                         {
                           margin: 0px;
+
+                          padding: 0px;
 
                           width: 100%;
                           height: 100%;
 
                           background-color: #000000;
 
-                          color: #FFFFFF;
-                        }
+                          color: #000000;
 
-                        .panel
-                        {
-                          position: absolute;
-
-                          left: 6%;
-                          top: 6%;
-
-                          width: 88%;
-                          height: 88%;
-
-                          background-color: #000000;
-
-                          border: 2px solid #000000;
-
-                          border-radius: 26px;
-                        }
-
-                        .top
-                        {
-                          position: absolute;
-
-                          left: 5%;
-                          top: 5%;
-
-                          width: 90%;
-                          height: 13%;
-
-                          background-color: #000000;
-
-                          border-radius: 18px;
-                        }
-
-                        .indicator
-                        {
-                          position: absolute;
-
-                          left: 5%;
-                          top: 24%;
-
-                          width: 90%;
-                          height: 2%;
-
-                          background-color: #000000;
-
-                          border-radius: 10px;
-                        }
-
-                        .card_left
-                        {
-                          position: absolute;
-
-                          left: 5%;
-                          top: 31%;
-
-                          width: 42%;
-                          height: 33%;
-
-                          background-color: #000000;
-
-                          border-radius: 20px;
-
-                          border: 1px solid #000000;
-                        }
-
-                        .card_right
-                        {
-                          position: absolute;
-
-                          right: 5%;
-                          top: 31%;
-
-                          width: 42%;
-                          height: 33%;
-
-                          background-color: #000000;
-
-                          border-radius: 20px;
-
-                          border: 1px solid #000000;
-                        }
-
-                        .footer
-                        {
-                          position: absolute;
-
-                          left: 5%;
-                          bottom: 5%;
-
-                          width: 90%;
-                          height: 11%;
-
-                          background-color: #000000;
-
-                          border-radius: 16px;
+                          overflow: hidden;
                         }
 
                       </style>
 
                     </head>
 
-                    <body>
-
-                      <div class="panel">
-
-                        <div class="top"></div>
-
-                        <div class="indicator"></div>
-
-                        <div class="card_left"></div>
-
-                        <div class="card_right"></div>
-
-                        <div class="footer"></div>
-
-                      </div>
-
-                    </body>
+                    <body></body>
 
                   </rml>
                   )rml";
@@ -1372,7 +1270,7 @@ jobs:
                   Rml::ElementDocument* document =
                       context->LoadDocumentFromMemory(
                           ui,
-                          "[embedded-ultron-ui.rml]");
+                          "[embedded-ultron-black-ui.rml]");
 
                   if (document == nullptr)
                   {
@@ -1393,7 +1291,7 @@ jobs:
                   document->Show();
 
                   SDL_Log(
-                      "Ultron UI initialized.");
+                      "Ultron black UI initialized.");
 
                   // ==================================================
                   // Main loop
@@ -1429,8 +1327,10 @@ jobs:
                           break;
                       }
 
-                      // Do not render while Android is
-                      // keeping the app in the background.
+                      // ------------------------------------------------
+                      // Android background
+                      // ------------------------------------------------
+
                       if (g_paused.load(
                               std::memory_order_relaxed))
                       {
@@ -1438,9 +1338,9 @@ jobs:
                           continue;
                       }
 
-                      // ==================================================
+                      // ------------------------------------------------
                       // Responsive drawable size
-                      // ==================================================
+                      // ------------------------------------------------
 
                       int new_width = 0;
                       int new_height = 0;
@@ -1469,19 +1369,30 @@ jobs:
                           }
                       }
 
-                      // ==================================================
+                      // ------------------------------------------------
                       // Update
-                      // ==================================================
+                      // ------------------------------------------------
 
                       context->Update();
 
-                      // ==================================================
-                      // Render
-                      // ==================================================
-
-                      render_interface.Clear();
+                      // ------------------------------------------------
+                      // Render on a guaranteed black framebuffer
+                      // ------------------------------------------------
 
                       render_interface.BeginFrame();
+
+                      glDisable(GL_SCISSOR_TEST);
+
+                      glClearColor(
+                          0.0f,
+                          0.0f,
+                          0.0f,
+                          1.0f);
+
+                      glClear(
+                          GL_COLOR_BUFFER_BIT |
+                          GL_DEPTH_BUFFER_BIT |
+                          GL_STENCIL_BUFFER_BIT);
 
                       context->Render();
 
@@ -1621,8 +1532,28 @@ jobs:
           echo "ICON"
           echo "========================================"
 
-          test -f \
-            "${GITHUB_WORKSPACE}/.github/assets/ultron_icon_source.png"
+          ICON_SOURCE=""
+
+          if [ -d "${GITHUB_WORKSPACE}/.github/assets" ]; then
+              ICON_SOURCE="$(
+                  find \
+                    "${GITHUB_WORKSPACE}/.github/assets" \
+                    -maxdepth 1 \
+                    -type f \
+                    \( \
+                      -iname "*.png" \
+                      -o -iname "*.jpg" \
+                      -o -iname "*.jpeg" \
+                      -o -iname "*.webp" \
+                    \) \
+                    -print \
+                    | sort \
+                    | head -n 1
+              )
+          fi
+
+          test -n "${ICON_SOURCE}"
+          test -f "${ICON_SOURCE}"
 
           test -f \
             "${ANDROID_PROJECT}/app/src/main/res/drawable-nodpi/ic_launcher_foreground.png"
@@ -1648,6 +1579,7 @@ jobs:
           test -f \
             "${ANDROID_PROJECT}/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png"
 
+          echo "Icon source: ${ICON_SOURCE}"
           echo "Icon resources: PASSED"
 
           echo
@@ -1681,6 +1613,14 @@ jobs:
 
           grep -q \
             'background-color: #000000' \
+            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
+
+          grep -q \
+            'glClearColor(' \
+            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
+
+          grep -q \
+            'glClear(' \
             "${ANDROID_PROJECT}/app/jni/src/main.cpp"
 
           grep -q \
@@ -1740,7 +1680,7 @@ jobs:
             2>&1 | tee "${RUNNER_TEMP}/gradle-build.log"
 
       # ============================================================
-      # VERIFY APK
+      # VERIFY APK OUTPUT
       # ============================================================
 
       - name: Verify APK output
