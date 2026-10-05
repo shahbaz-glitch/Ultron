@@ -47,7 +47,7 @@ jobs:
         uses: actions/checkout@v7
 
       # ============================================================
-      # JAVA 17
+      # JAVA
       # ============================================================
 
       - name: Setup Java 17
@@ -91,9 +91,9 @@ jobs:
             "${ANDROID_PROJECT}" \
             "${RUNNER_TEMP}/SDL"
 
-          # --------------------------------------------------------
+          # ========================================================
           # SDL3
-          # --------------------------------------------------------
+          # ========================================================
 
           git clone \
             --depth 1 \
@@ -114,9 +114,9 @@ jobs:
             "https://github.com/libsdl-org/SDL.git" \
             "${ANDROID_PROJECT}/app/jni/SDL"
 
-          # --------------------------------------------------------
+          # ========================================================
           # FreeType
-          # --------------------------------------------------------
+          # ========================================================
 
           git clone \
             --depth 1 \
@@ -124,9 +124,9 @@ jobs:
             "https://github.com/freetype/freetype.git" \
             "${ANDROID_PROJECT}/app/jni/freetype"
 
-          # --------------------------------------------------------
+          # ========================================================
           # RmlUi
-          # --------------------------------------------------------
+          # ========================================================
 
           git clone \
             --depth 1 \
@@ -134,9 +134,9 @@ jobs:
             "https://github.com/mikke89/RmlUi.git" \
             "${ANDROID_PROJECT}/app/jni/RmlUi"
 
-          # --------------------------------------------------------
+          # ========================================================
           # Remove git metadata
-          # --------------------------------------------------------
+          # ========================================================
 
           rm -rf \
             "${ANDROID_PROJECT}/app/jni/SDL/.git" \
@@ -308,20 +308,29 @@ jobs:
             "${ANDROID_PROJECT}/app/src/main/res/mipmap-xxxhdpi"
 
           # ========================================================
-          # PREPARE BRAIN ARTWORK
+          # PREPARE ICON ARTWORK
           #
+          # Keep the uploaded image intact.
           # No crop.
-          # Keep the complete uploaded image.
-          # Add safe padding for Android adaptive-icon masking.
+          #
+          # 720x720 gives a larger launcher artwork than the previous
+          # 620x620 version while retaining useful safe padding.
           # ========================================================
 
           "${MAGICK}" \
             "${ICON_SOURCE}" \
-            -resize 620x620 \
+            -resize 720x720 \
             "${ICON_WORK}/brain.png"
 
           # ========================================================
-          # ADAPTIVE ICON FOREGROUND
+          # ADAPTIVE FOREGROUND
+          #
+          # Transparent canvas.
+          #
+          # IMPORTANT:
+          # There is intentionally NO separate black adaptive
+          # background behind the artwork. This prevents the extra
+          # inner mask/background effect.
           # ========================================================
 
           "${MAGICK}" \
@@ -337,59 +346,42 @@ jobs:
             "${ANDROID_PROJECT}/app/src/main/res/drawable-nodpi/ic_launcher_foreground.png"
 
           # ========================================================
-          # LEGACY ICON
+          # LEGACY ICONS
+          #
+          # Use the same uploaded artwork directly.
+          # No additional black canvas.
           # ========================================================
 
           "${MAGICK}" \
-            -size 1080x1080 \
-            xc:black \
-            "${ICON_WORK}/legacy_canvas.png"
-
-          "${MAGICK}" \
-            "${ICON_WORK}/legacy_canvas.png" \
-            "${ICON_WORK}/brain.png" \
-            -gravity center \
-            -composite \
-            "${ICON_WORK}/legacy.png"
-
-          "${MAGICK}" \
-            "${ICON_WORK}/legacy.png" \
+            "${ICON_SOURCE}" \
             -resize 48x48 \
             "${ANDROID_PROJECT}/app/src/main/res/mipmap-mdpi/ic_launcher.png"
 
           "${MAGICK}" \
-            "${ICON_WORK}/legacy.png" \
+            "${ICON_SOURCE}" \
             -resize 72x72 \
             "${ANDROID_PROJECT}/app/src/main/res/mipmap-hdpi/ic_launcher.png"
 
           "${MAGICK}" \
-            "${ICON_WORK}/legacy.png" \
+            "${ICON_SOURCE}" \
             -resize 96x96 \
             "${ANDROID_PROJECT}/app/src/main/res/mipmap-xhdpi/ic_launcher.png"
 
           "${MAGICK}" \
-            "${ICON_WORK}/legacy.png" \
+            "${ICON_SOURCE}" \
             -resize 144x144 \
             "${ANDROID_PROJECT}/app/src/main/res/mipmap-xxhdpi/ic_launcher.png"
 
           "${MAGICK}" \
-            "${ICON_WORK}/legacy.png" \
+            "${ICON_SOURCE}" \
             -resize 192x192 \
             "${ANDROID_PROJECT}/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png"
 
           # ========================================================
-          # ADAPTIVE ICON BLACK BACKGROUND
-          # ========================================================
-
-          cat > \
-            "${ANDROID_PROJECT}/app/src/main/res/values/ultron_icon_colors.xml" <<'EOF'
-          <resources>
-              <color name="ultron_icon_black">#000000</color>
-          </resources>
-          EOF
-
-          # ========================================================
           # ADAPTIVE ICON XML
+          #
+          # Transparent background removes our additional layer.
+          # Android still applies its normal launcher mask.
           # ========================================================
 
           cat > \
@@ -400,7 +392,7 @@ jobs:
               xmlns:android="http://schemas.android.com/apk/res/android">
 
               <background
-                  android:drawable="@color/ultron_icon_black" />
+                  android:drawable="@android:color/transparent" />
 
               <foreground
                   android:drawable="@drawable/ic_launcher_foreground" />
@@ -538,6 +530,7 @@ jobs:
               FORCE
           )
 
+          # RmlUi SDL3 backend selection.
           add_compile_definitions(
               RMLUI_SDL_VERSION_MAJOR=3
           )
@@ -667,7 +660,7 @@ jobs:
           endif()
 
           # ========================================================
-          # RmlUi 6.3
+          # RmlUi
           # ========================================================
 
           set(
@@ -790,7 +783,6 @@ jobs:
               PRIVATE
 
               RmlUi::RmlUi
-
               SDL3::SDL3-shared
 
               GLESv3
@@ -1093,7 +1085,7 @@ jobs:
               SDL_GL_SetSwapInterval(1);
 
               // ====================================================
-              // Pure-black OpenGL frame
+              // Pure black OpenGL frame
               // ====================================================
 
               glDisable(GL_SCISSOR_TEST);
@@ -1128,6 +1120,10 @@ jobs:
                       window);
 
                   RenderInterface_GL3 render_interface;
+
+                  // ==================================================
+                  // Drawable size
+                  // ==================================================
 
                   int width = 0;
                   int height = 0;
@@ -1199,6 +1195,10 @@ jobs:
                           "Rml::CreateContext failed");
                   }
 
+                  // ==================================================
+                  // Display density
+                  // ==================================================
+
                   const float window_scale =
                       SDL_GetWindowDisplayScale(
                           window);
@@ -1210,7 +1210,7 @@ jobs:
                   }
 
                   // ==================================================
-                  // Completely black RmlUi document
+                  // Completely black RmlUi document.
                   // ==================================================
 
                   const Rml::String ui = R"rml(
@@ -1298,7 +1298,7 @@ jobs:
                           break;
                       }
 
-                      // Do not render in background.
+                      // Do not render while backgrounded.
 
                       if (g_paused.load(
                               std::memory_order_relaxed))
@@ -1308,7 +1308,7 @@ jobs:
                       }
 
                       // ==================================================
-                      // Responsive size
+                      // Responsive drawable size
                       // ==================================================
 
                       int new_width = 0;
@@ -1339,7 +1339,7 @@ jobs:
                       }
 
                       // ==================================================
-                      // Force pure black frame
+                      // Pure black frame
                       // ==================================================
 
                       glDisable(GL_SCISSOR_TEST);
@@ -1508,9 +1508,6 @@ jobs:
             "${ANDROID_PROJECT}/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml"
 
           test -f \
-            "${ANDROID_PROJECT}/app/src/main/res/values/ultron_icon_colors.xml"
-
-          test -f \
             "${ANDROID_PROJECT}/app/src/main/res/mipmap-mdpi/ic_launcher.png"
 
           test -f \
@@ -1538,6 +1535,10 @@ jobs:
 
           grep -q \
             '#include <SDL3/SDL_main.h>' \
+            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
+
+          grep -q \
+            '#include <RmlUi/Core/Context.h>' \
             "${ANDROID_PROJECT}/app/jni/src/main.cpp"
 
           grep -q \
@@ -1601,7 +1602,7 @@ jobs:
             "${ANDROID_PROJECT}/app/src/main/res/values/strings.xml"
 
           grep -q \
-            'android:drawable="@color/ultron_icon_black"' \
+            'android:drawable="@android:color/transparent"' \
             "${ANDROID_PROJECT}/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml"
 
           grep -q \
