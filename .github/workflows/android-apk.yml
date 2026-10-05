@@ -261,37 +261,106 @@ jobs:
           EOF
 
           # ========================================================
-          # ICON SOURCE
+          # BLACK APP THEME
           # ========================================================
 
-          ICON_SOURCE=""
+          cat > \
+            "${ANDROID_PROJECT}/app/src/main/res/values/styles.xml" <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
 
-          if [ -d "${GITHUB_WORKSPACE}/.github/assets" ]; then
+              <style
+                  name="AppTheme"
+                  parent="android:Theme.NoTitleBar.Fullscreen">
+
+                  <item name="android:windowBackground">#000000</item>
+                  <item name="android:colorAccent">#000000</item>
+                  <item name="android:fontFamily">sans</item>
+
+              </style>
+
+          </resources>
+          EOF
+
+          # ========================================================
+          # Android 12+ BLACK SPLASH
+          # ========================================================
+
+          mkdir -p \
+            "${ANDROID_PROJECT}/app/src/main/res/values-v31"
+
+          cat > \
+            "${ANDROID_PROJECT}/app/src/main/res/values-v31/styles.xml" <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+
+              <style
+                  name="AppTheme"
+                  parent="android:Theme.NoTitleBar.Fullscreen">
+
+                  <item name="android:windowBackground">#000000</item>
+                  <item name="android:windowSplashScreenBackground">#000000</item>
+                  <item name="android:windowSplashScreenAnimatedIcon">@drawable/ultron_splash_transparent</item>
+                  <item name="android:colorAccent">#000000</item>
+
+              </style>
+
+          </resources>
+          EOF
+
+          # ========================================================
+          # Transparent splash drawable
+          # ========================================================
+
+          mkdir -p \
+            "${ANDROID_PROJECT}/app/src/main/res/drawable"
+
+          cat > \
+            "${ANDROID_PROJECT}/app/src/main/res/drawable/ultron_splash_transparent.xml" <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+
+          <shape
+              xmlns:android="http://schemas.android.com/apk/res/android"
+              android:shape="rectangle">
+
+              <solid
+                  android:color="@android:color/transparent" />
+
+          </shape>
+          EOF
+
+          # ========================================================
+          # LOCATE ICON SOURCE
+          # ========================================================
+
+          ICON_DIR="${GITHUB_WORKSPACE}/.github/assets"
+
+          test -d "${ICON_DIR}"
+
+          ICON_SOURCE="${ICON_DIR}/ultron_icon_source.png"
+
+          if [ ! -f "${ICON_SOURCE}" ]; then
               ICON_SOURCE="$(
-                  find \
-                    "${GITHUB_WORKSPACE}/.github/assets" \
-                    -maxdepth 1 \
-                    -type f \
-                    \( \
-                      -iname "*.png" \
-                      -o -iname "*.jpg" \
-                      -o -iname "*.jpeg" \
-                      -o -iname "*.webp" \
-                    \) \
-                    -print \
-                    | sort \
-                    | head -n 1
-              )
+                  find "${ICON_DIR}" \
+                      -maxdepth 1 \
+                      -type f \
+                      \( \
+                          -iname "*.png" \
+                          -o -iname "*.jpg" \
+                          -o -iname "*.jpeg" \
+                      \) \
+                      | sort \
+                      | head -n 1
+              )"
           fi
 
           test -n "${ICON_SOURCE}"
           test -f "${ICON_SOURCE}"
 
-          echo "Icon source:"
-          echo "${ICON_SOURCE}"
+          echo "Icon source: ${ICON_SOURCE}"
 
           # ========================================================
-          # IMAGE TOOL
+          # IMAGE MAGICK
           # ========================================================
 
           if command -v magick >/dev/null 2>&1; then
@@ -309,11 +378,8 @@ jobs:
               fi
           fi
 
-          # Validate source image.
-          "${MAGICK}" identify "${ICON_SOURCE}"
-
           # ========================================================
-          # ADAPTIVE ICON RESOURCES
+          # ADAPTIVE ICON
           # ========================================================
 
           ICON_WORK="${RUNNER_TEMP}/ultron-icon"
@@ -331,46 +397,31 @@ jobs:
             "${ANDROID_PROJECT}/app/src/main/res/mipmap-xxxhdpi"
 
           # --------------------------------------------------------
-          # Keep the new brain image intact.
-          #
-          # It has no outer metallic frame.
-          # Scale it down into a safe adaptive-icon canvas so
-          # Android launcher masks do not cut the brain.
+          # Do NOT crop the uploaded brain image.
+          # Preserve the complete uploaded artwork.
+          # Scale it into a safe centered area.
           # --------------------------------------------------------
 
           "${MAGICK}" \
             "${ICON_SOURCE}" \
-            -resize 720x720 \
-            "${ICON_WORK}/brain.png"
-
-          # --------------------------------------------------------
-          # Transparent adaptive foreground canvas.
-          # --------------------------------------------------------
-
-          "${MAGICK}" \
-            -size 1080x1080 \
-            xc:none \
-            "${ICON_WORK}/foreground_canvas.png"
-
-          "${MAGICK}" \
-            "${ICON_WORK}/foreground_canvas.png" \
-            "${ICON_WORK}/brain.png" \
+            -resize 700x700 \
+            -background none \
             -gravity center \
-            -composite \
+            -extent 1080x1080 \
+            "${ICON_WORK}/foreground.png"
+
+          cp \
+            "${ICON_WORK}/foreground.png" \
             "${ANDROID_PROJECT}/app/src/main/res/drawable-nodpi/ic_launcher_foreground.png"
 
           # --------------------------------------------------------
-          # Legacy icon for Android versions below API 26.
+          # Legacy icon
           # --------------------------------------------------------
 
           "${MAGICK}" \
             -size 1080x1080 \
             xc:black \
-            "${ICON_WORK}/legacy_canvas.png"
-
-          "${MAGICK}" \
-            "${ICON_WORK}/legacy_canvas.png" \
-            "${ICON_WORK}/brain.png" \
+            "${ICON_WORK}/foreground.png" \
             -gravity center \
             -composite \
             "${ICON_WORK}/legacy.png"
@@ -411,6 +462,10 @@ jobs:
           </resources>
           EOF
 
+          # ========================================================
+          # ADAPTIVE ICON XML
+          # ========================================================
+
           cat > \
             "${ANDROID_PROJECT}/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml" <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
@@ -427,7 +482,23 @@ jobs:
           </adaptive-icon>
           EOF
 
-          echo "Icon resources prepared."
+          cat > \
+            "${ANDROID_PROJECT}/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml" <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+
+          <adaptive-icon
+              xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <background
+                  android:drawable="@color/ultron_icon_black" />
+
+              <foreground
+                  android:drawable="@drawable/ic_launcher_foreground" />
+
+          </adaptive-icon>
+          EOF
+
+          echo "Adaptive icon: PASSED"
 
           # ========================================================
           # AndroidManifest.xml
@@ -473,6 +544,7 @@ jobs:
               <application
                   android:label="@string/app_name"
                   android:icon="@mipmap/ic_launcher"
+                  android:roundIcon="@mipmap/ic_launcher_round"
                   android:allowBackup="true"
                   android:theme="@style/AppTheme"
                   android:hardwareAccelerated="true"
@@ -557,7 +629,6 @@ jobs:
               FORCE
           )
 
-          # RmlUi SDL3 backend selection.
           add_compile_definitions(
               RMLUI_SDL_VERSION_MAJOR=3
           )
@@ -752,10 +823,6 @@ jobs:
               EXCLUDE_FROM_ALL
           )
 
-          # ========================================================
-          # Application
-          # ========================================================
-
           add_subdirectory(src)
           CMAKE
 
@@ -837,8 +904,6 @@ jobs:
             "${ANDROID_PROJECT}/app/jni/src/main.cpp" <<'CPP'
           #include <SDL3/SDL.h>
           #include <SDL3/SDL_main.h>
-
-          #include <GLES3/gl32.h>
 
           #include <atomic>
 
@@ -1138,10 +1203,6 @@ jobs:
 
                   RenderInterface_GL3 render_interface;
 
-                  // ==================================================
-                  // Drawable size
-                  // ==================================================
-
                   int width = 0;
                   int height = 0;
 
@@ -1168,10 +1229,6 @@ jobs:
                       width,
                       height);
 
-                  // ==================================================
-                  // RmlUi interfaces
-                  // ==================================================
-
                   Rml::SetSystemInterface(
                       &system_interface);
 
@@ -1188,10 +1245,6 @@ jobs:
                           7,
                           "Rml::Initialise failed");
                   }
-
-                  // ==================================================
-                  // Context
-                  // ==================================================
 
                   Rml::Context* context =
                       Rml::CreateContext(
@@ -1212,10 +1265,6 @@ jobs:
                           "Rml::CreateContext failed");
                   }
 
-                  // ==================================================
-                  // Display density
-                  // ==================================================
-
                   const float window_scale =
                       SDL_GetWindowDisplayScale(
                           window);
@@ -1227,7 +1276,7 @@ jobs:
                   }
 
                   // ==================================================
-                  // Pure black UI
+                  // PURE BLACK UI
                   // ==================================================
 
                   const Rml::String ui = R"rml(
@@ -1237,12 +1286,9 @@ jobs:
 
                       <style>
 
-                        html,
                         body
                         {
                           margin: 0px;
-
-                          padding: 0px;
 
                           width: 100%;
                           height: 100%;
@@ -1250,8 +1296,6 @@ jobs:
                           background-color: #000000;
 
                           color: #000000;
-
-                          overflow: hidden;
                         }
 
                       </style>
@@ -1263,14 +1307,10 @@ jobs:
                   </rml>
                   )rml";
 
-                  // ==================================================
-                  // Load document
-                  // ==================================================
-
                   Rml::ElementDocument* document =
                       context->LoadDocumentFromMemory(
                           ui,
-                          "[embedded-ultron-black-ui.rml]");
+                          "[embedded-ultron-ui.rml]");
 
                   if (document == nullptr)
                   {
@@ -1291,7 +1331,7 @@ jobs:
                   document->Show();
 
                   SDL_Log(
-                      "Ultron black UI initialized.");
+                      "Ultron pure-black UI initialized.");
 
                   // ==================================================
                   // Main loop
@@ -1327,10 +1367,6 @@ jobs:
                           break;
                       }
 
-                      // ------------------------------------------------
-                      // Android background
-                      // ------------------------------------------------
-
                       if (g_paused.load(
                               std::memory_order_relaxed))
                       {
@@ -1338,9 +1374,9 @@ jobs:
                           continue;
                       }
 
-                      // ------------------------------------------------
+                      // ==================================================
                       // Responsive drawable size
-                      // ------------------------------------------------
+                      // ==================================================
 
                       int new_width = 0;
                       int new_height = 0;
@@ -1369,30 +1405,19 @@ jobs:
                           }
                       }
 
-                      // ------------------------------------------------
+                      // ==================================================
                       // Update
-                      // ------------------------------------------------
+                      // ==================================================
 
                       context->Update();
 
-                      // ------------------------------------------------
-                      // Render on a guaranteed black framebuffer
-                      // ------------------------------------------------
+                      // ==================================================
+                      // Render
+                      // ==================================================
+
+                      render_interface.Clear();
 
                       render_interface.BeginFrame();
-
-                      glDisable(GL_SCISSOR_TEST);
-
-                      glClearColor(
-                          0.0f,
-                          0.0f,
-                          0.0f,
-                          1.0f);
-
-                      glClear(
-                          GL_COLOR_BUFFER_BIT |
-                          GL_DEPTH_BUFFER_BIT |
-                          GL_STENCIL_BUFFER_BIT);
 
                       context->Render();
 
@@ -1402,19 +1427,11 @@ jobs:
                           window);
                   }
 
-                  // ==================================================
-                  // RmlUi shutdown
-                  // ==================================================
-
                   Rml::RemoveContext(
                       "main");
 
                   Rml::Shutdown();
               }
-
-              // ======================================================
-              // GL + SDL shutdown
-              // ======================================================
 
               RmlGL3::Shutdown();
 
@@ -1475,6 +1492,9 @@ jobs:
             "${ANDROID_PROJECT}/app/src/main/res/values/strings.xml"
 
           test -f \
+            "${ANDROID_PROJECT}/app/src/main/res/values/styles.xml"
+
+          test -f \
             "${ANDROID_PROJECT}/app/jni/CMakeLists.txt"
 
           test -f \
@@ -1532,29 +1552,6 @@ jobs:
           echo "ICON"
           echo "========================================"
 
-          ICON_SOURCE=""
-
-          if [ -d "${GITHUB_WORKSPACE}/.github/assets" ]; then
-              ICON_SOURCE="$(
-                  find \
-                    "${GITHUB_WORKSPACE}/.github/assets" \
-                    -maxdepth 1 \
-                    -type f \
-                    \( \
-                      -iname "*.png" \
-                      -o -iname "*.jpg" \
-                      -o -iname "*.jpeg" \
-                      -o -iname "*.webp" \
-                    \) \
-                    -print \
-                    | sort \
-                    | head -n 1
-              )
-          fi
-
-          test -n "${ICON_SOURCE}"
-          test -f "${ICON_SOURCE}"
-
           test -f \
             "${ANDROID_PROJECT}/app/src/main/res/drawable-nodpi/ic_launcher_foreground.png"
 
@@ -1562,24 +1559,11 @@ jobs:
             "${ANDROID_PROJECT}/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml"
 
           test -f \
+            "${ANDROID_PROJECT}/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml"
+
+          test -f \
             "${ANDROID_PROJECT}/app/src/main/res/values/ultron_icon_colors.xml"
 
-          test -f \
-            "${ANDROID_PROJECT}/app/src/main/res/mipmap-mdpi/ic_launcher.png"
-
-          test -f \
-            "${ANDROID_PROJECT}/app/src/main/res/mipmap-hdpi/ic_launcher.png"
-
-          test -f \
-            "${ANDROID_PROJECT}/app/src/main/res/mipmap-xhdpi/ic_launcher.png"
-
-          test -f \
-            "${ANDROID_PROJECT}/app/src/main/res/mipmap-xxhdpi/ic_launcher.png"
-
-          test -f \
-            "${ANDROID_PROJECT}/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png"
-
-          echo "Icon source: ${ICON_SOURCE}"
           echo "Icon resources: PASSED"
 
           echo
@@ -1616,12 +1600,8 @@ jobs:
             "${ANDROID_PROJECT}/app/jni/src/main.cpp"
 
           grep -q \
-            'glClearColor(' \
-            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
-
-          grep -q \
-            'glClear(' \
-            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
+            'android:windowBackground">#000000' \
+            "${ANDROID_PROJECT}/app/src/main/res/values/styles.xml"
 
           grep -q \
             "applicationId \"${APPLICATION_ID}\"" \
@@ -1640,16 +1620,12 @@ jobs:
             "${ANDROID_PROJECT}/app/src/main/AndroidManifest.xml"
 
           grep -q \
+            'android:roundIcon="@mipmap/ic_launcher_round"' \
+            "${ANDROID_PROJECT}/app/src/main/AndroidManifest.xml"
+
+          grep -q \
             "<string name=\"app_name\">${APP_NAME}</string>" \
             "${ANDROID_PROJECT}/app/src/main/res/values/strings.xml"
-
-          grep -q \
-            'android:drawable="@color/ultron_icon_black"' \
-            "${ANDROID_PROJECT}/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml"
-
-          grep -q \
-            'android:drawable="@drawable/ic_launcher_foreground"' \
-            "${ANDROID_PROJECT}/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml"
 
           echo "Configuration checks: PASSED"
 
@@ -1805,6 +1781,9 @@ jobs:
 
           test -f \
             "${ANDROID_PROJECT}/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml"
+
+          test -f \
+            "${ANDROID_PROJECT}/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml"
 
           test -f \
             "${ANDROID_PROJECT}/app/src/main/res/drawable-nodpi/ic_launcher_foreground.png"
