@@ -261,6 +261,157 @@ jobs:
           EOF
 
           # ========================================================
+          # ICON SOURCE CHECK
+          # ========================================================
+
+          ICON_SOURCE="${GITHUB_WORKSPACE}/.github/assets/ultron_icon_source.png"
+
+          test -f "${ICON_SOURCE}"
+
+          echo "Ultron icon source: PASSED"
+
+          # ========================================================
+          # IMAGE TOOL
+          # ========================================================
+
+          if command -v magick >/dev/null 2>&1; then
+              MAGICK="magick"
+          elif command -v convert >/dev/null 2>&1; then
+              MAGICK="convert"
+          else
+              sudo apt-get update
+              sudo apt-get install -y imagemagick
+
+              if command -v magick >/dev/null 2>&1; then
+                  MAGICK="magick"
+              else
+                  MAGICK="convert"
+              fi
+          fi
+
+          # ========================================================
+          # ADAPTIVE ICON RESOURCES
+          # ========================================================
+
+          ICON_WORK="${RUNNER_TEMP}/ultron-icon"
+
+          rm -rf "${ICON_WORK}"
+
+          mkdir -p \
+            "${ICON_WORK}" \
+            "${ANDROID_PROJECT}/app/src/main/res/drawable-nodpi" \
+            "${ANDROID_PROJECT}/app/src/main/res/mipmap-anydpi-v26" \
+            "${ANDROID_PROJECT}/app/src/main/res/mipmap-mdpi" \
+            "${ANDROID_PROJECT}/app/src/main/res/mipmap-hdpi" \
+            "${ANDROID_PROJECT}/app/src/main/res/mipmap-xhdpi" \
+            "${ANDROID_PROJECT}/app/src/main/res/mipmap-xxhdpi" \
+            "${ANDROID_PROJECT}/app/src/main/res/mipmap-xxxhdpi"
+
+          # --------------------------------------------------------
+          # Crop out the large outer metallic frame.
+          # Keep the inner square containing the brain and chip.
+          # --------------------------------------------------------
+
+          "${MAGICK}" \
+            "${ICON_SOURCE}" \
+            -gravity center \
+            -crop 67%x67%+0+0 \
+            +repage \
+            -resize 820x820 \
+            "${ICON_WORK}/inner.png"
+
+          # --------------------------------------------------------
+          # Transparent adaptive foreground.
+          # The artwork is centered with safe padding.
+          # --------------------------------------------------------
+
+          "${MAGICK}" \
+            -size 1080x1080 \
+            xc:none \
+            "${ICON_WORK}/foreground_canvas.png"
+
+          "${MAGICK}" \
+            "${ICON_WORK}/foreground_canvas.png" \
+            "${ICON_WORK}/inner.png" \
+            -gravity center \
+            -composite \
+            "${ANDROID_PROJECT}/app/src/main/res/drawable-nodpi/ic_launcher_foreground.png"
+
+          # --------------------------------------------------------
+          # Legacy launcher icon for Android versions below 8.
+          # --------------------------------------------------------
+
+          "${MAGICK}" \
+            -size 1080x1080 \
+            xc:black \
+            "${ICON_WORK}/legacy_canvas.png"
+
+          "${MAGICK}" \
+            "${ICON_WORK}/legacy_canvas.png" \
+            "${ICON_WORK}/inner.png" \
+            -gravity center \
+            -composite \
+            "${ICON_WORK}/legacy.png"
+
+          "${MAGICK}" \
+            "${ICON_WORK}/legacy.png" \
+            -resize 48x48 \
+            "${ANDROID_PROJECT}/app/src/main/res/mipmap-mdpi/ic_launcher.png"
+
+          "${MAGICK}" \
+            "${ICON_WORK}/legacy.png" \
+            -resize 72x72 \
+            "${ANDROID_PROJECT}/app/src/main/res/mipmap-hdpi/ic_launcher.png"
+
+          "${MAGICK}" \
+            "${ICON_WORK}/legacy.png" \
+            -resize 96x96 \
+            "${ANDROID_PROJECT}/app/src/main/res/mipmap-xhdpi/ic_launcher.png"
+
+          "${MAGICK}" \
+            "${ICON_WORK}/legacy.png" \
+            -resize 144x144 \
+            "${ANDROID_PROJECT}/app/src/main/res/mipmap-xxhdpi/ic_launcher.png"
+
+          "${MAGICK}" \
+            "${ICON_WORK}/legacy.png" \
+            -resize 192x192 \
+            "${ANDROID_PROJECT}/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png"
+
+          # ========================================================
+          # Adaptive icon background
+          # ========================================================
+
+          cat > \
+            "${ANDROID_PROJECT}/app/src/main/res/values/ultron_icon_colors.xml" <<'EOF'
+          <resources>
+              <color name="ultron_icon_black">#000000</color>
+          </resources>
+          EOF
+
+          # ========================================================
+          # Adaptive icon XML
+          # ========================================================
+
+          cat > \
+            "${ANDROID_PROJECT}/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml" <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+
+          <adaptive-icon
+              xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <background
+                  android:drawable="@color/ultron_icon_black" />
+
+              <foreground
+                  android:drawable="@drawable/ic_launcher_foreground" />
+
+          </adaptive-icon>
+          EOF
+
+          echo "Adaptive icon: PASSED"
+
+          # ========================================================
           # AndroidManifest.xml
           # ========================================================
 
@@ -388,7 +539,6 @@ jobs:
               FORCE
           )
 
-          # RmlUi SDL3 backend selection.
           add_compile_definitions(
               RMLUI_SDL_VERSION_MAJOR=3
           )
@@ -582,10 +732,6 @@ jobs:
               RmlUi
               EXCLUDE_FROM_ALL
           )
-
-          # ========================================================
-          # Application
-          # ========================================================
 
           add_subdirectory(src)
           CMAKE
@@ -844,7 +990,7 @@ jobs:
                   1);
 
               // ====================================================
-              // Window properties
+              // Window
               // ====================================================
 
               SDL_PropertiesID properties =
@@ -874,8 +1020,6 @@ jobs:
                   SDL_PROP_WINDOW_CREATE_Y_NUMBER,
                   SDL_WINDOWPOS_CENTERED);
 
-              // Do NOT multiply a logical size by display scale here.
-              // Android/SDL will expose the real drawable size below.
               SDL_SetNumberProperty(
                   properties,
                   SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER,
@@ -1075,7 +1219,7 @@ jobs:
                           width: 100%;
                           height: 100%;
 
-                          background-color: #080B14;
+                          background-color: #000000;
 
                           color: #EAF0FF;
                         }
@@ -1265,8 +1409,7 @@ jobs:
                           break;
                       }
 
-                      // Do not run OpenGL/RmlUi rendering while
-                      // Android has the app in the background.
+                      // No OpenGL/RmlUi rendering in background.
                       if (g_paused.load(
                               std::memory_order_relaxed))
                       {
@@ -1274,9 +1417,9 @@ jobs:
                           continue;
                       }
 
-                      // ----------------------------------------------
+                      // ==================================================
                       // Responsive drawable size
-                      // ----------------------------------------------
+                      // ==================================================
 
                       int new_width = 0;
                       int new_height = 0;
@@ -1305,15 +1448,15 @@ jobs:
                           }
                       }
 
-                      // ----------------------------------------------
+                      // ==================================================
                       // Update
-                      // ----------------------------------------------
+                      // ==================================================
 
                       context->Update();
 
-                      // ----------------------------------------------
+                      // ==================================================
                       // Render
-                      // ----------------------------------------------
+                      // ==================================================
 
                       render_interface.Clear();
 
@@ -1382,6 +1525,8 @@ jobs:
           echo "ABI         : ${ANDROID_ABI}"
           echo "C++         : 20"
           echo "Renderer    : OpenGL ES 3.2"
+          echo "Background  : Pure Black"
+          echo "Icon        : Adaptive Brain Icon"
 
           echo
           echo "========================================"
@@ -1452,12 +1597,43 @@ jobs:
 
           echo
           echo "========================================"
+          echo "ICON"
+          echo "========================================"
+
+          test -f \
+            "${GITHUB_WORKSPACE}/.github/assets/ultron_icon_source.png"
+
+          test -f \
+            "${ANDROID_PROJECT}/app/src/main/res/drawable-nodpi/ic_launcher_foreground.png"
+
+          test -f \
+            "${ANDROID_PROJECT}/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml"
+
+          test -f \
+            "${ANDROID_PROJECT}/app/src/main/res/values/ultron_icon_colors.xml"
+
+          test -f \
+            "${ANDROID_PROJECT}/app/src/main/res/mipmap-mdpi/ic_launcher.png"
+
+          test -f \
+            "${ANDROID_PROJECT}/app/src/main/res/mipmap-hdpi/ic_launcher.png"
+
+          test -f \
+            "${ANDROID_PROJECT}/app/src/main/res/mipmap-xhdpi/ic_launcher.png"
+
+          test -f \
+            "${ANDROID_PROJECT}/app/src/main/res/mipmap-xxhdpi/ic_launcher.png"
+
+          test -f \
+            "${ANDROID_PROJECT}/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png"
+
+          echo "Icon resources: PASSED"
+
+          echo
+          echo "========================================"
           echo "RUNTIME / PACKAGE CONFIGURATION"
           echo "========================================"
 
-          # IMPORTANT:
-          # RMLUI_SDL_VERSION_MAJOR=3 is defined in CMake,
-          # not inside main.cpp.
           grep -q \
             'RMLUI_SDL_VERSION_MAJOR=3' \
             "${ANDROID_PROJECT}/app/jni/src/CMakeLists.txt"
@@ -1483,6 +1659,10 @@ jobs:
             "${ANDROID_PROJECT}/app/jni/src/main.cpp"
 
           grep -q \
+            'background-color: #000000' \
+            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
+
+          grep -q \
             "applicationId \"${APPLICATION_ID}\"" \
             "${ANDROID_PROJECT}/app/build.gradle"
 
@@ -1495,8 +1675,20 @@ jobs:
             "${ANDROID_PROJECT}/app/src/main/AndroidManifest.xml"
 
           grep -q \
+            'android:icon="@mipmap/ic_launcher"' \
+            "${ANDROID_PROJECT}/app/src/main/AndroidManifest.xml"
+
+          grep -q \
             "<string name=\"app_name\">${APP_NAME}</string>" \
             "${ANDROID_PROJECT}/app/src/main/res/values/strings.xml"
+
+          grep -q \
+            'android:drawable="@color/ultron_icon_black"' \
+            "${ANDROID_PROJECT}/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml"
+
+          grep -q \
+            'android:drawable="@drawable/ic_launcher_foreground"' \
+            "${ANDROID_PROJECT}/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml"
 
           echo "Configuration checks: PASSED"
 
@@ -1527,7 +1719,7 @@ jobs:
             2>&1 | tee "${RUNNER_TEMP}/gradle-build.log"
 
       # ============================================================
-      # VERIFY APK EXISTS
+      # VERIFY APK OUTPUT
       # ============================================================
 
       - name: Verify APK output
@@ -1550,7 +1742,7 @@ jobs:
           ls -lh "${APK}"
 
       # ============================================================
-      # COPY APK TO WORKSPACE
+      # COPY APK
       # ============================================================
 
       - name: Prepare APK artifact
@@ -1647,6 +1839,19 @@ jobs:
 
           echo
           echo "========================================"
+          echo "ICON VALIDATION"
+          echo "========================================"
+
+          test -f \
+            "${ANDROID_PROJECT}/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml"
+
+          test -f \
+            "${ANDROID_PROJECT}/app/src/main/res/drawable-nodpi/ic_launcher_foreground.png"
+
+          echo "Adaptive icon resources: PASSED"
+
+          echo
+          echo "========================================"
           echo "APK VALIDATION PASSED"
           echo "========================================"
 
@@ -1690,6 +1895,8 @@ jobs:
             echo "| ABI | ${ANDROID_ABI} |"
             echo "| C++ | 20 |"
             echo "| Renderer | OpenGL ES 3.2 |"
+            echo "| Background | Pure Black |"
+            echo "| Icon | Adaptive Brain Icon |"
             echo
             echo "APK artifact: ultron-android-debug"
           } >> "${GITHUB_STEP_SUMMARY}"
