@@ -290,7 +290,7 @@ jobs:
           fi
 
           # ========================================================
-          # ADAPTIVE ICON DIRECTORIES
+          # ICON DIRECTORIES
           # ========================================================
 
           ICON_WORK="${RUNNER_TEMP}/ultron-icon"
@@ -310,22 +310,18 @@ jobs:
           # ========================================================
           # PREPARE BRAIN ARTWORK
           #
-          # DO NOT crop the new image.
-          # The complete uploaded brain image is preserved.
-          # It is scaled down to keep the important brain/chip
-          # safely inside Android's adaptive-icon safe area.
+          # No crop.
+          # Keep the complete uploaded image.
+          # Add safe padding for Android adaptive-icon masking.
           # ========================================================
 
           "${MAGICK}" \
             "${ICON_SOURCE}" \
-            -resize 700x700 \
+            -resize 620x620 \
             "${ICON_WORK}/brain.png"
 
           # ========================================================
           # ADAPTIVE ICON FOREGROUND
-          #
-          # 1080x1080 canvas + centered 700x700 artwork.
-          # This provides safe padding around the brain.
           # ========================================================
 
           "${MAGICK}" \
@@ -542,7 +538,6 @@ jobs:
               FORCE
           )
 
-          # SDL3 RmlUi backend selection.
           add_compile_definitions(
               RMLUI_SDL_VERSION_MAJOR=3
           )
@@ -737,10 +732,6 @@ jobs:
               EXCLUDE_FROM_ALL
           )
 
-          # ========================================================
-          # APPLICATION
-          # ========================================================
-
           add_subdirectory(src)
           CMAKE
 
@@ -829,6 +820,7 @@ jobs:
 
           #include <RmlUi/Core/Context.h>
           #include <RmlUi/Core/Core.h>
+          #include <RmlUi/Core/ElementDocument.h>
 
           #include "RmlUi_Platform_SDL.h"
           #include "RmlUi_Renderer_GL3.h"
@@ -1100,9 +1092,9 @@ jobs:
 
               SDL_GL_SetSwapInterval(1);
 
-              // ----------------------------------------------------
-              // Force OpenGL clear color to pure black.
-              // ----------------------------------------------------
+              // ====================================================
+              // Pure-black OpenGL frame
+              // ====================================================
 
               glDisable(GL_SCISSOR_TEST);
 
@@ -1136,10 +1128,6 @@ jobs:
                       window);
 
                   RenderInterface_GL3 render_interface;
-
-                  // ==================================================
-                  // Drawable size
-                  // ==================================================
 
                   int width = 0;
                   int height = 0;
@@ -1211,10 +1199,6 @@ jobs:
                           "Rml::CreateContext failed");
                   }
 
-                  // ==================================================
-                  // Display density
-                  // ==================================================
-
                   const float window_scale =
                       SDL_GetWindowDisplayScale(
                           window);
@@ -1226,19 +1210,16 @@ jobs:
                   }
 
                   // ==================================================
-                  // EMPTY RML DOCUMENT
-                  //
-                  // No panel.
-                  // No cards.
-                  // No bars.
-                  // No colored UI.
-                  // The window remains pure black.
+                  // Completely black RmlUi document
                   // ==================================================
 
                   const Rml::String ui = R"rml(
                   <rml>
+
                     <head>
+
                       <style>
+
                         body
                         {
                           margin: 0px;
@@ -1247,7 +1228,9 @@ jobs:
                           background-color: #000000;
                           color: #000000;
                         }
+
                       </style>
+
                     </head>
 
                     <body></body>
@@ -1315,9 +1298,7 @@ jobs:
                           break;
                       }
 
-                      // ----------------------------------------------
-                      // Do not render while Android is backgrounded.
-                      // ----------------------------------------------
+                      // Do not render in background.
 
                       if (g_paused.load(
                               std::memory_order_relaxed))
@@ -1326,9 +1307,9 @@ jobs:
                           continue;
                       }
 
-                      // ----------------------------------------------
-                      // Responsive drawable size
-                      // ----------------------------------------------
+                      // ==================================================
+                      // Responsive size
+                      // ==================================================
 
                       int new_width = 0;
                       int new_height = 0;
@@ -1357,9 +1338,9 @@ jobs:
                           }
                       }
 
-                      // ----------------------------------------------
-                      // Force complete black frame.
-                      // ----------------------------------------------
+                      // ==================================================
+                      // Force pure black frame
+                      // ==================================================
 
                       glDisable(GL_SCISSOR_TEST);
 
@@ -1371,11 +1352,6 @@ jobs:
 
                       glClear(
                           GL_COLOR_BUFFER_BIT);
-
-                      // ----------------------------------------------
-                      // RmlUi update/render.
-                      // The document itself contains no visible UI.
-                      // ----------------------------------------------
 
                       context->Update();
 
@@ -1502,6 +1478,9 @@ jobs:
           test -f \
             "${ANDROID_PROJECT}/app/jni/RmlUi/Include/RmlUi/Core/Context.h"
 
+          test -f \
+            "${ANDROID_PROJECT}/app/jni/RmlUi/Include/RmlUi/Core/ElementDocument.h"
+
           echo "RmlUi: PASSED"
 
           echo
@@ -1562,7 +1541,7 @@ jobs:
             "${ANDROID_PROJECT}/app/jni/src/main.cpp"
 
           grep -q \
-            '#include <RmlUi/Core/Context.h>' \
+            '#include <RmlUi/Core/ElementDocument.h>' \
             "${ANDROID_PROJECT}/app/jni/src/main.cpp"
 
           grep -q \
