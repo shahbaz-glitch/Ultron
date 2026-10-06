@@ -19,14 +19,17 @@ env:
   APPLICATION_ID: "com.shahbazglitch.ultron"
 
   RMLUI_VERSION: "6.3"
-  SDL_VERSION: "3.4.16"
-  FREETYPE_VERSION: "VER-2-14-1"
+  SDL_VERSION: "3.4.18"
+  FREETYPE_VERSION: "VER-2-14-3"
 
   ANDROID_API: "36"
-  ANDROID_NDK_VERSION: "28.2.13676358"
+  ANDROID_MIN_SDK: "26"
+  ANDROID_NDK_VERSION: "30.0.16248370"
   ANDROID_ABI: "arm64-v8a"
 
-  BUILD_TOOLS_VERSION: "36.0.0"
+  BUILD_TOOLS_VERSION: "36.1.0"
+  AGP_VERSION: "9.4.0"
+  GRADLE_VERSION: "9.8.0"
 
   APP_VERSION_NAME: "0.1.0"
   APP_VERSION_CODE: "1"
@@ -77,19 +80,20 @@ jobs:
             "ndk;${ANDROID_NDK_VERSION}"
 
       # ============================================================
-      # PREPARE ANDROID PROJECT
+      # PREPARE ANDROID PROJECT + DEPENDENCIES
       # ============================================================
 
-      - name: Prepare Android project
+      - name: Prepare Android project and dependencies
         shell: bash
         run: |
           set -euo pipefail
 
           export ANDROID_PROJECT="${RUNNER_TEMP}/android-project"
+          export SDL_SOURCE="${RUNNER_TEMP}/SDL"
 
           rm -rf \
             "${ANDROID_PROJECT}" \
-            "${RUNNER_TEMP}/SDL"
+            "${SDL_SOURCE}"
 
           # ========================================================
           # SDL3
@@ -99,19 +103,14 @@ jobs:
             --depth 1 \
             --branch "release-${SDL_VERSION}" \
             "https://github.com/libsdl-org/SDL.git" \
-            "${RUNNER_TEMP}/SDL"
+            "${SDL_SOURCE}"
 
           cp -a \
-            "${RUNNER_TEMP}/SDL/android-project" \
+            "${SDL_SOURCE}/android-project" \
             "${ANDROID_PROJECT}"
 
-          rm -rf \
-            "${ANDROID_PROJECT}/app/jni/SDL"
-
-          git clone \
-            --depth 1 \
-            --branch "release-${SDL_VERSION}" \
-            "https://github.com/libsdl-org/SDL.git" \
+          cp -a \
+            "${SDL_SOURCE}" \
             "${ANDROID_PROJECT}/app/jni/SDL"
 
           # ========================================================
@@ -146,13 +145,63 @@ jobs:
           echo "ANDROID_PROJECT=${ANDROID_PROJECT}" >> "${GITHUB_ENV}"
 
       # ============================================================
-      # ANDROID BUILD CONFIGURATION
+      # GRADLE PROJECT
       # ============================================================
 
-      - name: Configure Android project
+      - name: Configure Gradle project
         shell: bash
         run: |
           set -euo pipefail
+
+          # ========================================================
+          # Root build.gradle
+          # ========================================================
+
+          cat > \
+            "${ANDROID_PROJECT}/build.gradle" <<EOF
+          plugins {
+              id 'com.android.application' version '${AGP_VERSION}' apply false
+          }
+          EOF
+
+          # ========================================================
+          # settings.gradle
+          # ========================================================
+
+          cat > \
+            "${ANDROID_PROJECT}/settings.gradle" <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+
+          dependencyResolutionManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+
+          rootProject.name = "Ultron"
+
+          include(":app")
+          EOF
+
+          # ========================================================
+          # Gradle wrapper
+          # ========================================================
+
+          cat > \
+            "${ANDROID_PROJECT}/gradle/wrapper/gradle-wrapper.properties" <<EOF
+          distributionBase=GRADLE_USER_HOME
+          distributionPath=wrapper/dists
+          distributionUrl=https\\://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip
+          zipStoreBase=GRADLE_USER_HOME
+          zipStorePath=wrapper/dists
+          EOF
 
           # ========================================================
           # app/build.gradle
@@ -164,34 +213,31 @@ jobs:
               id 'com.android.application'
           }
 
-          def buildWithCMake = project.hasProperty('BUILD_WITH_CMAKE')
-
           android {
               namespace = "${APPLICATION_ID}"
 
-              compileSdkVersion ${ANDROID_API}
+              compileSdk = ${ANDROID_API}
 
-              buildToolsVersion "${BUILD_TOOLS_VERSION}"
+              buildToolsVersion = "${BUILD_TOOLS_VERSION}"
 
               ndkVersion = "${ANDROID_NDK_VERSION}"
 
               defaultConfig {
-                  applicationId "${APPLICATION_ID}"
+                  applicationId = "${APPLICATION_ID}"
 
-                  minSdkVersion 26
-                  targetSdkVersion ${ANDROID_API}
+                  minSdk = ${ANDROID_MIN_SDK}
 
-                  versionCode ${APP_VERSION_CODE}
-                  versionName "${APP_VERSION_NAME}"
+                  targetSdk = ${ANDROID_API}
+
+                  versionCode = ${APP_VERSION_CODE}
+
+                  versionName = "${APP_VERSION_NAME}"
 
                   externalNativeBuild {
                       cmake {
                           arguments \
-                              "-DANDROID_PLATFORM=android-26", \
-                              "-DANDROID_STL=c++_static", \
-                              "-DCMAKE_CXX_STANDARD=20", \
-                              "-DCMAKE_CXX_STANDARD_REQUIRED=ON", \
-                              "-DCMAKE_CXX_EXTENSIONS=OFF"
+                              "-DANDROID_PLATFORM=android-${ANDROID_MIN_SDK}", \
+                              "-DANDROID_STL=c++_static"
 
                           abiFilters "${ANDROID_ABI}"
                       }
@@ -214,24 +260,15 @@ jobs:
                   }
               }
 
-              if (buildWithCMake) {
-                  externalNativeBuild {
-                      cmake {
-                          path 'jni/CMakeLists.txt'
-                      }
+              externalNativeBuild {
+                  cmake {
+                      path 'jni/CMakeLists.txt'
                   }
               }
 
               lint {
                   abortOnError false
               }
-          }
-
-          dependencies {
-              implementation fileTree(
-                  include: ['*.jar'],
-                  dir: 'libs'
-              )
           }
           EOF
 
@@ -260,19 +297,19 @@ jobs:
           </resources>
           EOF
 
-          # ========================================================
-          # ICON SOURCE
-          # ========================================================
+      # ============================================================
+      # ADAPTIVE ICON
+      # ============================================================
+
+      - name: Generate adaptive brain icon
+        shell: bash
+        run: |
+          set -euo pipefail
 
           ICON_SOURCE="${GITHUB_WORKSPACE}/.github/assets/ultron_icon_source.png"
+          ICON_WORK="${RUNNER_TEMP}/ultron-icon"
 
           test -f "${ICON_SOURCE}"
-
-          echo "Ultron icon source: PASSED"
-
-          # ========================================================
-          # IMAGE TOOL
-          # ========================================================
 
           if command -v magick >/dev/null 2>&1; then
               MAGICK="magick"
@@ -289,26 +326,15 @@ jobs:
               fi
           fi
 
-          # ========================================================
-          # ICON DIRECTORIES
-          # ========================================================
-
-          ICON_WORK="${RUNNER_TEMP}/ultron-icon"
-
           rm -rf "${ICON_WORK}"
 
           mkdir -p \
             "${ICON_WORK}" \
             "${ANDROID_PROJECT}/app/src/main/res/drawable-nodpi" \
-            "${ANDROID_PROJECT}/app/src/main/res/mipmap-anydpi-v26" \
-            "${ANDROID_PROJECT}/app/src/main/res/mipmap-mdpi" \
-            "${ANDROID_PROJECT}/app/src/main/res/mipmap-hdpi" \
-            "${ANDROID_PROJECT}/app/src/main/res/mipmap-xhdpi" \
-            "${ANDROID_PROJECT}/app/src/main/res/mipmap-xxhdpi" \
-            "${ANDROID_PROJECT}/app/src/main/res/mipmap-xxxhdpi"
+            "${ANDROID_PROJECT}/app/src/main/res/mipmap-anydpi-v26"
 
           # ========================================================
-          # PREPARE ICON ARTWORK
+          # Prepare artwork
           # ========================================================
 
           "${MAGICK}" \
@@ -317,7 +343,7 @@ jobs:
             "${ICON_WORK}/brain.png"
 
           # ========================================================
-          # ADAPTIVE FOREGROUND
+          # Transparent adaptive foreground canvas
           # ========================================================
 
           "${MAGICK}" \
@@ -333,36 +359,7 @@ jobs:
             "${ANDROID_PROJECT}/app/src/main/res/drawable-nodpi/ic_launcher_foreground.png"
 
           # ========================================================
-          # LEGACY ICONS
-          # ========================================================
-
-          "${MAGICK}" \
-            "${ICON_SOURCE}" \
-            -resize 48x48 \
-            "${ANDROID_PROJECT}/app/src/main/res/mipmap-mdpi/ic_launcher.png"
-
-          "${MAGICK}" \
-            "${ICON_SOURCE}" \
-            -resize 72x72 \
-            "${ANDROID_PROJECT}/app/src/main/res/mipmap-hdpi/ic_launcher.png"
-
-          "${MAGICK}" \
-            "${ICON_SOURCE}" \
-            -resize 96x96 \
-            "${ANDROID_PROJECT}/app/src/main/res/mipmap-xhdpi/ic_launcher.png"
-
-          "${MAGICK}" \
-            "${ICON_SOURCE}" \
-            -resize 144x144 \
-            "${ANDROID_PROJECT}/app/src/main/res/mipmap-xxhdpi/ic_launcher.png"
-
-          "${MAGICK}" \
-            "${ICON_SOURCE}" \
-            -resize 192x192 \
-            "${ANDROID_PROJECT}/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png"
-
-          # ========================================================
-          # ADAPTIVE ICON XML
+          # Adaptive icon definition
           # ========================================================
 
           cat > \
@@ -381,11 +378,14 @@ jobs:
           </adaptive-icon>
           EOF
 
-          echo "Adaptive icon: PASSED"
+      # ============================================================
+      # ANDROID MANIFEST
+      # ============================================================
 
-          # ========================================================
-          # AndroidManifest.xml
-          # ========================================================
+      - name: Generate Android manifest
+        shell: bash
+        run: |
+          set -euo pipefail
 
           cat > \
             "${ANDROID_PROJECT}/app/src/main/AndroidManifest.xml" <<EOF
@@ -397,30 +397,37 @@ jobs:
               android:versionName="${APP_VERSION_NAME}"
               android:installLocation="auto">
 
+              <!-- OpenGL ES 3.2 -->
               <uses-feature
                   android:glEsVersion="0x00030002"
                   android:required="true" />
 
+              <!-- Touch -->
               <uses-feature
                   android:name="android.hardware.touchscreen"
                   android:required="false" />
 
+              <!-- Future Bluetooth -->
               <uses-feature
                   android:name="android.hardware.bluetooth"
                   android:required="false" />
 
+              <!-- Future game/controller -->
               <uses-feature
                   android:name="android.hardware.gamepad"
                   android:required="false" />
 
+              <!-- Future USB devices -->
               <uses-feature
                   android:name="android.hardware.usb.host"
                   android:required="false" />
 
+              <!-- Future PC / Chromebook form factor -->
               <uses-feature
                   android:name="android.hardware.type.pc"
                   android:required="false" />
 
+              <!-- Future haptics -->
               <uses-permission
                   android:name="android.permission.VIBRATE" />
 
@@ -442,11 +449,13 @@ jobs:
                       android:exported="true">
 
                       <intent-filter>
+
                           <action
                               android:name="android.intent.action.MAIN" />
 
                           <category
                               android:name="android.intent.category.LAUNCHER" />
+
                       </intent-filter>
 
                   </activity>
@@ -460,7 +469,7 @@ jobs:
       # MAIN CMAKE
       # ============================================================
 
-      - name: Generate native CMake project
+      - name: Generate CMake project
         shell: bash
         run: |
           set -euo pipefail
@@ -501,18 +510,6 @@ jobs:
           set(
               CMAKE_POSITION_INDEPENDENT_CODE
               ON
-          )
-
-          set(
-              CMAKE_EXPORT_COMPILE_COMMANDS
-              ON
-              CACHE BOOL
-              ""
-              FORCE
-          )
-
-          add_compile_definitions(
-              RMLUI_SDL_VERSION_MAJOR=3
           )
 
           # ========================================================
@@ -644,14 +641,6 @@ jobs:
           # ========================================================
 
           set(
-              BUILD_SHARED_LIBS
-              OFF
-              CACHE BOOL
-              ""
-              FORCE
-          )
-
-          set(
               RMLUI_SAMPLES
               OFF
               CACHE BOOL
@@ -709,10 +698,10 @@ jobs:
           CMAKE
 
       # ============================================================
-      # APPLICATION TARGET
+      # NATIVE TARGET + SOURCE
       # ============================================================
 
-      - name: Generate Ultron native target
+      - name: Generate native target and source
         shell: bash
         run: |
           set -euo pipefail
@@ -746,15 +735,10 @@ jobs:
               ../RmlUi/Backends
           )
 
-          target_compile_features(
-              main
-              PRIVATE
-              cxx_std_20
-          )
-
           target_compile_definitions(
               main
               PRIVATE
+
               RMLUI_SDL_VERSION_MAJOR=3
           )
 
@@ -771,15 +755,6 @@ jobs:
               ${CMAKE_DL_LIBS}
           )
           CMAKE
-
-      # ============================================================
-      # NATIVE SOURCE
-      # ============================================================
-
-      - name: Generate Ultron native source
-        shell: bash
-        run: |
-          set -euo pipefail
 
           cat > \
             "${ANDROID_PROJECT}/app/jni/src/main.cpp" <<'CPP'
@@ -906,8 +881,6 @@ jobs:
 
               SDL_Log(
                   "Ultron starting...");
-
-              #if 1
 
               if (!SDL_Init(
                       SDL_INIT_VIDEO |
@@ -1369,12 +1342,6 @@ jobs:
                   "Ultron shutdown cleanly.");
 
               return 0;
-
-              #else
-
-              return 0;
-
-              #endif
           }
           CPP
 
@@ -1398,7 +1365,10 @@ jobs:
           echo "SDL3        : ${SDL_VERSION}"
           echo "FreeType    : ${FREETYPE_VERSION}"
           echo "Android API : ${ANDROID_API}"
-          echo "Min SDK     : 26"
+          echo "Min SDK     : ${ANDROID_MIN_SDK}"
+          echo "Build Tools : ${BUILD_TOOLS_VERSION}"
+          echo "AGP         : ${AGP_VERSION}"
+          echo "Gradle      : ${GRADLE_VERSION}"
           echo "NDK         : ${ANDROID_NDK_VERSION}"
           echo "ABI         : ${ANDROID_ABI}"
           echo "C++         : 20"
@@ -1412,6 +1382,15 @@ jobs:
           echo "========================================"
 
           test -f \
+            "${ANDROID_PROJECT}/build.gradle"
+
+          test -f \
+            "${ANDROID_PROJECT}/settings.gradle"
+
+          test -f \
+            "${ANDROID_PROJECT}/gradle/wrapper/gradle-wrapper.properties"
+
+          test -f \
             "${ANDROID_PROJECT}/app/build.gradle"
 
           test -f \
@@ -1419,6 +1398,12 @@ jobs:
 
           test -f \
             "${ANDROID_PROJECT}/app/src/main/res/values/strings.xml"
+
+          test -f \
+            "${ANDROID_PROJECT}/app/src/main/res/drawable-nodpi/ic_launcher_foreground.png"
+
+          test -f \
+            "${ANDROID_PROJECT}/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml"
 
           test -f \
             "${ANDROID_PROJECT}/app/jni/CMakeLists.txt"
@@ -1433,7 +1418,7 @@ jobs:
 
           echo
           echo "========================================"
-          echo "SDL3"
+          echo "DEPENDENCIES"
           echo "========================================"
 
           test -f \
@@ -1441,13 +1426,6 @@ jobs:
 
           test -f \
             "${ANDROID_PROJECT}/app/jni/SDL/include/SDL3/SDL_main.h"
-
-          echo "SDL3: PASSED"
-
-          echo
-          echo "========================================"
-          echo "RMLUI"
-          echo "========================================"
 
           test -f \
             "${ANDROID_PROJECT}/app/jni/RmlUi/CMakeLists.txt"
@@ -1464,381 +1442,27 @@ jobs:
           test -f \
             "${ANDROID_PROJECT}/app/jni/RmlUi/Include/RmlUi/Core/ElementDocument.h"
 
-          echo "RmlUi: PASSED"
-
-          echo
-          echo "========================================"
-          echo "FREETYPE"
-          echo "========================================"
-
           test -f \
             "${ANDROID_PROJECT}/app/jni/freetype/CMakeLists.txt"
 
-          echo "FreeType: PASSED"
+          echo "Dependencies: PASSED"
 
           echo
           echo "========================================"
-          echo "ICON"
-          echo "========================================"
-
-          test -f \
-            "${GITHUB_WORKSPACE}/.github/assets/ultron_icon_source.png"
-
-          test -f \
-            "${ANDROID_PROJECT}/app/src/main/res/drawable-nodpi/ic_launcher_foreground.png"
-
-          test -f \
-            "${ANDROID_PROJECT}/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml"
-
-          test -f \
-            "${ANDROID_PROJECT}/app/src/main/res/mipmap-mdpi/ic_launcher.png"
-
-          test -f \
-            "${ANDROID_PROJECT}/app/src/main/res/mipmap-hdpi/ic_launcher.png"
-
-          test -f \
-            "${ANDROID_PROJECT}/app/src/main/res/mipmap-xhdpi/ic_launcher.png"
-
-          test -f \
-            "${ANDROID_PROJECT}/app/src/main/res/mipmap-xxhdpi/ic_launcher.png"
-
-          test -f \
-            "${ANDROID_PROJECT}/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png"
-
-          echo "Icon resources: PASSED"
-
-          echo
-          echo "========================================"
-          echo "RUNTIME / PACKAGE CONFIGURATION"
+          echo "GRADLE / TOOLCHAIN"
           echo "========================================"
 
           grep -q \
-            'RMLUI_SDL_VERSION_MAJOR=3' \
-            "${ANDROID_PROJECT}/app/jni/src/CMakeLists.txt"
+            "com.android.application' version '${AGP_VERSION}'" \
+            "${ANDROID_PROJECT}/build.gradle"
 
           grep -q \
-            '#include <SDL3/SDL_main.h>' \
-            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
+            "gradle-${GRADLE_VERSION}-bin.zip" \
+            "${ANDROID_PROJECT}/gradle/wrapper/gradle-wrapper.properties"
 
           grep -q \
-            '#include <RmlUi/Core/Context.h>' \
-            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
-
-          grep -q \
-            '#include <RmlUi/Core/ElementDocument.h>' \
-            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
-
-          grep -q \
-            '#include <GLES3/gl3.h>' \
-            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
-
-          grep -q \
-            'SDL_SetEventFilter' \
-            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
-
-          grep -q \
-            'SDL_EVENT_WILL_ENTER_BACKGROUND' \
-            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
-
-          grep -q \
-            'SDL_EVENT_DID_ENTER_FOREGROUND' \
-            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
-
-          grep -q \
-            'background-color: #000000' \
-            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
-
-          grep -q \
-            'glClearColor' \
-            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
-
-          grep -q \
-            'glClear(' \
-            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
-
-          grep -q \
-            "applicationId \"${APPLICATION_ID}\"" \
+            "compileSdk = ${ANDROID_API}" \
             "${ANDROID_PROJECT}/app/build.gradle"
 
           grep -q \
-            "namespace = \"${APPLICATION_ID}\"" \
-            "${ANDROID_PROJECT}/app/build.gradle"
-
-          grep -q \
-            'compileSdkVersion 36' \
-            "${ANDROID_PROJECT}/app/build.gradle"
-
-          grep -q \
-            'minSdkVersion 26' \
-            "${ANDROID_PROJECT}/app/build.gradle"
-
-          grep -q \
-            'targetSdkVersion 36' \
-            "${ANDROID_PROJECT}/app/build.gradle"
-
-          grep -q \
-            '"-DANDROID_PLATFORM=android-26"' \
-            "${ANDROID_PROJECT}/app/build.gradle"
-
-          grep -q \
-            'android:glEsVersion="0x00030002"' \
-            "${ANDROID_PROJECT}/app/src/main/AndroidManifest.xml"
-
-          grep -q \
-            'android:icon="@mipmap/ic_launcher"' \
-            "${ANDROID_PROJECT}/app/src/main/AndroidManifest.xml"
-
-          grep -q \
-            "<string name=\"app_name\">${APP_NAME}</string>" \
-            "${ANDROID_PROJECT}/app/src/main/res/values/strings.xml"
-
-          grep -q \
-            'android:drawable="@android:color/transparent"' \
-            "${ANDROID_PROJECT}/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml"
-
-          grep -q \
-            'android:drawable="@drawable/ic_launcher_foreground"' \
-            "${ANDROID_PROJECT}/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml"
-
-          echo "Configuration checks: PASSED"
-
-          echo
-          echo "========================================"
-          echo "PROJECT VERIFICATION PASSED"
-          echo "========================================"
-
-      # ============================================================
-      # BUILD
-      # ============================================================
-
-      - name: Build Debug APK
-        shell: bash
-        working-directory: ${{ env.ANDROID_PROJECT }}
-        run: |
-          set -euo pipefail
-
-          chmod +x ./gradlew
-
-          ./gradlew \
-            --no-daemon \
-            --stacktrace \
-            --info \
-            --console=plain \
-            -PBUILD_WITH_CMAKE \
-            assembleDebug \
-            2>&1 | tee "${RUNNER_TEMP}/gradle-build.log"
-
-      # ============================================================
-      # VERIFY APK OUTPUT
-      # ============================================================
-
-      - name: Verify APK output
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          APK="${ANDROID_PROJECT}/app/build/outputs/apk/debug/app-debug.apk"
-
-          echo "========================================"
-          echo "APK OUTPUT"
-          echo "========================================"
-
-          test -f "${APK}"
-
-          echo "APK exists:"
-          echo "${APK}"
-
-          echo
-          ls -lh "${APK}"
-
-      # ============================================================
-      # COPY APK
-      # ============================================================
-
-      - name: Prepare APK artifact
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          APK="${ANDROID_PROJECT}/app/build/outputs/apk/debug/app-debug.apk"
-
-          mkdir -p \
-            "${GITHUB_WORKSPACE}/artifacts"
-
-          test -f "${APK}"
-
-          cp \
-            "${APK}" \
-            "${GITHUB_WORKSPACE}/artifacts/ultron-debug.apk"
-
-          test -f \
-            "${GITHUB_WORKSPACE}/artifacts/ultron-debug.apk"
-
-          echo "========================================"
-          echo "APK READY FOR ARTIFACT UPLOAD"
-          echo "========================================"
-
-          ls -lh \
-            "${GITHUB_WORKSPACE}/artifacts/ultron-debug.apk"
-
-      # ============================================================
-      # VALIDATE APK
-      # ============================================================
-
-      - name: Validate APK
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          APK="${GITHUB_WORKSPACE}/artifacts/ultron-debug.apk"
-
-          test -f "${APK}"
-
-          echo "========================================"
-          echo "APK BADGING"
-          echo "========================================"
-
-          "${ANDROID_HOME}/build-tools/${BUILD_TOOLS_VERSION}/aapt" \
-            dump badging \
-            "${APK}" \
-            | tee "${RUNNER_TEMP}/apk-badging.txt"
-
-          echo
-          echo "========================================"
-          echo "PACKAGE VALIDATION"
-          echo "========================================"
-
-          grep -q \
-            "package: name='${APPLICATION_ID}'" \
-            "${RUNNER_TEMP}/apk-badging.txt"
-
-          echo "Package identity: PASSED"
-
-          echo
-          echo "========================================"
-          echo "APP LABEL VALIDATION"
-          echo "========================================"
-
-          grep -q \
-            "application-label:'${APP_NAME}'" \
-            "${RUNNER_TEMP}/apk-badging.txt"
-
-          echo "Application label: PASSED"
-
-          echo
-          echo "========================================"
-          echo "ABI VALIDATION"
-          echo "========================================"
-
-          grep -q \
-            "native-code: '${ANDROID_ABI}'" \
-            "${RUNNER_TEMP}/apk-badging.txt"
-
-          echo "ABI: PASSED"
-
-          echo
-          echo "========================================"
-          echo "GLES VALIDATION"
-          echo "========================================"
-
-          grep -q \
-            "uses-gl-es: '0x30002'" \
-            "${RUNNER_TEMP}/apk-badging.txt"
-
-          echo "OpenGL ES 3.2: PASSED"
-
-          echo
-          echo "========================================"
-          echo "SDK VALIDATION"
-          echo "========================================"
-
-          grep -q \
-            "sdkVersion:'26'" \
-            "${RUNNER_TEMP}/apk-badging.txt"
-
-          grep -q \
-            "targetSdkVersion:'36'" \
-            "${RUNNER_TEMP}/apk-badging.txt"
-
-          echo "Minimum SDK 26: PASSED"
-          echo "Target SDK 36: PASSED"
-
-          echo
-          echo "========================================"
-          echo "ICON VALIDATION"
-          echo "========================================"
-
-          test -f \
-            "${ANDROID_PROJECT}/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml"
-
-          test -f \
-            "${ANDROID_PROJECT}/app/src/main/res/drawable-nodpi/ic_launcher_foreground.png"
-
-          echo "Adaptive icon resources: PASSED"
-
-          echo
-          echo "========================================"
-          echo "APK VALIDATION PASSED"
-          echo "========================================"
-
-          ls -lh \
-            "${APK}"
-
-      # ============================================================
-      # UPLOAD APK
-      # ============================================================
-
-      - name: Upload Ultron APK
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: ultron-android-debug
-          path: artifacts/ultron-debug.apk
-          if-no-files-found: warn
-          compression-level: 0
-
-      # ============================================================
-      # BUILD SUMMARY
-      # ============================================================
-
-      - name: Generate build summary
-        if: always()
-        shell: bash
-        run: |
-          {
-            echo "# Ultron Android Build"
-            echo
-            echo "| Property | Value |"
-            echo "|---|---|"
-            echo "| App | ${APP_NAME} |"
-            echo "| Application ID | ${APPLICATION_ID} |"
-            echo "| Version | ${APP_VERSION_NAME} |"
-            echo "| RmlUi | ${RMLUI_VERSION} |"
-            echo "| SDL3 | ${SDL_VERSION} |"
-            echo "| FreeType | ${FREETYPE_VERSION} |"
-            echo "| Android API | ${ANDROID_API} |"
-            echo "| Min SDK | 26 |"
-            echo "| NDK | ${ANDROID_NDK_VERSION} |"
-            echo "| ABI | ${ANDROID_ABI} |"
-            echo "| C++ | 20 |"
-            echo "| Renderer | OpenGL ES 3.2 |"
-            echo "| Background | Pure Black |"
-            echo "| Icon | Adaptive Brain Icon |"
-            echo
-            echo "APK artifact: ultron-android-debug"
-          } >> "${GITHUB_STEP_SUMMARY}"
-
-      # ============================================================
-      # DIAGNOSTICS
-      # ============================================================
-
-      - name: Upload build diagnostics
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: ultron-build-diagnostics
-          path: |
-            ${{ runner.temp }}/gradle-build.log
-            ${{ runner.temp }}/apk-badging.txt
-          if-no-files-found: warn
-          compression-level: 6
+            "minSdk = ${ANDROID
