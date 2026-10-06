@@ -179,6 +179,8 @@ jobs:
           }
 
           dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+
               repositories {
                   google()
                   mavenCentral()
@@ -298,7 +300,7 @@ jobs:
           EOF
 
       # ============================================================
-      # ADAPTIVE ICON
+      # ADAPTIVE BRAIN ICON
       # ============================================================
 
       - name: Generate adaptive brain icon
@@ -334,7 +336,7 @@ jobs:
             "${ANDROID_PROJECT}/app/src/main/res/mipmap-anydpi-v26"
 
           # ========================================================
-          # Prepare artwork
+          # Prepare foreground artwork
           # ========================================================
 
           "${MAGICK}" \
@@ -359,7 +361,7 @@ jobs:
             "${ANDROID_PROJECT}/app/src/main/res/drawable-nodpi/ic_launcher_foreground.png"
 
           # ========================================================
-          # Adaptive icon definition
+          # Adaptive icon XML
           # ========================================================
 
           cat > \
@@ -377,6 +379,8 @@ jobs:
 
           </adaptive-icon>
           EOF
+
+          echo "Adaptive icon: PASSED"
 
       # ============================================================
       # ANDROID MANIFEST
@@ -639,6 +643,14 @@ jobs:
           # ========================================================
           # RmlUi
           # ========================================================
+
+          set(
+              BUILD_SHARED_LIBS
+              OFF
+              CACHE BOOL
+              ""
+              FORCE
+          )
 
           set(
               RMLUI_SAMPLES
@@ -1465,4 +1477,363 @@ jobs:
             "${ANDROID_PROJECT}/app/build.gradle"
 
           grep -q \
-            "minSdk = ${ANDROID
+            "minSdk = ${ANDROID_MIN_SDK}" \
+            "${ANDROID_PROJECT}/app/build.gradle"
+
+          grep -q \
+            "targetSdk = ${ANDROID_API}" \
+            "${ANDROID_PROJECT}/app/build.gradle"
+
+          grep -q \
+            "buildToolsVersion = \"${BUILD_TOOLS_VERSION}\"" \
+            "${ANDROID_PROJECT}/app/build.gradle"
+
+          grep -q \
+            "ndkVersion = \"${ANDROID_NDK_VERSION}\"" \
+            "${ANDROID_PROJECT}/app/build.gradle"
+
+          echo "Gradle/toolchain configuration: PASSED"
+
+          echo
+          echo "========================================"
+          echo "RUNTIME"
+          echo "========================================"
+
+          grep -q \
+            'RMLUI_SDL_VERSION_MAJOR=3' \
+            "${ANDROID_PROJECT}/app/jni/src/CMakeLists.txt"
+
+          grep -q \
+            '#include <SDL3/SDL_main.h>' \
+            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
+
+          grep -q \
+            '#include <RmlUi/Core/Context.h>' \
+            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
+
+          grep -q \
+            '#include <RmlUi/Core/ElementDocument.h>' \
+            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
+
+          grep -q \
+            '#include <GLES3/gl3.h>' \
+            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
+
+          grep -q \
+            'SDL_SetEventFilter' \
+            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
+
+          grep -q \
+            'SDL_EVENT_WILL_ENTER_BACKGROUND' \
+            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
+
+          grep -q \
+            'SDL_EVENT_DID_ENTER_FOREGROUND' \
+            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
+
+          grep -q \
+            'background-color: #000000' \
+            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
+
+          grep -q \
+            'glClearColor' \
+            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
+
+          grep -q \
+            'glClear(' \
+            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
+
+          echo "Runtime configuration: PASSED"
+
+          echo
+          echo "========================================"
+          echo "FUTURE HARDWARE FEATURES"
+          echo "========================================"
+
+          grep -q \
+            'android.hardware.bluetooth' \
+            "${ANDROID_PROJECT}/app/src/main/AndroidManifest.xml"
+
+          grep -q \
+            'android.hardware.gamepad' \
+            "${ANDROID_PROJECT}/app/src/main/AndroidManifest.xml"
+
+          grep -q \
+            'android.hardware.usb.host' \
+            "${ANDROID_PROJECT}/app/src/main/AndroidManifest.xml"
+
+          grep -q \
+            'android.hardware.type.pc' \
+            "${ANDROID_PROJECT}/app/src/main/AndroidManifest.xml"
+
+          echo "Bluetooth/gamepad/USB/PC declarations: PASSED"
+
+          echo
+          echo "========================================"
+          echo "ICON"
+          echo "========================================"
+
+          grep -q \
+            'android:drawable="@android:color/transparent"' \
+            "${ANDROID_PROJECT}/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml"
+
+          grep -q \
+            'android:drawable="@drawable/ic_launcher_foreground"' \
+            "${ANDROID_PROJECT}/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml"
+
+          echo "Adaptive icon: PASSED"
+
+          echo
+          echo "========================================"
+          echo "PROJECT VERIFICATION PASSED"
+          echo "========================================"
+
+      # ============================================================
+      # GRADLE CONFIGURATION TEST
+      # ============================================================
+
+      - name: Validate Gradle configuration
+        shell: bash
+        working-directory: ${{ env.ANDROID_PROJECT }}
+        run: |
+          set -euo pipefail
+
+          chmod +x ./gradlew
+
+          ./gradlew \
+            --no-daemon \
+            --stacktrace \
+            --console=plain \
+            help
+
+      # ============================================================
+      # BUILD APK
+      # ============================================================
+
+      - name: Build Debug APK
+        shell: bash
+        working-directory: ${{ env.ANDROID_PROJECT }}
+        run: |
+          set -euo pipefail
+
+          ./gradlew \
+            --no-daemon \
+            --stacktrace \
+            --info \
+            --console=plain \
+            assembleDebug \
+            2>&1 | tee "${RUNNER_TEMP}/gradle-build.log"
+
+      # ============================================================
+      # VERIFY APK OUTPUT
+      # ============================================================
+
+      - name: Verify APK output
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APK="${ANDROID_PROJECT}/app/build/outputs/apk/debug/app-debug.apk"
+
+          test -f "${APK}"
+
+          echo "========================================"
+          echo "APK OUTPUT"
+          echo "========================================"
+
+          echo "APK exists:"
+          echo "${APK}"
+
+          echo
+          ls -lh "${APK}"
+
+      # ============================================================
+      # PREPARE APK ARTIFACT
+      # ============================================================
+
+      - name: Prepare APK artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APK="${ANDROID_PROJECT}/app/build/outputs/apk/debug/app-debug.apk"
+
+          test -f "${APK}"
+
+          mkdir -p \
+            "${GITHUB_WORKSPACE}/artifacts"
+
+          cp \
+            "${APK}" \
+            "${GITHUB_WORKSPACE}/artifacts/ultron-debug.apk"
+
+          test -f \
+            "${GITHUB_WORKSPACE}/artifacts/ultron-debug.apk"
+
+          echo "APK prepared successfully."
+
+      # ============================================================
+      # VALIDATE APK
+      # ============================================================
+
+      - name: Validate APK
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APK="${GITHUB_WORKSPACE}/artifacts/ultron-debug.apk"
+          BADGING="${RUNNER_TEMP}/apk-badging.txt"
+
+          test -f "${APK}"
+
+          echo "========================================"
+          echo "APK BADGING"
+          echo "========================================"
+
+          "${ANDROID_HOME}/build-tools/${BUILD_TOOLS_VERSION}/aapt" \
+            dump badging \
+            "${APK}" \
+            | tee "${BADGING}"
+
+          echo
+          echo "========================================"
+          echo "PACKAGE"
+          echo "========================================"
+
+          grep -q \
+            "package: name='${APPLICATION_ID}'" \
+            "${BADGING}"
+
+          echo "Package identity: PASSED"
+
+          echo
+          echo "========================================"
+          echo "APP LABEL"
+          echo "========================================"
+
+          grep -q \
+            "application-label:'${APP_NAME}'" \
+            "${BADGING}"
+
+          echo "Application label: PASSED"
+
+          echo
+          echo "========================================"
+          echo "ABI"
+          echo "========================================"
+
+          grep -q \
+            "native-code: '${ANDROID_ABI}'" \
+            "${BADGING}"
+
+          echo "ABI: PASSED"
+
+          echo
+          echo "========================================"
+          echo "OPENGL ES"
+          echo "========================================"
+
+          grep -q \
+            "uses-gl-es: '0x30002'" \
+            "${BADGING}"
+
+          echo "OpenGL ES 3.2: PASSED"
+
+          echo
+          echo "========================================"
+          echo "SDK"
+          echo "========================================"
+
+          grep -q \
+            "sdkVersion:'${ANDROID_MIN_SDK}'" \
+            "${BADGING}"
+
+          grep -q \
+            "targetSdkVersion:'${ANDROID_API}'" \
+            "${BADGING}"
+
+          echo "Minimum SDK ${ANDROID_MIN_SDK}: PASSED"
+          echo "Target SDK ${ANDROID_API}: PASSED"
+
+          echo
+          echo "========================================"
+          echo "ICON"
+          echo "========================================"
+
+          test -f \
+            "${ANDROID_PROJECT}/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml"
+
+          test -f \
+            "${ANDROID_PROJECT}/app/src/main/res/drawable-nodpi/ic_launcher_foreground.png"
+
+          echo "Adaptive icon resources: PASSED"
+
+          echo
+          echo "========================================"
+          echo "APK VALIDATION PASSED"
+          echo "========================================"
+
+          ls -lh \
+            "${APK}"
+
+      # ============================================================
+      # UPLOAD APK
+      # ============================================================
+
+      - name: Upload Ultron APK
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ultron-android-debug
+          path: artifacts/ultron-debug.apk
+          if-no-files-found: warn
+          compression-level: 0
+
+      # ============================================================
+      # BUILD SUMMARY
+      # ============================================================
+
+      - name: Generate build summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "# Ultron Android Build"
+            echo
+            echo "| Property | Value |"
+            echo "|---|---|"
+            echo "| App | ${APP_NAME} |"
+            echo "| Application ID | ${APPLICATION_ID} |"
+            echo "| Version | ${APP_VERSION_NAME} |"
+            echo "| RmlUi | ${RMLUI_VERSION} |"
+            echo "| SDL3 | ${SDL_VERSION} |"
+            echo "| FreeType | ${FREETYPE_VERSION} |"
+            echo "| Android API | ${ANDROID_API} |"
+            echo "| Min SDK | ${ANDROID_MIN_SDK} |"
+            echo "| Build Tools | ${BUILD_TOOLS_VERSION} |"
+            echo "| AGP | ${AGP_VERSION} |"
+            echo "| Gradle | ${GRADLE_VERSION} |"
+            echo "| NDK | ${ANDROID_NDK_VERSION} |"
+            echo "| ABI | ${ANDROID_ABI} |"
+            echo "| C++ | 20 |"
+            echo "| Renderer | OpenGL ES 3.2 |"
+            echo "| Background | Pure Black |"
+            echo "| Icon | Adaptive Brain Icon |"
+            echo
+            echo "APK artifact: ultron-android-debug"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      # ============================================================
+      # DIAGNOSTICS
+      # ============================================================
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ultron-build-diagnostics
+          path: |
+            ${{ runner.temp }}/gradle-build.log
+            ${{ runner.temp }}/apk-badging.txt
+          if-no-files-found: warn
+          compression-level: 6
