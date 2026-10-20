@@ -26,11 +26,6 @@ namespace
         switch (event->type)
         {
             case SDL_EVENT_WILL_ENTER_BACKGROUND:
-                g_paused.store(
-                    true,
-                    std::memory_order_relaxed);
-                break;
-
             case SDL_EVENT_DID_ENTER_BACKGROUND:
                 g_paused.store(
                     true,
@@ -91,14 +86,12 @@ namespace
 
         if (gl_context != nullptr)
         {
-            SDL_GL_DestroyContext(
-                gl_context);
+            SDL_GL_DestroyContext(gl_context);
         }
 
         if (window != nullptr)
         {
-            SDL_DestroyWindow(
-                window);
+            SDL_DestroyWindow(window);
         }
 
         SDL_Quit();
@@ -119,8 +112,7 @@ int main(int argc, char** argv)
         SDL_LOG_CATEGORY_APPLICATION,
         SDL_LOG_PRIORITY_INFO);
 
-    SDL_Log(
-        "Ultron starting...");
+    SDL_Log("Ultron starting...");
 
     if (!SDL_Init(
             SDL_INIT_VIDEO |
@@ -149,7 +141,7 @@ int main(int argc, char** argv)
         SDL_HINT_TOUCH_MOUSE_EVENTS,
         "0");
 
-    // OpenGL ES 3.2
+    // OpenGL ES 3.2 configuration.
     SDL_GL_SetAttribute(
         SDL_GL_CONTEXT_FLAGS,
         0);
@@ -170,7 +162,7 @@ int main(int argc, char** argv)
         SDL_GL_DOUBLEBUFFER,
         1);
 
-    // Window
+    // Create the SDL window.
     SDL_PropertiesID properties =
         SDL_CreateProperties();
 
@@ -227,8 +219,7 @@ int main(int argc, char** argv)
         SDL_CreateWindowWithProperties(
             properties);
 
-    SDL_DestroyProperties(
-        properties);
+    SDL_DestroyProperties(properties);
 
     if (window == nullptr)
     {
@@ -239,10 +230,9 @@ int main(int argc, char** argv)
             "SDL_CreateWindowWithProperties failed");
     }
 
-    // OpenGL context
+    // Create the OpenGL context.
     SDL_GLContext gl_context =
-        SDL_GL_CreateContext(
-            window);
+        SDL_GL_CreateContext(window);
 
     if (gl_context == nullptr)
     {
@@ -266,7 +256,6 @@ int main(int argc, char** argv)
 
     SDL_GL_SetSwapInterval(1);
 
-    // Initial pure-black frame
     glDisable(GL_SCISSOR_TEST);
 
     glClearColor(
@@ -275,13 +264,11 @@ int main(int argc, char** argv)
         0.0f,
         1.0f);
 
-    glClear(
-        GL_COLOR_BUFFER_BIT);
+    glClear(GL_COLOR_BUFFER_BIT);
 
-    SDL_Log(
-        "OpenGL context created.");
+    SDL_Log("OpenGL context created.");
 
-    // Initialize RmlUi GL3 renderer
+    // Initialize the RmlUi OpenGL renderer.
     if (!RmlGL3::Initialize())
     {
         return Fail(
@@ -292,12 +279,11 @@ int main(int argc, char** argv)
     }
 
     {
-        SystemInterface_SDL system_interface(
-            window);
+        SystemInterface_SDL system_interface(window);
 
         RenderInterface_GL3 render_interface;
 
-        // Drawable size
+        // Read the drawable dimensions.
         int width = 0;
         int height = 0;
 
@@ -324,7 +310,7 @@ int main(int argc, char** argv)
             width,
             height);
 
-        // RmlUi interfaces
+        // Register the RmlUi interfaces.
         Rml::SetSystemInterface(
             &system_interface);
 
@@ -342,7 +328,7 @@ int main(int argc, char** argv)
                 "Rml::Initialise failed");
         }
 
-        // Context
+        // Create the UI context.
         Rml::Context* context =
             Rml::CreateContext(
                 "main",
@@ -362,10 +348,9 @@ int main(int argc, char** argv)
                 "Rml::CreateContext failed");
         }
 
-        // Display density
+        // Apply the device display scale.
         const float window_scale =
-            SDL_GetWindowDisplayScale(
-                window);
+            SDL_GetWindowDisplayScale(window);
 
         if (window_scale > 0.0f)
         {
@@ -373,8 +358,13 @@ int main(int argc, char** argv)
                 window_scale);
         }
 
-        // Embedded black document; external HUD will
-        // replace this in the next stage.
+        // ----------------------------------------------------
+        // ULTRON TEST UI
+        // Three coloured dots on a black background.
+        // This is embedded RML, so external assets are not
+        // required for this first rendering test.
+        // ----------------------------------------------------
+
         const Rml::String ui = R"rml(
         <rml>
           <head>
@@ -385,23 +375,71 @@ int main(int argc, char** argv)
                 width: 100%;
                 height: 100%;
                 background-color: #000000;
-                color: #000000;
+              }
+
+              #root
+              {
+                width: 100%;
+                height: 100%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                background-color: #000000;
+              }
+
+              #dots
+              {
+                display: flex;
+                flex-direction: row;
+                align-items: center;
+                justify-content: center;
+              }
+
+              .dot
+              {
+                width: 36px;
+                height: 36px;
+                border-radius: 18px;
+                margin: 0px 10px;
+              }
+
+              #dot-cyan
+              {
+                background-color: #00E5FF;
+              }
+
+              #dot-magenta
+              {
+                background-color: #FF3DCE;
+              }
+
+              #dot-green
+              {
+                background-color: #65FF70;
               }
             </style>
           </head>
-          <body></body>
+
+          <body>
+            <div id="root">
+              <div id="dots">
+                <div class="dot" id="dot-cyan"></div>
+                <div class="dot" id="dot-magenta"></div>
+                <div class="dot" id="dot-green"></div>
+              </div>
+            </div>
+          </body>
         </rml>
         )rml";
 
         Rml::ElementDocument* document =
             context->LoadDocumentFromMemory(
                 ui,
-                "[embedded-ultron-ui.rml]");
+                "[ultron-dot-test.rml]");
 
         if (document == nullptr)
         {
-            Rml::RemoveContext(
-                "main");
+            Rml::RemoveContext("main");
 
             Rml::Shutdown();
             RmlGL3::Shutdown();
@@ -416,9 +454,12 @@ int main(int argc, char** argv)
         document->Show();
 
         SDL_Log(
-            "Ultron black UI initialized.");
+            "Ultron three-dot RmlUi rendering test initialized.");
 
-        // Main loop
+        // ----------------------------------------------------
+        // MAIN EVENT AND RENDER LOOP
+        // ----------------------------------------------------
+
         while (
             g_running.load(
                 std::memory_order_relaxed))
@@ -427,8 +468,7 @@ int main(int argc, char** argv)
 
             while (SDL_PollEvent(&event))
             {
-                if (event.type ==
-                    SDL_EVENT_QUIT)
+                if (event.type == SDL_EVENT_QUIT)
                 {
                     g_running.store(
                         false,
@@ -456,7 +496,7 @@ int main(int argc, char** argv)
                 continue;
             }
 
-            // Responsive drawable size
+            // Update the drawable dimensions when necessary.
             int new_width = 0;
             int new_height = 0;
 
@@ -484,7 +524,7 @@ int main(int argc, char** argv)
                 }
             }
 
-            // Pure-black frame
+            // Clear the background before rendering the UI.
             glDisable(GL_SCISSOR_TEST);
 
             glClearColor(
@@ -493,9 +533,9 @@ int main(int argc, char** argv)
                 0.0f,
                 1.0f);
 
-            glClear(
-                GL_COLOR_BUFFER_BIT);
+            glClear(GL_COLOR_BUFFER_BIT);
 
+            // Update and render RmlUi.
             context->Update();
 
             render_interface.BeginFrame();
@@ -504,30 +544,25 @@ int main(int argc, char** argv)
 
             render_interface.EndFrame();
 
-            SDL_GL_SwapWindow(
-                window);
+            SDL_GL_SwapWindow(window);
         }
 
-        // RmlUi shutdown
-        Rml::RemoveContext(
-            "main");
+        // Shut down RmlUi.
+        Rml::RemoveContext("main");
 
         Rml::Shutdown();
     }
 
-    // GL + SDL shutdown
+    // Shut down OpenGL and SDL.
     RmlGL3::Shutdown();
 
-    SDL_GL_DestroyContext(
-        gl_context);
+    SDL_GL_DestroyContext(gl_context);
 
-    SDL_DestroyWindow(
-        window);
+    SDL_DestroyWindow(window);
 
     SDL_Quit();
 
-    SDL_Log(
-        "Ultron shutdown cleanly.");
+    SDL_Log("Ultron shutdown cleanly.");
 
     return 0;
 }
