@@ -29,7 +29,7 @@ env:
 
   BUILD_TOOLS_VERSION: "36.1.0"
   AGP_VERSION: "9.4.0"
-  GRADLE_VERSION: "9.8.0"
+  GRADLE_VERSION: "9.8.2"
 
   APP_VERSION_NAME: "0.1.0"
   APP_VERSION_CODE: "1"
@@ -41,26 +41,14 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      # ==========================================================
-      # CHECKOUT
-      # ==========================================================
-
       - name: Checkout Ultron
         uses: actions/checkout@v7
-
-      # ==========================================================
-      # JAVA
-      # ==========================================================
 
       - name: Setup Java 17
         uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "17"
-
-      # ==========================================================
-      # ANDROID SDK
-      # ==========================================================
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
@@ -78,9 +66,9 @@ jobs:
             "build-tools;${BUILD_TOOLS_VERSION}" \
             "ndk;${ANDROID_NDK_VERSION}"
 
-      # ==========================================================
+      # ============================================================
       # PREPARE ANDROID PROJECT AND DEPENDENCIES
-      # ==========================================================
+      # ============================================================
 
       - name: Prepare Android project and dependencies
         shell: bash
@@ -123,7 +111,7 @@ jobs:
             "https://github.com/mikke89/RmlUi.git" \
             "${ANDROID_PROJECT}/app/jni/RmlUi"
 
-          # Remove dependency Git metadata
+          # Remove downloaded Git metadata
           rm -rf \
             "${ANDROID_PROJECT}/app/jni/SDL/.git" \
             "${ANDROID_PROJECT}/app/jni/freetype/.git" \
@@ -131,9 +119,9 @@ jobs:
 
           echo "ANDROID_PROJECT=${ANDROID_PROJECT}" >> "${GITHUB_ENV}"
 
-      # ==========================================================
-      # GRADLE PROJECT
-      # ==========================================================
+      # ============================================================
+      # CONFIGURE GRADLE PROJECT
+      # ============================================================
 
       - name: Configure Gradle project
         shell: bash
@@ -141,16 +129,16 @@ jobs:
           set -euo pipefail
 
           # Root build.gradle
-          cat > \
-            "${ANDROID_PROJECT}/build.gradle" <<EOF
+          cat > "${ANDROID_PROJECT}/build.gradle" <<EOF
           plugins {
               id 'com.android.application' version '${AGP_VERSION}' apply false
           }
           EOF
 
           # settings.gradle
-          cat > \
-            "${ANDROID_PROJECT}/settings.gradle" <<'EOF'
+          # RepositoriesMode is intentionally omitted to keep this
+          # generated settings file simple and avoid enum resolution issues.
+          cat > "${ANDROID_PROJECT}/settings.gradle" <<'EOF'
           pluginManagement {
               repositories {
                   google()
@@ -172,8 +160,7 @@ jobs:
           EOF
 
           # Gradle wrapper
-          cat > \
-            "${ANDROID_PROJECT}/gradle/wrapper/gradle-wrapper.properties" <<EOF
+          cat > "${ANDROID_PROJECT}/gradle/wrapper/gradle-wrapper.properties" <<EOF
           distributionBase=GRADLE_USER_HOME
           distributionPath=wrapper/dists
           distributionUrl=https\\://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip
@@ -181,9 +168,8 @@ jobs:
           zipStorePath=wrapper/dists
           EOF
 
-          # App build.gradle
-          cat > \
-            "${ANDROID_PROJECT}/app/build.gradle" <<EOF
+          # app/build.gradle
+          cat > "${ANDROID_PROJECT}/app/build.gradle" <<EOF
           plugins {
               id 'com.android.application'
           }
@@ -210,9 +196,7 @@ jobs:
 
                   externalNativeBuild {
                       cmake {
-                          arguments \
-                              "-DANDROID_PLATFORM=android-${ANDROID_MIN_SDK}", \
-                              "-DANDROID_STL=c++_static"
+                          arguments "-DANDROID_PLATFORM=android-${ANDROID_MIN_SDK}", "-DANDROID_STL=c++_static"
 
                           abiFilters "${ANDROID_ABI}"
                       }
@@ -248,8 +232,7 @@ jobs:
           EOF
 
           # Gradle properties
-          cat > \
-            "${ANDROID_PROJECT}/gradle.properties" <<'EOF'
+          cat > "${ANDROID_PROJECT}/gradle.properties" <<'EOF'
           org.gradle.jvmargs=-Xmx4096m
           org.gradle.caching=true
           org.gradle.parallel=true
@@ -259,16 +242,15 @@ jobs:
           mkdir -p \
             "${ANDROID_PROJECT}/app/src/main/res/values"
 
-          cat > \
-            "${ANDROID_PROJECT}/app/src/main/res/values/strings.xml" <<EOF
+          cat > "${ANDROID_PROJECT}/app/src/main/res/values/strings.xml" <<EOF
           <resources>
               <string name="app_name">${APP_NAME}</string>
           </resources>
           EOF
 
-      # ==========================================================
+      # ============================================================
       # ADAPTIVE BRAIN ICON
-      # ==========================================================
+      # ============================================================
 
       - name: Generate adaptive brain icon
         shell: bash
@@ -302,13 +284,13 @@ jobs:
             "${ANDROID_PROJECT}/app/src/main/res/drawable-nodpi" \
             "${ANDROID_PROJECT}/app/src/main/res/mipmap-anydpi-v26"
 
-          # Prepare foreground artwork
+          # Resize the existing icon artwork
           "${MAGICK}" \
             "${ICON_SOURCE}" \
             -resize 720x720 \
             "${ICON_WORK}/brain.png"
 
-          # Transparent adaptive foreground canvas
+          # Transparent adaptive-icon foreground canvas
           "${MAGICK}" \
             -size 1080x1080 \
             xc:none \
@@ -322,8 +304,7 @@ jobs:
             "${ANDROID_PROJECT}/app/src/main/res/drawable-nodpi/ic_launcher_foreground.png"
 
           # Adaptive icon XML
-          cat > \
-            "${ANDROID_PROJECT}/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml" <<'EOF'
+          cat > "${ANDROID_PROJECT}/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml" <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
 
           <adaptive-icon
@@ -340,17 +321,16 @@ jobs:
 
           echo "Adaptive icon: PASSED"
 
-      # ==========================================================
+      # ============================================================
       # ANDROID MANIFEST
-      # ==========================================================
+      # ============================================================
 
       - name: Generate Android manifest
         shell: bash
         run: |
           set -euo pipefail
 
-          cat > \
-            "${ANDROID_PROJECT}/app/src/main/AndroidManifest.xml" <<EOF
+          cat > "${ANDROID_PROJECT}/app/src/main/AndroidManifest.xml" <<EOF
           <?xml version="1.0" encoding="utf-8"?>
 
           <manifest
@@ -359,30 +339,37 @@ jobs:
               android:versionName="${APP_VERSION_NAME}"
               android:installLocation="auto">
 
+              <!-- OpenGL ES 3.2 -->
               <uses-feature
                   android:glEsVersion="0x00030002"
                   android:required="true" />
 
+              <!-- Touch -->
               <uses-feature
                   android:name="android.hardware.touchscreen"
                   android:required="false" />
 
+              <!-- Future Bluetooth -->
               <uses-feature
                   android:name="android.hardware.bluetooth"
                   android:required="false" />
 
+              <!-- Future game/controller -->
               <uses-feature
                   android:name="android.hardware.gamepad"
                   android:required="false" />
 
+              <!-- Future USB devices -->
               <uses-feature
                   android:name="android.hardware.usb.host"
                   android:required="false" />
 
+              <!-- Future PC / Chromebook form factor -->
               <uses-feature
                   android:name="android.hardware.type.pc"
                   android:required="false" />
 
+              <!-- Future haptics -->
               <uses-permission
                   android:name="android.permission.VIBRATE" />
 
@@ -412,21 +399,22 @@ jobs:
                       </intent-filter>
 
                   </activity>
+
               </application>
+
           </manifest>
           EOF
 
-      # ==========================================================
+      # ============================================================
       # MAIN CMAKE
-      # ==========================================================
+      # ============================================================
 
       - name: Generate CMake project
         shell: bash
         run: |
           set -euo pipefail
 
-          cat > \
-            "${ANDROID_PROJECT}/app/jni/CMakeLists.txt" <<'CMAKE'
+          cat > "${ANDROID_PROJECT}/app/jni/CMakeLists.txt" <<'CMAKE'
           cmake_minimum_required(VERSION 3.16)
 
           project(
@@ -464,12 +452,53 @@ jobs:
           )
 
           # SDL3
-          set(SDL_SHARED ON CACHE BOOL "" FORCE)
-          set(SDL_STATIC OFF CACHE BOOL "" FORCE)
-          set(SDL_TESTS OFF CACHE BOOL "" FORCE)
-          set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
-          set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
-          set(SDL_GPU OFF CACHE BOOL "" FORCE)
+          set(
+              SDL_SHARED
+              ON
+              CACHE BOOL
+              ""
+              FORCE
+          )
+
+          set(
+              SDL_STATIC
+              OFF
+              CACHE BOOL
+              ""
+              FORCE
+          )
+
+          set(
+              SDL_TESTS
+              OFF
+              CACHE BOOL
+              ""
+              FORCE
+          )
+
+          set(
+              SDL_EXAMPLES
+              OFF
+              CACHE BOOL
+              ""
+              FORCE
+          )
+
+          set(
+              SDL_INSTALL
+              OFF
+              CACHE BOOL
+              ""
+              FORCE
+          )
+
+          set(
+              SDL_GPU
+              OFF
+              CACHE BOOL
+              ""
+              FORCE
+          )
 
           add_subdirectory(
               "${CMAKE_CURRENT_LIST_DIR}/SDL"
@@ -478,12 +507,53 @@ jobs:
           )
 
           # FreeType
-          set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-          set(FT_DISABLE_ZLIB ON CACHE BOOL "" FORCE)
-          set(FT_DISABLE_BZIP2 ON CACHE BOOL "" FORCE)
-          set(FT_DISABLE_PNG ON CACHE BOOL "" FORCE)
-          set(FT_DISABLE_HARFBUZZ ON CACHE BOOL "" FORCE)
-          set(FT_DISABLE_BROTLI ON CACHE BOOL "" FORCE)
+          set(
+              BUILD_SHARED_LIBS
+              OFF
+              CACHE BOOL
+              ""
+              FORCE
+          )
+
+          set(
+              FT_DISABLE_ZLIB
+              ON
+              CACHE BOOL
+              ""
+              FORCE
+          )
+
+          set(
+              FT_DISABLE_BZIP2
+              ON
+              CACHE BOOL
+              ""
+              FORCE
+          )
+
+          set(
+              FT_DISABLE_PNG
+              ON
+              CACHE BOOL
+              ""
+              FORCE
+          )
+
+          set(
+              FT_DISABLE_HARFBUZZ
+              ON
+              CACHE BOOL
+              ""
+              FORCE
+          )
+
+          set(
+              FT_DISABLE_BROTLI
+              ON
+              CACHE BOOL
+              ""
+              FORCE
+          )
 
           add_subdirectory(
               "${CMAKE_CURRENT_LIST_DIR}/freetype"
@@ -500,13 +570,61 @@ jobs:
           endif()
 
           # RmlUi
-          set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-          set(RMLUI_SAMPLES OFF CACHE BOOL "" FORCE)
-          set(RMLUI_FONT_ENGINE "freetype" CACHE STRING "" FORCE)
-          set(RMLUI_PRECOMPILED_HEADERS OFF CACHE BOOL "" FORCE)
-          set(RMLUI_LUA_BINDINGS OFF CACHE BOOL "" FORCE)
-          set(RMLUI_TRACY_PROFILING OFF CACHE BOOL "" FORCE)
-          set(RMLUI_COMPILER_OPTIONS OFF CACHE BOOL "" FORCE)
+          set(
+              BUILD_SHARED_LIBS
+              OFF
+              CACHE BOOL
+              ""
+              FORCE
+          )
+
+          set(
+              RMLUI_SAMPLES
+              OFF
+              CACHE BOOL
+              ""
+              FORCE
+          )
+
+          set(
+              RMLUI_FONT_ENGINE
+              "freetype"
+              CACHE STRING
+              ""
+              FORCE
+          )
+
+          set(
+              RMLUI_PRECOMPILED_HEADERS
+              OFF
+              CACHE BOOL
+              ""
+              FORCE
+          )
+
+          set(
+              RMLUI_LUA_BINDINGS
+              OFF
+              CACHE BOOL
+              ""
+              FORCE
+          )
+
+          set(
+              RMLUI_TRACY_PROFILING
+              OFF
+              CACHE BOOL
+              ""
+              FORCE
+          )
+
+          set(
+              RMLUI_COMPILER_OPTIONS
+              OFF
+              CACHE BOOL
+              ""
+              FORCE
+          )
 
           add_subdirectory(
               "${CMAKE_CURRENT_LIST_DIR}/RmlUi"
@@ -517,11 +635,11 @@ jobs:
           add_subdirectory(src)
           CMAKE
 
-      # ==========================================================
-      # NATIVE TARGET + STARTER SOURCE
-      # ==========================================================
+      # ============================================================
+      # NATIVE TARGET + SOURCE
+      # ============================================================
 
-      - name: Generate native target and starter source
+      - name: Generate native target and source
         shell: bash
         run: |
           set -euo pipefail
@@ -529,8 +647,7 @@ jobs:
           mkdir -p \
             "${ANDROID_PROJECT}/app/jni/src"
 
-          cat > \
-            "${ANDROID_PROJECT}/app/jni/src/CMakeLists.txt" <<'CMAKE'
+          cat > "${ANDROID_PROJECT}/app/jni/src/CMakeLists.txt" <<'CMAKE'
           cmake_minimum_required(VERSION 3.16)
 
           project(
@@ -538,63 +655,37 @@ jobs:
               LANGUAGES CXX
           )
 
-          # Compile every C++ source supplied to the native source folder.
-          # This permits later GUI and graphics modules to live in separate files.
-
-          file(
-              GLOB_RECURSE ULTRON_APP_SOURCES
-              CONFIGURE_DEPENDS
-              "${CMAKE_CURRENT_LIST_DIR}/*.cpp"
-              "${CMAKE_CURRENT_LIST_DIR}/*.cc"
-          )
-
-          if(NOT ULTRON_APP_SOURCES)
-              message(FATAL_ERROR "No Ultron native source files were found.")
-          endif()
-
-          set(ULTRON_INCLUDE_DIRS
-              "${CMAKE_CURRENT_LIST_DIR}"
-              "${CMAKE_CURRENT_LIST_DIR}/../RmlUi/Backends"
-          )
-
-          foreach(ULTRON_SOURCE IN LISTS ULTRON_APP_SOURCES)
-              get_filename_component(
-                  ULTRON_SOURCE_DIR
-                  "${ULTRON_SOURCE}"
-                  DIRECTORY
-              )
-
-              list(APPEND
-                  ULTRON_INCLUDE_DIRS
-                  "${ULTRON_SOURCE_DIR}"
-              )
-          endforeach()
-
-          list(REMOVE_DUPLICATES ULTRON_INCLUDE_DIRS)
-
           add_library(
               main
               SHARED
-              ${ULTRON_APP_SOURCES}
+
+              main.cpp
+
+              ../RmlUi/Backends/RmlUi_Platform_SDL.cpp
+              ../RmlUi/Backends/RmlUi_Renderer_GL3.cpp
           )
 
           target_include_directories(
               main
               PRIVATE
-              ${ULTRON_INCLUDE_DIRS}
+
+              ../RmlUi/Backends
           )
 
           target_compile_definitions(
               main
               PRIVATE
+
               RMLUI_SDL_VERSION_MAJOR=3
           )
 
           target_link_libraries(
               main
               PRIVATE
+
               RmlUi::RmlUi
               SDL3::SDL3-shared
+
               GLESv3
               android
               log
@@ -602,8 +693,7 @@ jobs:
           )
           CMAKE
 
-          cat > \
-            "${ANDROID_PROJECT}/app/jni/src/main.cpp" <<'CPP'
+          cat > "${ANDROID_PROJECT}/app/jni/src/main.cpp" <<'CPP'
           #include <SDL3/SDL.h>
           #include <SDL3/SDL_main.h>
 
@@ -632,6 +722,11 @@ jobs:
                   switch (event->type)
                   {
                       case SDL_EVENT_WILL_ENTER_BACKGROUND:
+                          g_paused.store(
+                              true,
+                              std::memory_order_relaxed);
+                          break;
+
                       case SDL_EVENT_DID_ENTER_BACKGROUND:
                           g_paused.store(
                               true,
@@ -681,7 +776,8 @@ jobs:
 
                   const char* error = SDL_GetError();
 
-                  if (error != nullptr && error[0] != '\0')
+                  if (error != nullptr &&
+                      error[0] != '\0')
                   {
                       SDL_LogError(
                           SDL_LOG_CATEGORY_APPLICATION,
@@ -691,12 +787,14 @@ jobs:
 
                   if (gl_context != nullptr)
                   {
-                      SDL_GL_DestroyContext(gl_context);
+                      SDL_GL_DestroyContext(
+                          gl_context);
                   }
 
                   if (window != nullptr)
                   {
-                      SDL_DestroyWindow(window);
+                      SDL_DestroyWindow(
+                          window);
                   }
 
                   SDL_Quit();
@@ -717,30 +815,60 @@ jobs:
                   SDL_LOG_CATEGORY_APPLICATION,
                   SDL_LOG_PRIORITY_INFO);
 
-              SDL_Log("Ultron starting...");
+              SDL_Log(
+                  "Ultron starting...");
 
-              if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS))
+              if (!SDL_Init(
+                      SDL_INIT_VIDEO |
+                      SDL_INIT_EVENTS))
               {
-                  return Fail(nullptr, nullptr, 1, "SDL_Init failed");
+                  return Fail(
+                      nullptr,
+                      nullptr,
+                      1,
+                      "SDL_Init failed");
               }
 
-              SDL_SetEventFilter(HandleAppEvents, nullptr);
+              SDL_SetEventFilter(
+                  HandleAppEvents,
+                  nullptr);
 
-              SDL_SetHint(SDL_HINT_IME_IMPLEMENTED_UI, "composition");
-              SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
-              SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
+              SDL_SetHint(
+                  SDL_HINT_IME_IMPLEMENTED_UI,
+                  "composition");
+
+              SDL_SetHint(
+                  SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH,
+                  "1");
+
+              SDL_SetHint(
+                  SDL_HINT_TOUCH_MOUSE_EVENTS,
+                  "0");
 
               // OpenGL ES 3.2
-              SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, 0);
+              SDL_GL_SetAttribute(
+                  SDL_GL_CONTEXT_FLAGS,
+                  0);
+
               SDL_GL_SetAttribute(
                   SDL_GL_CONTEXT_PROFILE_MASK,
                   SDL_GL_CONTEXT_PROFILE_ES);
-              SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-              SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
-              SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+
+              SDL_GL_SetAttribute(
+                  SDL_GL_CONTEXT_MAJOR_VERSION,
+                  3);
+
+              SDL_GL_SetAttribute(
+                  SDL_GL_CONTEXT_MINOR_VERSION,
+                  2);
+
+              SDL_GL_SetAttribute(
+                  SDL_GL_DOUBLEBUFFER,
+                  1);
 
               // Window
-              SDL_PropertiesID properties = SDL_CreateProperties();
+              SDL_PropertiesID properties =
+                  SDL_CreateProperties();
 
               if (properties == 0)
               {
@@ -792,9 +920,11 @@ jobs:
                   true);
 
               SDL_Window* window =
-                  SDL_CreateWindowWithProperties(properties);
+                  SDL_CreateWindowWithProperties(
+                      properties);
 
-              SDL_DestroyProperties(properties);
+              SDL_DestroyProperties(
+                  properties);
 
               if (window == nullptr)
               {
@@ -806,7 +936,9 @@ jobs:
               }
 
               // OpenGL context
-              SDL_GLContext gl_context = SDL_GL_CreateContext(window);
+              SDL_GLContext gl_context =
+                  SDL_GL_CreateContext(
+                      window);
 
               if (gl_context == nullptr)
               {
@@ -817,7 +949,9 @@ jobs:
                       "SDL_GL_CreateContext failed");
               }
 
-              if (!SDL_GL_MakeCurrent(window, gl_context))
+              if (!SDL_GL_MakeCurrent(
+                      window,
+                      gl_context))
               {
                   return Fail(
                       window,
@@ -828,13 +962,22 @@ jobs:
 
               SDL_GL_SetSwapInterval(1);
 
+              // Initial pure-black frame
               glDisable(GL_SCISSOR_TEST);
-              glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-              glClear(GL_COLOR_BUFFER_BIT);
 
-              SDL_Log("OpenGL context created.");
+              glClearColor(
+                  0.0f,
+                  0.0f,
+                  0.0f,
+                  1.0f);
 
-              // RmlUi renderer
+              glClear(
+                  GL_COLOR_BUFFER_BIT);
+
+              SDL_Log(
+                  "OpenGL context created.");
+
+              // Initialize RmlUi GL3 renderer
               if (!RmlGL3::Initialize())
               {
                   return Fail(
@@ -845,9 +988,12 @@ jobs:
               }
 
               {
-                  SystemInterface_SDL system_interface(window);
+                  SystemInterface_SDL system_interface(
+                      window);
+
                   RenderInterface_GL3 render_interface;
 
+                  // Drawable size
                   int width = 0;
                   int height = 0;
 
@@ -860,13 +1006,26 @@ jobs:
                       height = initial_height;
                   }
 
-                  if (width < 1) width = initial_width;
-                  if (height < 1) height = initial_height;
+                  if (width < 1)
+                  {
+                      width = initial_width;
+                  }
 
-                  render_interface.SetViewport(width, height);
+                  if (height < 1)
+                  {
+                      height = initial_height;
+                  }
 
-                  Rml::SetSystemInterface(&system_interface);
-                  Rml::SetRenderInterface(&render_interface);
+                  render_interface.SetViewport(
+                      width,
+                      height);
+
+                  // RmlUi interfaces
+                  Rml::SetSystemInterface(
+                      &system_interface);
+
+                  Rml::SetRenderInterface(
+                      &render_interface);
 
                   if (!Rml::Initialise())
                   {
@@ -879,10 +1038,13 @@ jobs:
                           "Rml::Initialise failed");
                   }
 
+                  // Context
                   Rml::Context* context =
                       Rml::CreateContext(
                           "main",
-                          Rml::Vector2i(width, height));
+                          Rml::Vector2i(
+                              width,
+                              height));
 
                   if (context == nullptr)
                   {
@@ -896,8 +1058,10 @@ jobs:
                           "Rml::CreateContext failed");
                   }
 
+                  // Display density
                   const float window_scale =
-                      SDL_GetWindowDisplayScale(window);
+                      SDL_GetWindowDisplayScale(
+                          window);
 
                   if (window_scale > 0.0f)
                   {
@@ -905,9 +1069,8 @@ jobs:
                           window_scale);
                   }
 
-                  // Starter document.
-                  // The separate HUD files will replace this in a
-                  // later integration step.
+                  // Embedded black document; external HUD will
+                  // replace this in the next stage.
                   const Rml::String ui = R"rml(
                   <rml>
                     <head>
@@ -933,7 +1096,9 @@ jobs:
 
                   if (document == nullptr)
                   {
-                      Rml::RemoveContext("main");
+                      Rml::RemoveContext(
+                          "main");
+
                       Rml::Shutdown();
                       RmlGL3::Shutdown();
 
@@ -946,20 +1111,25 @@ jobs:
 
                   document->Show();
 
-                  SDL_Log("Ultron black UI initialized.");
+                  SDL_Log(
+                      "Ultron black UI initialized.");
 
                   // Main loop
-                  while (g_running.load(std::memory_order_relaxed))
+                  while (
+                      g_running.load(
+                          std::memory_order_relaxed))
                   {
                       SDL_Event event;
 
                       while (SDL_PollEvent(&event))
                       {
-                          if (event.type == SDL_EVENT_QUIT)
+                          if (event.type ==
+                              SDL_EVENT_QUIT)
                           {
                               g_running.store(
                                   false,
                                   std::memory_order_relaxed);
+
                               continue;
                           }
 
@@ -969,12 +1139,14 @@ jobs:
                               event);
                       }
 
-                      if (!g_running.load(std::memory_order_relaxed))
+                      if (!g_running.load(
+                              std::memory_order_relaxed))
                       {
                           break;
                       }
 
-                      if (g_paused.load(std::memory_order_relaxed))
+                      if (g_paused.load(
+                              std::memory_order_relaxed))
                       {
                           SDL_Delay(16);
                           continue;
@@ -998,7 +1170,9 @@ jobs:
                               height = new_height;
 
                               context->SetDimensions(
-                                  Rml::Vector2i(width, height));
+                                  Rml::Vector2i(
+                                      width,
+                                      height));
 
                               render_interface.SetViewport(
                                   width,
@@ -1006,99 +1180,58 @@ jobs:
                           }
                       }
 
-                      // Render
+                      // Pure-black frame
                       glDisable(GL_SCISSOR_TEST);
-                      glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-                      glClear(GL_COLOR_BUFFER_BIT);
+
+                      glClearColor(
+                          0.0f,
+                          0.0f,
+                          0.0f,
+                          1.0f);
+
+                      glClear(
+                          GL_COLOR_BUFFER_BIT);
 
                       context->Update();
 
                       render_interface.BeginFrame();
+
                       context->Render();
+
                       render_interface.EndFrame();
 
-                      SDL_GL_SwapWindow(window);
+                      SDL_GL_SwapWindow(
+                          window);
                   }
 
                   // RmlUi shutdown
-                  Rml::RemoveContext("main");
+                  Rml::RemoveContext(
+                      "main");
+
                   Rml::Shutdown();
               }
 
+              // GL + SDL shutdown
               RmlGL3::Shutdown();
 
-              SDL_GL_DestroyContext(gl_context);
-              SDL_DestroyWindow(window);
+              SDL_GL_DestroyContext(
+                  gl_context);
+
+              SDL_DestroyWindow(
+                  window);
+
               SDL_Quit();
 
-              SDL_Log("Ultron shutdown cleanly.");
+              SDL_Log(
+                  "Ultron shutdown cleanly.");
 
               return 0;
           }
           CPP
 
-      # ==========================================================
-      # OPTIONAL EXTERNAL GUI AND NATIVE SOURCE FILES
-      #
-      # Future repository layout:
-      #
-      # ultron-ui/
-      #   hud.rml
-      #   hud.rcss
-      #   images/
-      #   fonts/
-      #
-      # ultron-native/
-      #   main.cpp
-      #   hud_file_interface.cpp
-      #   hud_file_interface.h
-      #   graphics/
-      #     custom_graphics.cpp
-      #
-      # Files are optional until we create them.
-      # ==========================================================
-
-      - name: Include optional external GUI and native sources
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          NATIVE_SOURCE="${GITHUB_WORKSPACE}/ultron-native"
-          UI_SOURCE="${GITHUB_WORKSPACE}/ultron-ui"
-
-          NATIVE_DEST="${ANDROID_PROJECT}/app/jni/src"
-          UI_DEST="${ANDROID_PROJECT}/app/src/main/assets/ui"
-
-          # Copy external native sources.
-          # An external main.cpp overrides the generated starter.
-          if [ -d "${NATIVE_SOURCE}" ]; then
-              cp -a \
-                "${NATIVE_SOURCE}/." \
-                "${NATIVE_DEST}/"
-
-              echo "External native source directory found."
-          else
-              echo "External native sources not added yet; starter retained."
-          fi
-
-          # Copy external RML, RCSS, image, font and other UI assets.
-          if [ -d "${UI_SOURCE}" ]; then
-              mkdir -p "${UI_DEST}"
-
-              cp -a \
-                "${UI_SOURCE}/." \
-                "${UI_DEST}/"
-
-              echo "External UI assets copied."
-          else
-              echo "External UI assets not added yet; no assets copied."
-          fi
-
-          echo "Optional GUI/source integration: PASSED"
-
-      # ==========================================================
+      # ============================================================
       # VERIFY GENERATED PROJECT
-      # ==========================================================
+      # ============================================================
 
       - name: Verify generated project
         shell: bash
@@ -1134,32 +1267,16 @@ jobs:
 
           test -f "${ANDROID_PROJECT}/build.gradle"
           test -f "${ANDROID_PROJECT}/settings.gradle"
-
-          test -f \
-            "${ANDROID_PROJECT}/gradle/wrapper/gradle-wrapper.properties"
-
+          test -f "${ANDROID_PROJECT}/gradle/wrapper/gradle-wrapper.properties"
+          test -f "${ANDROID_PROJECT}/gradlew"
           test -f "${ANDROID_PROJECT}/app/build.gradle"
-
-          test -f \
-            "${ANDROID_PROJECT}/app/src/main/AndroidManifest.xml"
-
-          test -f \
-            "${ANDROID_PROJECT}/app/src/main/res/values/strings.xml"
-
-          test -f \
-            "${ANDROID_PROJECT}/app/src/main/res/drawable-nodpi/ic_launcher_foreground.png"
-
-          test -f \
-            "${ANDROID_PROJECT}/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml"
-
-          test -f \
-            "${ANDROID_PROJECT}/app/jni/CMakeLists.txt"
-
-          test -f \
-            "${ANDROID_PROJECT}/app/jni/src/CMakeLists.txt"
-
-          test -f \
-            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
+          test -f "${ANDROID_PROJECT}/app/src/main/AndroidManifest.xml"
+          test -f "${ANDROID_PROJECT}/app/src/main/res/values/strings.xml"
+          test -f "${ANDROID_PROJECT}/app/src/main/res/drawable-nodpi/ic_launcher_foreground.png"
+          test -f "${ANDROID_PROJECT}/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml"
+          test -f "${ANDROID_PROJECT}/app/jni/CMakeLists.txt"
+          test -f "${ANDROID_PROJECT}/app/jni/src/CMakeLists.txt"
+          test -f "${ANDROID_PROJECT}/app/jni/src/main.cpp"
 
           echo "Project files: PASSED"
 
@@ -1168,29 +1285,14 @@ jobs:
           echo "DEPENDENCIES"
           echo "========================================"
 
-          test -f \
-            "${ANDROID_PROJECT}/app/jni/SDL/include/SDL3/SDL.h"
-
-          test -f \
-            "${ANDROID_PROJECT}/app/jni/SDL/include/SDL3/SDL_main.h"
-
-          test -f \
-            "${ANDROID_PROJECT}/app/jni/RmlUi/CMakeLists.txt"
-
-          test -f \
-            "${ANDROID_PROJECT}/app/jni/RmlUi/Backends/RmlUi_Platform_SDL.cpp"
-
-          test -f \
-            "${ANDROID_PROJECT}/app/jni/RmlUi/Backends/RmlUi_Renderer_GL3.cpp"
-
-          test -f \
-            "${ANDROID_PROJECT}/app/jni/RmlUi/Include/RmlUi/Core/Context.h"
-
-          test -f \
-            "${ANDROID_PROJECT}/app/jni/RmlUi/Include/RmlUi/Core/ElementDocument.h"
-
-          test -f \
-            "${ANDROID_PROJECT}/app/jni/freetype/CMakeLists.txt"
+          test -f "${ANDROID_PROJECT}/app/jni/SDL/include/SDL3/SDL.h"
+          test -f "${ANDROID_PROJECT}/app/jni/SDL/include/SDL3/SDL_main.h"
+          test -f "${ANDROID_PROJECT}/app/jni/RmlUi/CMakeLists.txt"
+          test -f "${ANDROID_PROJECT}/app/jni/RmlUi/Backends/RmlUi_Platform_SDL.cpp"
+          test -f "${ANDROID_PROJECT}/app/jni/RmlUi/Backends/RmlUi_Renderer_GL3.cpp"
+          test -f "${ANDROID_PROJECT}/app/jni/RmlUi/Include/RmlUi/Core/Context.h"
+          test -f "${ANDROID_PROJECT}/app/jni/RmlUi/Include/RmlUi/Core/ElementDocument.h"
+          test -f "${ANDROID_PROJECT}/app/jni/freetype/CMakeLists.txt"
 
           echo "Dependencies: PASSED"
 
@@ -1238,53 +1340,47 @@ jobs:
             'RMLUI_SDL_VERSION_MAJOR=3' \
             "${ANDROID_PROJECT}/app/jni/src/CMakeLists.txt"
 
-          # Run starter-source checks only while the embedded starter
-          # is active. Later, the separate native main.cpp can replace it.
-          if [ ! -f "${GITHUB_WORKSPACE}/ultron-native/main.cpp" ]; then
-              grep -q \
-                '#include <SDL3/SDL_main.h>' \
-                "${ANDROID_PROJECT}/app/jni/src/main.cpp"
+          grep -q \
+            '#include <SDL3/SDL_main.h>' \
+            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
 
-              grep -q \
-                '#include <RmlUi/Core/Context.h>' \
-                "${ANDROID_PROJECT}/app/jni/src/main.cpp"
+          grep -q \
+            '#include <RmlUi/Core/Context.h>' \
+            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
 
-              grep -q \
-                '#include <RmlUi/Core/ElementDocument.h>' \
-                "${ANDROID_PROJECT}/app/jni/src/main.cpp"
+          grep -q \
+            '#include <RmlUi/Core/ElementDocument.h>' \
+            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
 
-              grep -q \
-                '#include <GLES3/gl3.h>' \
-                "${ANDROID_PROJECT}/app/jni/src/main.cpp"
+          grep -q \
+            '#include <GLES3/gl3.h>' \
+            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
 
-              grep -q \
-                'SDL_SetEventFilter' \
-                "${ANDROID_PROJECT}/app/jni/src/main.cpp"
+          grep -q \
+            'SDL_SetEventFilter' \
+            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
 
-              grep -q \
-                'SDL_EVENT_WILL_ENTER_BACKGROUND' \
-                "${ANDROID_PROJECT}/app/jni/src/main.cpp"
+          grep -q \
+            'SDL_EVENT_WILL_ENTER_BACKGROUND' \
+            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
 
-              grep -q \
-                'SDL_EVENT_DID_ENTER_FOREGROUND' \
-                "${ANDROID_PROJECT}/app/jni/src/main.cpp"
+          grep -q \
+            'SDL_EVENT_DID_ENTER_FOREGROUND' \
+            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
 
-              grep -q \
-                'background-color: #000000' \
-                "${ANDROID_PROJECT}/app/jni/src/main.cpp"
+          grep -q \
+            'background-color: #000000' \
+            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
 
-              grep -q \
-                'glClearColor' \
-                "${ANDROID_PROJECT}/app/jni/src/main.cpp"
+          grep -q \
+            'glClearColor' \
+            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
 
-              grep -q \
-                'glClear(' \
-                "${ANDROID_PROJECT}/app/jni/src/main.cpp"
+          grep -q \
+            'glClear(' \
+            "${ANDROID_PROJECT}/app/jni/src/main.cpp"
 
-              echo "Starter runtime configuration: PASSED"
-          else
-              echo "External native main.cpp detected; starter checks skipped."
-          fi
+          echo "Runtime configuration: PASSED"
 
           echo
           echo "========================================"
@@ -1307,7 +1403,7 @@ jobs:
             'android.hardware.type.pc' \
             "${ANDROID_PROJECT}/app/src/main/AndroidManifest.xml"
 
-          echo "Optional hardware declarations: PASSED"
+          echo "Bluetooth/gamepad/USB/PC declarations: PASSED"
 
           echo
           echo "========================================"
@@ -1326,32 +1422,19 @@ jobs:
 
           echo
           echo "========================================"
-          echo "GUI FILES"
-          echo "========================================"
-
-          if [ -d "${ANDROID_PROJECT}/app/src/main/assets/ui" ]; then
-              find \
-                "${ANDROID_PROJECT}/app/src/main/assets/ui" \
-                -type f \
-                -print
-          else
-              echo "External UI files not added yet."
-          fi
-
-          echo
-          echo "========================================"
           echo "PROJECT VERIFICATION PASSED"
           echo "========================================"
 
-      # ==========================================================
+      # ============================================================
       # GRADLE CONFIGURATION TEST
-      # ==========================================================
+      # ============================================================
 
       - name: Validate Gradle configuration
         shell: bash
-        working-directory: ${{ env.ANDROID_PROJECT }}
         run: |
           set -euo pipefail
+
+          cd "${ANDROID_PROJECT}"
 
           chmod +x ./gradlew
 
@@ -1361,15 +1444,16 @@ jobs:
             --console=plain \
             help
 
-      # ==========================================================
+      # ============================================================
       # BUILD APK
-      # ==========================================================
+      # ============================================================
 
       - name: Build Debug APK
         shell: bash
-        working-directory: ${{ env.ANDROID_PROJECT }}
         run: |
           set -euo pipefail
+
+          cd "${ANDROID_PROJECT}"
 
           ./gradlew \
             --no-daemon \
@@ -1379,9 +1463,9 @@ jobs:
             assembleDebug \
             2>&1 | tee "${RUNNER_TEMP}/gradle-build.log"
 
-      # ==========================================================
+      # ============================================================
       # VERIFY APK OUTPUT
-      # ==========================================================
+      # ============================================================
 
       - name: Verify APK output
         shell: bash
@@ -1396,12 +1480,15 @@ jobs:
           echo "APK OUTPUT"
           echo "========================================"
 
+          echo "APK exists:"
           echo "${APK}"
+
+          echo
           ls -lh "${APK}"
 
-      # ==========================================================
+      # ============================================================
       # PREPARE APK ARTIFACT
-      # ==========================================================
+      # ============================================================
 
       - name: Prepare APK artifact
         shell: bash
@@ -1412,7 +1499,8 @@ jobs:
 
           test -f "${APK}"
 
-          mkdir -p "${GITHUB_WORKSPACE}/artifacts"
+          mkdir -p \
+            "${GITHUB_WORKSPACE}/artifacts"
 
           cp \
             "${APK}" \
@@ -1423,9 +1511,9 @@ jobs:
 
           echo "APK prepared successfully."
 
-      # ==========================================================
+      # ============================================================
       # VALIDATE APK
-      # ==========================================================
+      # ============================================================
 
       - name: Validate APK
         shell: bash
@@ -1526,9 +1614,9 @@ jobs:
 
           ls -lh "${APK}"
 
-      # ==========================================================
+      # ============================================================
       # UPLOAD APK
-      # ==========================================================
+      # ============================================================
 
       - name: Upload Ultron APK
         if: always()
@@ -1539,9 +1627,9 @@ jobs:
           if-no-files-found: warn
           compression-level: 0
 
-      # ==========================================================
+      # ============================================================
       # BUILD SUMMARY
-      # ==========================================================
+      # ============================================================
 
       - name: Generate build summary
         if: always()
@@ -1573,9 +1661,9 @@ jobs:
             echo "APK artifact: ultron-android-debug"
           } >> "${GITHUB_STEP_SUMMARY}"
 
-      # ==========================================================
+      # ============================================================
       # DIAGNOSTICS
-      # ==========================================================
+      # ============================================================
 
       - name: Upload build diagnostics
         if: always()
