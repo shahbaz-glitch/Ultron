@@ -406,7 +406,7 @@ jobs:
           EOF
 
       # ============================================================
-      # INSTALL ROOT CMAKE AND C++ SOURCE
+      # INSTALL CMAKE AND C++ SOURCE
       # ============================================================
 
       - name: Install root CMake and C++ source
@@ -414,8 +414,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          SOURCE_CMAKE="${GITHUB_WORKSPACE}/CMakeLists.txt"
-          SOURCE_CPP="${GITHUB_WORKSPACE}/main.cpp"
+          # The source files remain in their existing .github directory.
+          SOURCE_CMAKE="${GITHUB_WORKSPACE}/.github/CMakeLists.txt"
+          SOURCE_CPP="${GITHUB_WORKSPACE}/.github/main.cpp"
           NATIVE_DIR="${ANDROID_PROJECT}/app/jni"
 
           test -f "${SOURCE_CMAKE}"
@@ -430,8 +431,8 @@ jobs:
             "${SOURCE_CPP}" \
             "${NATIVE_DIR}/main.cpp"
 
-          echo "Root CMakeLists.txt installed."
-          echo "Root main.cpp installed."
+          echo "CMakeLists.txt installed from .github."
+          echo "main.cpp installed from .github."
 
       # ============================================================
       # VERIFY GENERATED PROJECT
