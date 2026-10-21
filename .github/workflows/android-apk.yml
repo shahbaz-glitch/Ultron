@@ -41,14 +41,26 @@ jobs:
     timeout-minutes: 30
 
     steps:
+      # ============================================================
+      # CHECKOUT
+      # ============================================================
+
       - name: Checkout Ultron
         uses: actions/checkout@v7
+
+      # ============================================================
+      # JAVA
+      # ============================================================
 
       - name: Setup Java 17
         uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "17"
+
+      # ============================================================
+      # ANDROID SDK
+      # ============================================================
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
@@ -117,6 +129,7 @@ jobs:
             "${ANDROID_PROJECT}/app/jni/freetype/.git" \
             "${ANDROID_PROJECT}/app/jni/RmlUi/.git"
 
+          # Make the project path available to later steps
           echo "ANDROID_PROJECT=${ANDROID_PROJECT}" >> "${GITHUB_ENV}"
 
       # ============================================================
@@ -136,8 +149,7 @@ jobs:
           EOF
 
           # settings.gradle
-          # RepositoriesMode is intentionally omitted to keep this
-          # generated settings file simple and avoid enum resolution issues.
+          # RepositoriesMode is intentionally omitted.
           cat > "${ANDROID_PROJECT}/settings.gradle" <<'EOF'
           pluginManagement {
               repositories {
@@ -406,23 +418,33 @@ jobs:
           EOF
 
       # ============================================================
-      # INSTALL CMAKE AND C++ SOURCE
+      # INSTALL CMAKE, C++ SOURCE, ACTIONS AND UI
       # ============================================================
 
-      - name: Install root CMake and C++ source
+      - name: Install native sources, actions and UI
         shell: bash
         run: |
           set -euo pipefail
 
-          # The source files remain in their existing .github directory.
+          # Repository sources
           SOURCE_CMAKE="${GITHUB_WORKSPACE}/.github/CMakeLists.txt"
           SOURCE_CPP="${GITHUB_WORKSPACE}/.github/main.cpp"
-          NATIVE_DIR="${ANDROID_PROJECT}/app/jni"
+          SOURCE_ACTION="${GITHUB_WORKSPACE}/action"
+          SOURCE_UI="${GITHUB_WORKSPACE}/ui"
 
+          # Generated Android project directories
+          NATIVE_DIR="${ANDROID_PROJECT}/app/jni"
+          ASSETS_UI="${ANDROID_PROJECT}/app/src/main/assets/ui"
+
+          # Verify the expected repository structure
           test -f "${SOURCE_CMAKE}"
           test -f "${SOURCE_CPP}"
           test -d "${NATIVE_DIR}"
+          test -d "${SOURCE_ACTION}"
+          test -f "${SOURCE_UI}/home.rml"
+          test -f "${SOURCE_UI}/home.rcss"
 
+          # Install native build files
           cp \
             "${SOURCE_CMAKE}" \
             "${NATIVE_DIR}/CMakeLists.txt"
@@ -431,8 +453,59 @@ jobs:
             "${SOURCE_CPP}" \
             "${NATIVE_DIR}/main.cpp"
 
-          echo "CMakeLists.txt installed from .github."
-          echo "main.cpp installed from .github."
+          # Stage action sources beside CMakeLists.txt.
+          # CMake must discover and compile action/*.cpp automatically.
+          mkdir -p "${NATIVE_DIR}/action"
+
+          cp -a \
+            "${SOURCE_ACTION}/." \
+            "${NATIVE_DIR}/action/"
+
+          # Stage UI sources beside CMakeLists.txt.
+          # This keeps the repository's native source layout available.
+          mkdir -p "${NATIVE_DIR}/ui"
+
+          cp -a \
+            "${SOURCE_UI}/." \
+            "${NATIVE_DIR}/ui/"
+
+          # Package UI files into Android APK assets.
+          # Nested folders, images, fonts and other UI resources are included.
+          mkdir -p "${ASSETS_UI}"
+
+          cp -a \
+            "${SOURCE_UI}/." \
+            "${ASSETS_UI}/"
+
+          echo
+          echo "========================================"
+          echo "NATIVE ACTION SOURCES"
+          echo "========================================"
+
+          find "${NATIVE_DIR}/action" \
+            -type f \
+            -name '*.cpp' \
+            -print
+
+          # Require at least one action implementation.
+          find "${NATIVE_DIR}/action" \
+            -type f \
+            -name '*.cpp' \
+            -print \
+            -quit \
+            | grep -q .
+
+          echo
+          echo "========================================"
+          echo "PACKAGED UI RESOURCES"
+          echo "========================================"
+
+          find "${ASSETS_UI}" \
+            -type f \
+            -print
+
+          echo
+          echo "Native sources, actions and UI installed."
 
       # ============================================================
       # VERIFY GENERATED PROJECT
@@ -442,6 +515,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          NATIVE_DIR="${ANDROID_PROJECT}/app/jni"
+          ASSETS_UI="${ANDROID_PROJECT}/app/src/main/assets/ui"
 
           echo "========================================"
           echo "ULTRON CONFIGURATION"
@@ -479,8 +555,8 @@ jobs:
           test -f "${ANDROID_PROJECT}/app/src/main/res/values/strings.xml"
           test -f "${ANDROID_PROJECT}/app/src/main/res/drawable-nodpi/ic_launcher_foreground.png"
           test -f "${ANDROID_PROJECT}/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml"
-          test -f "${ANDROID_PROJECT}/app/jni/CMakeLists.txt"
-          test -f "${ANDROID_PROJECT}/app/jni/main.cpp"
+          test -f "${NATIVE_DIR}/CMakeLists.txt"
+          test -f "${NATIVE_DIR}/main.cpp"
 
           echo "Project files: PASSED"
 
@@ -489,16 +565,64 @@ jobs:
           echo "DEPENDENCIES"
           echo "========================================"
 
-          test -f "${ANDROID_PROJECT}/app/jni/SDL/include/SDL3/SDL.h"
-          test -f "${ANDROID_PROJECT}/app/jni/SDL/include/SDL3/SDL_main.h"
-          test -f "${ANDROID_PROJECT}/app/jni/RmlUi/CMakeLists.txt"
-          test -f "${ANDROID_PROJECT}/app/jni/RmlUi/Backends/RmlUi_Platform_SDL.cpp"
-          test -f "${ANDROID_PROJECT}/app/jni/RmlUi/Backends/RmlUi_Renderer_GL3.cpp"
-          test -f "${ANDROID_PROJECT}/app/jni/RmlUi/Include/RmlUi/Core/Context.h"
-          test -f "${ANDROID_PROJECT}/app/jni/RmlUi/Include/RmlUi/Core/ElementDocument.h"
-          test -f "${ANDROID_PROJECT}/app/jni/freetype/CMakeLists.txt"
+          test -f "${NATIVE_DIR}/SDL/include/SDL3/SDL.h"
+          test -f "${NATIVE_DIR}/SDL/include/SDL3/SDL_main.h"
+          test -f "${NATIVE_DIR}/RmlUi/CMakeLists.txt"
+          test -f "${NATIVE_DIR}/RmlUi/Backends/RmlUi_Platform_SDL.cpp"
+          test -f "${NATIVE_DIR}/RmlUi/Backends/RmlUi_Renderer_GL3.cpp"
+          test -f "${NATIVE_DIR}/RmlUi/Include/RmlUi/Core/Context.h"
+          test -f "${NATIVE_DIR}/RmlUi/Include/RmlUi/Core/ElementDocument.h"
+          test -f "${NATIVE_DIR}/freetype/CMakeLists.txt"
 
           echo "Dependencies: PASSED"
+
+          echo
+          echo "========================================"
+          echo "ACTION SOURCE DISCOVERY"
+          echo "========================================"
+
+          test -d "${NATIVE_DIR}/action"
+          test -f "${NATIVE_DIR}/action/DotAction.cpp"
+
+          # Fail early if the CMake file doesn't contain the
+          # action auto-discovery implementation.
+          grep -q 'ULTRON_ACTION_DIR' \
+            "${NATIVE_DIR}/CMakeLists.txt"
+
+          grep -q 'ULTRON_ACTION_SOURCES' \
+            "${NATIVE_DIR}/CMakeLists.txt"
+
+          grep -q 'GLOB_RECURSE' \
+            "${NATIVE_DIR}/CMakeLists.txt"
+
+          grep -q 'Ultron_RegisterAction' \
+            "${NATIVE_DIR}/action/DotAction.cpp"
+
+          grep -q 'Ultron_SetElementClass' \
+            "${NATIVE_DIR}/action/DotAction.cpp"
+
+          echo "CMake action discovery: PASSED"
+          echo "Action source staging: PASSED"
+
+          echo
+          echo "========================================"
+          echo "UI SOURCE AND APK ASSETS"
+          echo "========================================"
+
+          test -f "${NATIVE_DIR}/ui/home.rml"
+          test -f "${NATIVE_DIR}/ui/home.rcss"
+          test -f "${ASSETS_UI}/home.rml"
+          test -f "${ASSETS_UI}/home.rcss"
+
+          grep -q 'data-action="change-dot"' \
+            "${ASSETS_UI}/home.rml"
+
+          grep -q '#dot.green' \
+            "${ASSETS_UI}/home.rcss"
+
+          echo "RmlUi document: PASSED"
+          echo "RmlUi stylesheet: PASSED"
+          echo "Android UI asset staging: PASSED"
 
           echo
           echo "========================================"
@@ -542,47 +666,47 @@ jobs:
 
           grep -q \
             'RMLUI_SDL_VERSION_MAJOR=3' \
-            "${ANDROID_PROJECT}/app/jni/CMakeLists.txt"
+            "${NATIVE_DIR}/CMakeLists.txt"
 
           grep -q \
             '#include <SDL3/SDL_main.h>' \
-            "${ANDROID_PROJECT}/app/jni/main.cpp"
+            "${NATIVE_DIR}/main.cpp"
 
           grep -q \
             '#include <RmlUi/Core/Context.h>' \
-            "${ANDROID_PROJECT}/app/jni/main.cpp"
+            "${NATIVE_DIR}/main.cpp"
 
           grep -q \
             '#include <RmlUi/Core/ElementDocument.h>' \
-            "${ANDROID_PROJECT}/app/jni/main.cpp"
+            "${NATIVE_DIR}/main.cpp"
 
           grep -q \
             '#include <GLES3/gl3.h>' \
-            "${ANDROID_PROJECT}/app/jni/main.cpp"
+            "${NATIVE_DIR}/main.cpp"
 
           grep -q \
             'SDL_SetEventFilter' \
-            "${ANDROID_PROJECT}/app/jni/main.cpp"
+            "${NATIVE_DIR}/main.cpp"
 
           grep -q \
             'SDL_EVENT_WILL_ENTER_BACKGROUND' \
-            "${ANDROID_PROJECT}/app/jni/main.cpp"
+            "${NATIVE_DIR}/main.cpp"
 
           grep -q \
             'SDL_EVENT_DID_ENTER_FOREGROUND' \
-            "${ANDROID_PROJECT}/app/jni/main.cpp"
+            "${NATIVE_DIR}/main.cpp"
 
           grep -q \
             'background-color: #000000' \
-            "${ANDROID_PROJECT}/app/jni/main.cpp"
+            "${NATIVE_DIR}/main.cpp"
 
           grep -q \
             'glClearColor' \
-            "${ANDROID_PROJECT}/app/jni/main.cpp"
+            "${NATIVE_DIR}/main.cpp"
 
           grep -q \
             'glClear(' \
-            "${ANDROID_PROJECT}/app/jni/main.cpp"
+            "${NATIVE_DIR}/main.cpp"
 
           echo "Runtime configuration: PASSED"
 
@@ -726,6 +850,7 @@ jobs:
 
           APK="${GITHUB_WORKSPACE}/artifacts/ultron-debug.apk"
           BADGING="${RUNNER_TEMP}/apk-badging.txt"
+          APK_CONTENTS="${RUNNER_TEMP}/apk-contents.txt"
 
           test -f "${APK}"
 
@@ -800,6 +925,24 @@ jobs:
 
           echo
           echo "========================================"
+          echo "UI ASSETS INSIDE APK"
+          echo "========================================"
+
+          unzip -l "${APK}" | tee "${APK_CONTENTS}"
+
+          grep -q \
+            'assets/ui/home.rml' \
+            "${APK_CONTENTS}"
+
+          grep -q \
+            'assets/ui/home.rcss' \
+            "${APK_CONTENTS}"
+
+          echo "RmlUi document packaged in APK: PASSED"
+          echo "RmlUi stylesheet packaged in APK: PASSED"
+
+          echo
+          echo "========================================"
           echo "ICON"
           echo "========================================"
 
@@ -859,6 +1002,8 @@ jobs:
             echo "| ABI | ${ANDROID_ABI} |"
             echo "| C++ | 20 |"
             echo "| Renderer | OpenGL ES 3.2 |"
+            echo "| Action sources | Auto-discovered by CMake |"
+            echo "| UI resources | Packaged under assets/ui |"
             echo "| Background | Pure Black |"
             echo "| Icon | Adaptive Brain Icon |"
             echo
@@ -877,5 +1022,6 @@ jobs:
           path: |
             ${{ runner.temp }}/gradle-build.log
             ${{ runner.temp }}/apk-badging.txt
+            ${{ runner.temp }}/apk-contents.txt
           if-no-files-found: warn
           compression-level: 6
