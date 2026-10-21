@@ -19,8 +19,6 @@
 #include <string>
 #include <unordered_map>
 
-// Public registration interface for separate native action files.
-// A future action file can register a callback by name.
 using UltronActionCallback = void (*)();
 
 extern "C" bool Ultron_RegisterAction(
@@ -34,9 +32,8 @@ namespace
 
     // ---------------------------------------------------------
     // Native action registry
-    //
-    // The engine knows action names, not feature implementations.
-    // Gallery, Camera, Message, etc. belong in separate .cpp files.
+    // Actual Gallery / Camera / Message implementations
+    // remain outside main.cpp.
     // ---------------------------------------------------------
 
     using ActionRegistry =
@@ -44,8 +41,6 @@ namespace
 
     ActionRegistry& GetActionRegistry()
     {
-        // Function-local static avoids cross-file static
-        // initialization ordering problems during registration.
         static ActionRegistry registry;
         return registry;
     }
@@ -77,19 +72,24 @@ namespace
             "Ultron: dispatching action '%s'.",
             action_name.c_str());
 
-        // The registered native callback runs on the UI/event thread.
         found->second();
     }
 
     // ---------------------------------------------------------
-    // SDL-backed file interface
+    // SDL file interface for external RML and RCSS resources
     //
-    // Allows RmlUi to read RML and RCSS using SDL's file API.
-    // SDL_IOFromFile can access packaged Android assets.
+    // Rml::FileHandle is an integer-type handle in this
+    // RmlUi version, not an SDL_IOStream pointer.
     // ---------------------------------------------------------
 
     class SDLFileInterface final : public Rml::FileInterface
     {
+    private:
+        static SDL_IOStream* ToStream(Rml::FileHandle file)
+        {
+            return reinterpret_cast<SDL_IOStream*>(file);
+        }
+
     public:
         Rml::FileHandle Open(
             const Rml::String& path) override
@@ -100,23 +100,26 @@ namespace
 
             if (stream == nullptr)
             {
-                SDL_LogDebug(
+                SDL_LogWarn(
                     SDL_LOG_CATEGORY_APPLICATION,
                     "Ultron: unable to open UI resource '%s'.",
                     path.c_str());
+
+                return 0;
             }
 
-            return stream;
+            return reinterpret_cast<Rml::FileHandle>(stream);
         }
 
         void Close(
             Rml::FileHandle file) override
         {
-            if (file != nullptr)
+            if (file == 0)
             {
-                SDL_CloseIO(
-                    static_cast<SDL_IOStream*>(file));
+                return;
             }
+
+            SDL_CloseIO(ToStream(file));
         }
 
         size_t Read(
@@ -124,7 +127,7 @@ namespace
             size_t size,
             Rml::FileHandle file) override
         {
-            if (file == nullptr ||
+            if (file == 0 ||
                 buffer == nullptr ||
                 size == 0)
             {
@@ -132,7 +135,7 @@ namespace
             }
 
             return SDL_ReadIO(
-                static_cast<SDL_IOStream*>(file),
+                ToStream(file),
                 buffer,
                 size);
         }
@@ -142,7 +145,7 @@ namespace
             long offset,
             int origin) override
         {
-            if (file == nullptr)
+            if (file == 0)
             {
                 return false;
             }
@@ -168,7 +171,7 @@ namespace
             }
 
             return SDL_SeekIO(
-                static_cast<SDL_IOStream*>(file),
+                ToStream(file),
                 static_cast<Sint64>(offset),
                 whence) >= 0;
         }
@@ -176,13 +179,13 @@ namespace
         size_t Tell(
             Rml::FileHandle file) override
         {
-            if (file == nullptr)
+            if (file == 0)
             {
                 return 0;
             }
 
             const Sint64 position = SDL_TellIO(
-                static_cast<SDL_IOStream*>(file));
+                ToStream(file));
 
             if (position < 0)
             {
@@ -194,12 +197,9 @@ namespace
     };
 
     // ---------------------------------------------------------
-    // Common click connector
+    // Generic click connector
     //
-    // One listener handles clicks across the entire document.
-    // Buttons identify their requested action with data-action.
-    //
-    // Example:
+    // Example RML:
     // <button data-action="gallery">Open Gallery</button>
     // ---------------------------------------------------------
 
@@ -223,8 +223,8 @@ namespace
             Rml::Element* element =
                 event.GetTargetElement();
 
-            // Walk upward so clicks on nested icons or text
-            // still find the action assigned to their parent.
+            // Find the nearest ancestor with a data-action.
+            // This also supports clicks on nested text/icons.
             while (element != nullptr &&
                    element != document_)
             {
@@ -251,7 +251,7 @@ namespace
     };
 
     // ---------------------------------------------------------
-    // Android / SDL application lifecycle
+    // Application lifecycle
     // ---------------------------------------------------------
 
     bool HandleAppEvents(
@@ -323,14 +323,12 @@ namespace
 
         if (gl_context != nullptr)
         {
-            SDL_GL_DestroyContext(
-                gl_context);
+            SDL_GL_DestroyContext(gl_context);
         }
 
         if (window != nullptr)
         {
-            SDL_DestroyWindow(
-                window);
+            SDL_DestroyWindow(window);
         }
 
         SDL_Quit();
@@ -341,9 +339,7 @@ namespace
 
 // -------------------------------------------------------------
 // Action registration API
-//
-// Separate action translation units can register named callbacks.
-// Returns false for an invalid name, null callback, or duplicate.
+// Called by separate native action implementations.
 // -------------------------------------------------------------
 
 extern "C" bool Ultron_RegisterAction(
@@ -361,6 +357,8 @@ extern "C" bool Ultron_RegisterAction(
         name,
         callback);
 
+    // Duplicate names are rejected instead of silently replacing
+    // an action already registered by another source file.
     return result.second;
 }
 
@@ -378,30 +376,14 @@ int main(
     constexpr int initial_width = 1280;
     constexpr int initial_height = 720;
 
-    constexpr int error_sdl_init = 1;
-    constexpr int error_properties = 2;
-    constexpr int error_window = 3;
-    constexpr int error_gl_context = 4;
-    constexpr int error_gl_current = 5;
-    constexpr int error_renderer = 6;
-    constexpr int error_rml_init = 7;
-    constexpr int error_rml_context = 8;
-    constexpr int error_rml_document = 9;
-
-    g_running.store(
-        true,
-        std::memory_order_relaxed);
-
-    g_paused.store(
-        false,
-        std::memory_order_relaxed);
+    g_running.store(true, std::memory_order_relaxed);
+    g_paused.store(false, std::memory_order_relaxed);
 
     SDL_SetLogPriority(
         SDL_LOG_CATEGORY_APPLICATION,
         SDL_LOG_PRIORITY_INFO);
 
-    SDL_Log(
-        "Ultron starting...");
+    SDL_Log("Ultron starting...");
 
     // ---------------------------------------------------------
     // SDL initialization
@@ -412,9 +394,7 @@ int main(
             SDL_INIT_EVENTS))
     {
         return Fail(
-            nullptr,
-            nullptr,
-            error_sdl_init,
+            nullptr, nullptr, 1,
             "SDL_Init failed");
     }
 
@@ -462,15 +442,12 @@ int main(
     // Window
     // ---------------------------------------------------------
 
-    SDL_PropertiesID properties =
-        SDL_CreateProperties();
+    SDL_PropertiesID properties = SDL_CreateProperties();
 
     if (properties == 0)
     {
         return Fail(
-            nullptr,
-            nullptr,
-            error_properties,
+            nullptr, nullptr, 2,
             "SDL_CreateProperties failed");
     }
 
@@ -515,18 +492,14 @@ int main(
         true);
 
     SDL_Window* window =
-        SDL_CreateWindowWithProperties(
-            properties);
+        SDL_CreateWindowWithProperties(properties);
 
-    SDL_DestroyProperties(
-        properties);
+    SDL_DestroyProperties(properties);
 
     if (window == nullptr)
     {
         return Fail(
-            nullptr,
-            nullptr,
-            error_window,
+            nullptr, nullptr, 3,
             "SDL_CreateWindowWithProperties failed");
     }
 
@@ -535,47 +508,31 @@ int main(
     // ---------------------------------------------------------
 
     SDL_GLContext gl_context =
-        SDL_GL_CreateContext(
-            window);
+        SDL_GL_CreateContext(window);
 
     if (gl_context == nullptr)
     {
         return Fail(
-            window,
-            nullptr,
-            error_gl_context,
+            window, nullptr, 4,
             "SDL_GL_CreateContext failed");
     }
 
-    if (!SDL_GL_MakeCurrent(
-            window,
-            gl_context))
+    if (!SDL_GL_MakeCurrent(window, gl_context))
     {
         return Fail(
-            window,
-            gl_context,
-            error_gl_current,
+            window, gl_context, 5,
             "SDL_GL_MakeCurrent failed");
     }
 
     SDL_GL_SetSwapInterval(1);
 
-    // Keep the base frame black.
+    // Initial pure-black frame.
     glDisable(GL_SCISSOR_TEST);
-
-    glClearColor(
-        0.0f,
-        0.0f,
-        0.0f,
-        1.0f);
-
-    glClear(
-        GL_COLOR_BUFFER_BIT);
-
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
     SDL_GL_SwapWindow(window);
 
-    SDL_Log(
-        "Ultron: OpenGL ES context created.");
+    SDL_Log("Ultron: OpenGL ES context created.");
 
     // ---------------------------------------------------------
     // RmlUi renderer
@@ -584,22 +541,17 @@ int main(
     if (!RmlGL3::Initialize())
     {
         return Fail(
-            window,
-            gl_context,
-            error_renderer,
+            window, gl_context, 6,
             "RmlGL3::Initialize failed");
     }
 
     {
-        SystemInterface_SDL system_interface(
-            window);
-
+        SystemInterface_SDL system_interface(window);
         RenderInterface_GL3 render_interface;
-
         SDLFileInterface file_interface;
 
         // -----------------------------------------------------
-        // Drawable size
+        // Drawable dimensions
         // -----------------------------------------------------
 
         int width = 0;
@@ -624,31 +576,22 @@ int main(
             height = initial_height;
         }
 
-        render_interface.SetViewport(
-            width,
-            height);
+        render_interface.SetViewport(width, height);
 
         // -----------------------------------------------------
         // RmlUi interfaces
         // -----------------------------------------------------
 
-        Rml::SetSystemInterface(
-            &system_interface);
-
-        Rml::SetRenderInterface(
-            &render_interface);
-
-        Rml::SetFileInterface(
-            &file_interface);
+        Rml::SetSystemInterface(&system_interface);
+        Rml::SetRenderInterface(&render_interface);
+        Rml::SetFileInterface(&file_interface);
 
         if (!Rml::Initialise())
         {
             RmlGL3::Shutdown();
 
             return Fail(
-                window,
-                gl_context,
-                error_rml_init,
+                window, gl_context, 7,
                 "Rml::Initialise failed");
         }
 
@@ -659,9 +602,7 @@ int main(
         Rml::Context* context =
             Rml::CreateContext(
                 "main",
-                Rml::Vector2i(
-                    width,
-                    height));
+                Rml::Vector2i(width, height));
 
         if (context == nullptr)
         {
@@ -669,15 +610,12 @@ int main(
             RmlGL3::Shutdown();
 
             return Fail(
-                window,
-                gl_context,
-                error_rml_context,
+                window, gl_context, 8,
                 "Rml::CreateContext failed");
         }
 
         const float window_scale =
-            SDL_GetWindowDisplayScale(
-                window);
+            SDL_GetWindowDisplayScale(window);
 
         if (window_scale > 0.0f)
         {
@@ -686,14 +624,13 @@ int main(
         }
 
         // -----------------------------------------------------
-        // External GUI
+        // External GUI document
         //
-        // Primary document:
+        // Expected asset paths:
         // ui/home.rml
+        // ui/home.rcss
         //
-        // Its RCSS file can be linked inside the RML document.
-        // If the external document is not packaged yet, keep
-        // the app usable with the original pure-black fallback.
+        // If home.rml is not available, retain the black screen.
         // -----------------------------------------------------
 
         const Rml::String fallback_ui = R"rml(
@@ -715,20 +652,18 @@ int main(
         )rml";
 
         Rml::ElementDocument* document =
-            context->LoadDocument(
-                "ui/home.rml");
+            context->LoadDocument("ui/home.rml");
 
         if (document == nullptr)
         {
             SDL_LogWarn(
                 SDL_LOG_CATEGORY_APPLICATION,
-                "Ultron: ui/home.rml could not be loaded; "
+                "Ultron: ui/home.rml unavailable; "
                 "using the black fallback document.");
 
-            document =
-                context->LoadDocumentFromMemory(
-                    fallback_ui,
-                    "[embedded-ultron-fallback.rml]");
+            document = context->LoadDocumentFromMemory(
+                fallback_ui,
+                "[embedded-ultron-fallback.rml]");
         }
 
         if (document == nullptr)
@@ -738,21 +673,15 @@ int main(
             RmlGL3::Shutdown();
 
             return Fail(
-                window,
-                gl_context,
-                error_rml_document,
-                "Unable to load the external or fallback RML document");
+                window, gl_context, 9,
+                "External and fallback RML documents both failed");
         }
 
         // -----------------------------------------------------
-        // Common click connection
-        //
-        // Attach once to the document in the capture phase.
-        // All controls can request an action using data-action.
+        // Install the one common click listener
         // -----------------------------------------------------
 
-        ClickActionListener click_listener(
-            document);
+        ClickActionListener click_listener(document);
 
         document->AddEventListener(
             "click",
@@ -761,18 +690,14 @@ int main(
 
         document->Show();
 
-        SDL_Log(
-            "Ultron: GUI document initialized.");
-
-        SDL_Log(
-            "Ultron: common click connector initialized.");
+        SDL_Log("Ultron: GUI document initialized.");
+        SDL_Log("Ultron: common click connector initialized.");
 
         // -----------------------------------------------------
         // Main loop
         // -----------------------------------------------------
 
-        while (g_running.load(
-            std::memory_order_relaxed))
+        while (g_running.load(std::memory_order_relaxed))
         {
             SDL_Event event;
 
@@ -793,14 +718,12 @@ int main(
                     event);
             }
 
-            if (!g_running.load(
-                    std::memory_order_relaxed))
+            if (!g_running.load(std::memory_order_relaxed))
             {
                 break;
             }
 
-            if (g_paused.load(
-                    std::memory_order_relaxed))
+            if (g_paused.load(std::memory_order_relaxed))
             {
                 SDL_Delay(16);
                 continue;
@@ -824,9 +747,7 @@ int main(
                     height = new_height;
 
                     context->SetDimensions(
-                        Rml::Vector2i(
-                            width,
-                            height));
+                        Rml::Vector2i(width, height));
 
                     render_interface.SetViewport(
                         width,
@@ -834,59 +755,37 @@ int main(
                 }
             }
 
-            // Clear the frame to pure black before rendering UI.
+            // Preserve pure-black background.
             glDisable(GL_SCISSOR_TEST);
-
-            glClearColor(
-                0.0f,
-                0.0f,
-                0.0f,
-                1.0f);
-
-            glClear(
-                GL_COLOR_BUFFER_BIT);
+            glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
 
             context->Update();
 
             render_interface.BeginFrame();
-
             context->Render();
-
             render_interface.EndFrame();
 
-            SDL_GL_SwapWindow(
-                window);
+            SDL_GL_SwapWindow(window);
         }
 
-        // -----------------------------------------------------
-        // RmlUi shutdown
-        //
-        // The listener remains alive until its document/context
-        // has been removed and RmlUi has shut down.
-        // -----------------------------------------------------
-
-        Rml::RemoveContext(
-            "main");
-
+        // Destroy the document/context while the event listener
+        // and interfaces are still alive.
+        Rml::RemoveContext("main");
         Rml::Shutdown();
     }
 
     // ---------------------------------------------------------
-    // GL + SDL shutdown
+    // OpenGL + SDL shutdown
     // ---------------------------------------------------------
 
     RmlGL3::Shutdown();
 
-    SDL_GL_DestroyContext(
-        gl_context);
-
-    SDL_DestroyWindow(
-        window);
-
+    SDL_GL_DestroyContext(gl_context);
+    SDL_DestroyWindow(window);
     SDL_Quit();
 
-    SDL_Log(
-        "Ultron shutdown cleanly.");
+    SDL_Log("Ultron shutdown cleanly.");
 
     return 0;
 }
