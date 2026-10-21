@@ -1,0 +1,9 @@
+<rml>
+  <head>
+    <link type="text/rcss" href="home.rcss" />
+  </head>
+  <body>
+    <div id="dot" class="dot"></div>
+    <button data-action="change-dot">Change Colour</button>
+  </body>
+</rml>
