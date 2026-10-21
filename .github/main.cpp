@@ -3,19 +3,256 @@
 
 #include <GLES3/gl3.h>
 
-#include <atomic>
-
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Core.h>
+#include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Event.h>
+#include <RmlUi/Core/EventListener.h>
+#include <RmlUi/Core/FileInterface.h>
 
 #include "RmlUi_Platform_SDL.h"
 #include "RmlUi_Renderer_GL3.h"
+
+#include <atomic>
+#include <cstdio>
+#include <string>
+#include <unordered_map>
+
+// Public registration interface for separate native action files.
+// A future action file can register a callback by name.
+using UltronActionCallback = void (*)();
+
+extern "C" bool Ultron_RegisterAction(
+    const char* name,
+    UltronActionCallback callback);
 
 namespace
 {
     std::atomic_bool g_running{true};
     std::atomic_bool g_paused{false};
+
+    // ---------------------------------------------------------
+    // Native action registry
+    //
+    // The engine knows action names, not feature implementations.
+    // Gallery, Camera, Message, etc. belong in separate .cpp files.
+    // ---------------------------------------------------------
+
+    using ActionRegistry =
+        std::unordered_map<std::string, UltronActionCallback>;
+
+    ActionRegistry& GetActionRegistry()
+    {
+        // Function-local static avoids cross-file static
+        // initialization ordering problems during registration.
+        static ActionRegistry registry;
+        return registry;
+    }
+
+    void DispatchAction(const Rml::String& action_name)
+    {
+        if (action_name.empty())
+        {
+            return;
+        }
+
+        const auto& registry = GetActionRegistry();
+
+        const auto found = registry.find(
+            std::string(action_name.c_str()));
+
+        if (found == registry.end())
+        {
+            SDL_LogWarn(
+                SDL_LOG_CATEGORY_APPLICATION,
+                "Ultron: no native action registered for '%s'.",
+                action_name.c_str());
+
+            return;
+        }
+
+        SDL_LogInfo(
+            SDL_LOG_CATEGORY_APPLICATION,
+            "Ultron: dispatching action '%s'.",
+            action_name.c_str());
+
+        // The registered native callback runs on the UI/event thread.
+        found->second();
+    }
+
+    // ---------------------------------------------------------
+    // SDL-backed file interface
+    //
+    // Allows RmlUi to read RML and RCSS using SDL's file API.
+    // SDL_IOFromFile can access packaged Android assets.
+    // ---------------------------------------------------------
+
+    class SDLFileInterface final : public Rml::FileInterface
+    {
+    public:
+        Rml::FileHandle Open(
+            const Rml::String& path) override
+        {
+            SDL_IOStream* stream = SDL_IOFromFile(
+                path.c_str(),
+                "rb");
+
+            if (stream == nullptr)
+            {
+                SDL_LogDebug(
+                    SDL_LOG_CATEGORY_APPLICATION,
+                    "Ultron: unable to open UI resource '%s'.",
+                    path.c_str());
+            }
+
+            return stream;
+        }
+
+        void Close(
+            Rml::FileHandle file) override
+        {
+            if (file != nullptr)
+            {
+                SDL_CloseIO(
+                    static_cast<SDL_IOStream*>(file));
+            }
+        }
+
+        size_t Read(
+            void* buffer,
+            size_t size,
+            Rml::FileHandle file) override
+        {
+            if (file == nullptr ||
+                buffer == nullptr ||
+                size == 0)
+            {
+                return 0;
+            }
+
+            return SDL_ReadIO(
+                static_cast<SDL_IOStream*>(file),
+                buffer,
+                size);
+        }
+
+        bool Seek(
+            Rml::FileHandle file,
+            long offset,
+            int origin) override
+        {
+            if (file == nullptr)
+            {
+                return false;
+            }
+
+            SDL_IOWhence whence;
+
+            switch (origin)
+            {
+                case SEEK_SET:
+                    whence = SDL_IO_SEEK_SET;
+                    break;
+
+                case SEEK_CUR:
+                    whence = SDL_IO_SEEK_CUR;
+                    break;
+
+                case SEEK_END:
+                    whence = SDL_IO_SEEK_END;
+                    break;
+
+                default:
+                    return false;
+            }
+
+            return SDL_SeekIO(
+                static_cast<SDL_IOStream*>(file),
+                static_cast<Sint64>(offset),
+                whence) >= 0;
+        }
+
+        size_t Tell(
+            Rml::FileHandle file) override
+        {
+            if (file == nullptr)
+            {
+                return 0;
+            }
+
+            const Sint64 position = SDL_TellIO(
+                static_cast<SDL_IOStream*>(file));
+
+            if (position < 0)
+            {
+                return 0;
+            }
+
+            return static_cast<size_t>(position);
+        }
+    };
+
+    // ---------------------------------------------------------
+    // Common click connector
+    //
+    // One listener handles clicks across the entire document.
+    // Buttons identify their requested action with data-action.
+    //
+    // Example:
+    // <button data-action="gallery">Open Gallery</button>
+    // ---------------------------------------------------------
+
+    class ClickActionListener final : public Rml::EventListener
+    {
+    public:
+        explicit ClickActionListener(
+            Rml::ElementDocument* document)
+            : document_(document)
+        {
+        }
+
+        void ProcessEvent(
+            Rml::Event& event) override
+        {
+            if (document_ == nullptr)
+            {
+                return;
+            }
+
+            Rml::Element* element =
+                event.GetTargetElement();
+
+            // Walk upward so clicks on nested icons or text
+            // still find the action assigned to their parent.
+            while (element != nullptr &&
+                   element != document_)
+            {
+                if (element->HasAttribute("data-action"))
+                {
+                    const Rml::String action_name =
+                        element->GetAttribute<Rml::String>(
+                            "data-action",
+                            Rml::String{});
+
+                    if (!action_name.empty())
+                    {
+                        DispatchAction(action_name);
+                        return;
+                    }
+                }
+
+                element = element->GetParentNode();
+            }
+        }
+
+    private:
+        Rml::ElementDocument* document_ = nullptr;
+    };
+
+    // ---------------------------------------------------------
+    // Android / SDL application lifecycle
+    // ---------------------------------------------------------
 
     bool HandleAppEvents(
         void* userdata,
@@ -26,11 +263,6 @@ namespace
         switch (event->type)
         {
             case SDL_EVENT_WILL_ENTER_BACKGROUND:
-                g_paused.store(
-                    true,
-                    std::memory_order_relaxed);
-                break;
-
             case SDL_EVENT_DID_ENTER_BACKGROUND:
                 g_paused.store(
                     true,
@@ -51,7 +283,7 @@ namespace
 
             case SDL_EVENT_LOW_MEMORY:
                 SDL_Log(
-                    "Android low-memory notification received.");
+                    "Ultron: Android low-memory notification received.");
                 break;
 
             case SDL_EVENT_TERMINATING:
@@ -107,13 +339,62 @@ namespace
     }
 }
 
-int main(int argc, char** argv)
+// -------------------------------------------------------------
+// Action registration API
+//
+// Separate action translation units can register named callbacks.
+// Returns false for an invalid name, null callback, or duplicate.
+// -------------------------------------------------------------
+
+extern "C" bool Ultron_RegisterAction(
+    const char* name,
+    UltronActionCallback callback)
+{
+    if (name == nullptr ||
+        name[0] == '\0' ||
+        callback == nullptr)
+    {
+        return false;
+    }
+
+    const auto result = GetActionRegistry().emplace(
+        name,
+        callback);
+
+    return result.second;
+}
+
+// -------------------------------------------------------------
+// Main
+// -------------------------------------------------------------
+
+int main(
+    int argc,
+    char** argv)
 {
     (void)argc;
     (void)argv;
 
     constexpr int initial_width = 1280;
     constexpr int initial_height = 720;
+
+    constexpr int error_sdl_init = 1;
+    constexpr int error_properties = 2;
+    constexpr int error_window = 3;
+    constexpr int error_gl_context = 4;
+    constexpr int error_gl_current = 5;
+    constexpr int error_renderer = 6;
+    constexpr int error_rml_init = 7;
+    constexpr int error_rml_context = 8;
+    constexpr int error_rml_document = 9;
+
+    g_running.store(
+        true,
+        std::memory_order_relaxed);
+
+    g_paused.store(
+        false,
+        std::memory_order_relaxed);
 
     SDL_SetLogPriority(
         SDL_LOG_CATEGORY_APPLICATION,
@@ -122,6 +403,10 @@ int main(int argc, char** argv)
     SDL_Log(
         "Ultron starting...");
 
+    // ---------------------------------------------------------
+    // SDL initialization
+    // ---------------------------------------------------------
+
     if (!SDL_Init(
             SDL_INIT_VIDEO |
             SDL_INIT_EVENTS))
@@ -129,7 +414,7 @@ int main(int argc, char** argv)
         return Fail(
             nullptr,
             nullptr,
-            1,
+            error_sdl_init,
             "SDL_Init failed");
     }
 
@@ -149,7 +434,10 @@ int main(int argc, char** argv)
         SDL_HINT_TOUCH_MOUSE_EVENTS,
         "0");
 
+    // ---------------------------------------------------------
     // OpenGL ES 3.2
+    // ---------------------------------------------------------
+
     SDL_GL_SetAttribute(
         SDL_GL_CONTEXT_FLAGS,
         0);
@@ -170,7 +458,10 @@ int main(int argc, char** argv)
         SDL_GL_DOUBLEBUFFER,
         1);
 
+    // ---------------------------------------------------------
     // Window
+    // ---------------------------------------------------------
+
     SDL_PropertiesID properties =
         SDL_CreateProperties();
 
@@ -179,7 +470,7 @@ int main(int argc, char** argv)
         return Fail(
             nullptr,
             nullptr,
-            2,
+            error_properties,
             "SDL_CreateProperties failed");
     }
 
@@ -235,11 +526,14 @@ int main(int argc, char** argv)
         return Fail(
             nullptr,
             nullptr,
-            3,
+            error_window,
             "SDL_CreateWindowWithProperties failed");
     }
 
+    // ---------------------------------------------------------
     // OpenGL context
+    // ---------------------------------------------------------
+
     SDL_GLContext gl_context =
         SDL_GL_CreateContext(
             window);
@@ -249,7 +543,7 @@ int main(int argc, char** argv)
         return Fail(
             window,
             nullptr,
-            4,
+            error_gl_context,
             "SDL_GL_CreateContext failed");
     }
 
@@ -260,13 +554,13 @@ int main(int argc, char** argv)
         return Fail(
             window,
             gl_context,
-            5,
+            error_gl_current,
             "SDL_GL_MakeCurrent failed");
     }
 
     SDL_GL_SetSwapInterval(1);
 
-    // Initial pure-black frame
+    // Keep the base frame black.
     glDisable(GL_SCISSOR_TEST);
 
     glClearColor(
@@ -278,16 +572,21 @@ int main(int argc, char** argv)
     glClear(
         GL_COLOR_BUFFER_BIT);
 
-    SDL_Log(
-        "OpenGL context created.");
+    SDL_GL_SwapWindow(window);
 
-    // Initialize RmlUi GL3 renderer
+    SDL_Log(
+        "Ultron: OpenGL ES context created.");
+
+    // ---------------------------------------------------------
+    // RmlUi renderer
+    // ---------------------------------------------------------
+
     if (!RmlGL3::Initialize())
     {
         return Fail(
             window,
             gl_context,
-            6,
+            error_renderer,
             "RmlGL3::Initialize failed");
     }
 
@@ -297,7 +596,12 @@ int main(int argc, char** argv)
 
         RenderInterface_GL3 render_interface;
 
+        SDLFileInterface file_interface;
+
+        // -----------------------------------------------------
         // Drawable size
+        // -----------------------------------------------------
+
         int width = 0;
         int height = 0;
 
@@ -324,12 +628,18 @@ int main(int argc, char** argv)
             width,
             height);
 
+        // -----------------------------------------------------
         // RmlUi interfaces
+        // -----------------------------------------------------
+
         Rml::SetSystemInterface(
             &system_interface);
 
         Rml::SetRenderInterface(
             &render_interface);
+
+        Rml::SetFileInterface(
+            &file_interface);
 
         if (!Rml::Initialise())
         {
@@ -338,11 +648,14 @@ int main(int argc, char** argv)
             return Fail(
                 window,
                 gl_context,
-                7,
+                error_rml_init,
                 "Rml::Initialise failed");
         }
 
-        // Context
+        // -----------------------------------------------------
+        // RmlUi context
+        // -----------------------------------------------------
+
         Rml::Context* context =
             Rml::CreateContext(
                 "main",
@@ -358,11 +671,10 @@ int main(int argc, char** argv)
             return Fail(
                 window,
                 gl_context,
-                8,
+                error_rml_context,
                 "Rml::CreateContext failed");
         }
 
-        // Display density
         const float window_scale =
             SDL_GetWindowDisplayScale(
                 window);
@@ -373,9 +685,18 @@ int main(int argc, char** argv)
                 window_scale);
         }
 
-        // Embedded black document; external HUD will
-        // replace this in the next stage.
-        const Rml::String ui = R"rml(
+        // -----------------------------------------------------
+        // External GUI
+        //
+        // Primary document:
+        // ui/home.rml
+        //
+        // Its RCSS file can be linked inside the RML document.
+        // If the external document is not packaged yet, keep
+        // the app usable with the original pure-black fallback.
+        // -----------------------------------------------------
+
+        const Rml::String fallback_ui = R"rml(
         <rml>
           <head>
             <style>
@@ -394,41 +715,70 @@ int main(int argc, char** argv)
         )rml";
 
         Rml::ElementDocument* document =
-            context->LoadDocumentFromMemory(
-                ui,
-                "[embedded-ultron-ui.rml]");
+            context->LoadDocument(
+                "ui/home.rml");
 
         if (document == nullptr)
         {
-            Rml::RemoveContext(
-                "main");
+            SDL_LogWarn(
+                SDL_LOG_CATEGORY_APPLICATION,
+                "Ultron: ui/home.rml could not be loaded; "
+                "using the black fallback document.");
 
+            document =
+                context->LoadDocumentFromMemory(
+                    fallback_ui,
+                    "[embedded-ultron-fallback.rml]");
+        }
+
+        if (document == nullptr)
+        {
+            Rml::RemoveContext("main");
             Rml::Shutdown();
             RmlGL3::Shutdown();
 
             return Fail(
                 window,
                 gl_context,
-                9,
-                "LoadDocumentFromMemory failed");
+                error_rml_document,
+                "Unable to load the external or fallback RML document");
         }
+
+        // -----------------------------------------------------
+        // Common click connection
+        //
+        // Attach once to the document in the capture phase.
+        // All controls can request an action using data-action.
+        // -----------------------------------------------------
+
+        ClickActionListener click_listener(
+            document);
+
+        document->AddEventListener(
+            "click",
+            &click_listener,
+            true);
 
         document->Show();
 
         SDL_Log(
-            "Ultron black UI initialized.");
+            "Ultron: GUI document initialized.");
 
+        SDL_Log(
+            "Ultron: common click connector initialized.");
+
+        // -----------------------------------------------------
         // Main loop
-        while (
-            g_running.load(
-                std::memory_order_relaxed))
+        // -----------------------------------------------------
+
+        while (g_running.load(
+            std::memory_order_relaxed))
         {
             SDL_Event event;
 
             while (SDL_PollEvent(&event))
             {
-                if (event.type ==
-                    SDL_EVENT_QUIT)
+                if (event.type == SDL_EVENT_QUIT)
                 {
                     g_running.store(
                         false,
@@ -456,7 +806,7 @@ int main(int argc, char** argv)
                 continue;
             }
 
-            // Responsive drawable size
+            // Responsive drawable size.
             int new_width = 0;
             int new_height = 0;
 
@@ -484,7 +834,7 @@ int main(int argc, char** argv)
                 }
             }
 
-            // Pure-black frame
+            // Clear the frame to pure black before rendering UI.
             glDisable(GL_SCISSOR_TEST);
 
             glClearColor(
@@ -508,14 +858,23 @@ int main(int argc, char** argv)
                 window);
         }
 
+        // -----------------------------------------------------
         // RmlUi shutdown
+        //
+        // The listener remains alive until its document/context
+        // has been removed and RmlUi has shut down.
+        // -----------------------------------------------------
+
         Rml::RemoveContext(
             "main");
 
         Rml::Shutdown();
     }
 
+    // ---------------------------------------------------------
     // GL + SDL shutdown
+    // ---------------------------------------------------------
+
     RmlGL3::Shutdown();
 
     SDL_GL_DestroyContext(
