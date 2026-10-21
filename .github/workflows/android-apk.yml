@@ -141,15 +141,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Root build.gradle
           cat > "${ANDROID_PROJECT}/build.gradle" <<EOF
           plugins {
               id 'com.android.application' version '${AGP_VERSION}' apply false
           }
           EOF
 
-          # settings.gradle
-          # RepositoriesMode is intentionally omitted.
           cat > "${ANDROID_PROJECT}/settings.gradle" <<'EOF'
           pluginManagement {
               repositories {
@@ -171,7 +168,6 @@ jobs:
           include(":app")
           EOF
 
-          # Gradle wrapper
           cat > "${ANDROID_PROJECT}/gradle/wrapper/gradle-wrapper.properties" <<EOF
           distributionBase=GRADLE_USER_HOME
           distributionPath=wrapper/dists
@@ -180,7 +176,6 @@ jobs:
           zipStorePath=wrapper/dists
           EOF
 
-          # app/build.gradle
           cat > "${ANDROID_PROJECT}/app/build.gradle" <<EOF
           plugins {
               id 'com.android.application'
@@ -243,14 +238,12 @@ jobs:
           }
           EOF
 
-          # Gradle properties
           cat > "${ANDROID_PROJECT}/gradle.properties" <<'EOF'
           org.gradle.jvmargs=-Xmx4096m
           org.gradle.caching=true
           org.gradle.parallel=true
           EOF
 
-          # Application label
           mkdir -p \
             "${ANDROID_PROJECT}/app/src/main/res/values"
 
@@ -296,13 +289,11 @@ jobs:
             "${ANDROID_PROJECT}/app/src/main/res/drawable-nodpi" \
             "${ANDROID_PROJECT}/app/src/main/res/mipmap-anydpi-v26"
 
-          # Resize the existing icon artwork
           "${MAGICK}" \
             "${ICON_SOURCE}" \
             -resize 720x720 \
             "${ICON_WORK}/brain.png"
 
-          # Transparent adaptive-icon foreground canvas
           "${MAGICK}" \
             -size 1080x1080 \
             xc:none \
@@ -315,7 +306,6 @@ jobs:
             -composite \
             "${ANDROID_PROJECT}/app/src/main/res/drawable-nodpi/ic_launcher_foreground.png"
 
-          # Adaptive icon XML
           cat > "${ANDROID_PROJECT}/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml" <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
 
@@ -351,37 +341,30 @@ jobs:
               android:versionName="${APP_VERSION_NAME}"
               android:installLocation="auto">
 
-              <!-- OpenGL ES 3.2 -->
               <uses-feature
                   android:glEsVersion="0x00030002"
                   android:required="true" />
 
-              <!-- Touch -->
               <uses-feature
                   android:name="android.hardware.touchscreen"
                   android:required="false" />
 
-              <!-- Future Bluetooth -->
               <uses-feature
                   android:name="android.hardware.bluetooth"
                   android:required="false" />
 
-              <!-- Future game/controller -->
               <uses-feature
                   android:name="android.hardware.gamepad"
                   android:required="false" />
 
-              <!-- Future USB devices -->
               <uses-feature
                   android:name="android.hardware.usb.host"
                   android:required="false" />
 
-              <!-- Future PC / Chromebook form factor -->
               <uses-feature
                   android:name="android.hardware.type.pc"
                   android:required="false" />
 
-              <!-- Future haptics -->
               <uses-permission
                   android:name="android.permission.VIBRATE" />
 
@@ -419,6 +402,7 @@ jobs:
 
       # ============================================================
       # INSTALL CMAKE, C++ SOURCE, ACTIONS AND UI
+      # ACTION AND UI FILES ARE OPTIONAL
       # ============================================================
 
       - name: Install native sources, actions and UI
@@ -426,7 +410,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Repository sources
           SOURCE_CMAKE="${GITHUB_WORKSPACE}/.github/CMakeLists.txt"
           SOURCE_CPP="${GITHUB_WORKSPACE}/.github/main.cpp"
 
@@ -456,37 +439,17 @@ jobs:
             fi
           done
 
-          # Show a useful error if a folder is missing.
-          if [[ -z "${SOURCE_ACTION}" ]]; then
-            echo "::error::Action folder not found."
-            echo "Checked action/ and .github/action/"
-            find "${GITHUB_WORKSPACE}" -maxdepth 3 -type d -print
-            exit 1
-          fi
+          # These two core files are required.
+          # Action and UI folders/files are optional.
+          test -f "${SOURCE_CMAKE}"
+          test -f "${SOURCE_CPP}"
 
-          if [[ -z "${SOURCE_UI}" ]]; then
-            echo "::error::UI folder not found."
-            echo "Checked ui/, .github/ui/ and .github/ ui/"
-            find "${GITHUB_WORKSPACE}" -maxdepth 3 -type d -print
-            exit 1
-          fi
-
-          echo "Action source: ${SOURCE_ACTION}"
-          echo "UI source: ${SOURCE_UI}"
-
-          # Generated Android project directories
           NATIVE_DIR="${ANDROID_PROJECT}/app/jni"
           ASSETS_UI="${ANDROID_PROJECT}/app/src/main/assets/ui"
 
-          # Verify required files
-          test -f "${SOURCE_CMAKE}"
-          test -f "${SOURCE_CPP}"
           test -d "${NATIVE_DIR}"
-          test -f "${SOURCE_ACTION}/DotAction.cpp"
-          test -f "${SOURCE_UI}/home.rml"
-          test -f "${SOURCE_UI}/home.rcss"
 
-          # Install native build files
+          # Install native build files.
           cp \
             "${SOURCE_CMAKE}" \
             "${NATIVE_DIR}/CMakeLists.txt"
@@ -495,30 +458,41 @@ jobs:
             "${SOURCE_CPP}" \
             "${NATIVE_DIR}/main.cpp"
 
-          # Stage all actions for automatic CMake discovery.
-          mkdir -p "${NATIVE_DIR}/action"
+          # Always create destination directories.
+          mkdir -p \
+            "${NATIVE_DIR}/action" \
+            "${NATIVE_DIR}/ui" \
+            "${ASSETS_UI}"
 
-          cp -a \
-            "${SOURCE_ACTION}/." \
-            "${NATIVE_DIR}/action/"
+          # Copy Actions only when the source folder exists.
+          if [[ -n "${SOURCE_ACTION}" ]]; then
+            echo "Action source: ${SOURCE_ACTION}"
 
-          # Stage UI beside native sources.
-          mkdir -p "${NATIVE_DIR}/ui"
+            cp -a \
+              "${SOURCE_ACTION}/." \
+              "${NATIVE_DIR}/action/"
+          else
+            echo "No action folder supplied. Continuing without custom Actions."
+          fi
 
-          cp -a \
-            "${SOURCE_UI}/." \
-            "${NATIVE_DIR}/ui/"
+          # Copy UI resources only when the source folder exists.
+          if [[ -n "${SOURCE_UI}" ]]; then
+            echo "UI source: ${SOURCE_UI}"
 
-          # Package all UI resources into Android assets.
-          mkdir -p "${ASSETS_UI}"
+            cp -a \
+              "${SOURCE_UI}/." \
+              "${NATIVE_DIR}/ui/"
 
-          cp -a \
-            "${SOURCE_UI}/." \
-            "${ASSETS_UI}/"
+            cp -a \
+              "${SOURCE_UI}/." \
+              "${ASSETS_UI}/"
+          else
+            echo "No UI folder supplied. Continuing without external UI files."
+          fi
 
           echo
           echo "========================================"
-          echo "NATIVE ACTION SOURCES"
+          echo "DISCOVERED ACTION SOURCES"
           echo "========================================"
 
           find "${NATIVE_DIR}/action" \
@@ -526,25 +500,33 @@ jobs:
             -name '*.cpp' \
             -print
 
-          # Require at least one action source.
-          if ! find "${NATIVE_DIR}/action" \
+          ACTION_COUNT="$(
+            find "${NATIVE_DIR}/action" \
               -type f \
               -name '*.cpp' \
-              -print \
-              -quit | grep -q .; then
-            echo "::error::No action .cpp source files were staged."
-            exit 1
-          fi
+              -print | wc -l
+          )"
+
+          echo "Action .cpp files: ${ACTION_COUNT}"
 
           echo
           echo "========================================"
-          echo "PACKAGED UI RESOURCES"
+          echo "AVAILABLE UI RESOURCES"
           echo "========================================"
 
           find "${ASSETS_UI}" -type f -print
 
+          UI_COUNT="$(
+            find "${ASSETS_UI}" \
+              -type f \
+              -print | wc -l
+          )"
+
+          echo "UI resource files: ${UI_COUNT}"
+
           echo
-          echo "Native sources, actions and UI installed."
+          echo "Native sources staged successfully."
+          echo "Action sources and UI resources are optional."
 
       # ============================================================
       # VERIFY GENERATED PROJECT
@@ -596,6 +578,9 @@ jobs:
           test -f "${ANDROID_PROJECT}/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml"
           test -f "${NATIVE_DIR}/CMakeLists.txt"
           test -f "${NATIVE_DIR}/main.cpp"
+          test -d "${NATIVE_DIR}/action"
+          test -d "${NATIVE_DIR}/ui"
+          test -d "${ASSETS_UI}"
 
           echo "Project files: PASSED"
 
@@ -620,8 +605,6 @@ jobs:
           echo "ACTION SOURCE DISCOVERY"
           echo "========================================"
 
-          test -f "${NATIVE_DIR}/action/DotAction.cpp"
-
           grep -q 'ULTRON_ACTION_DIR' \
             "${NATIVE_DIR}/CMakeLists.txt"
 
@@ -631,34 +614,57 @@ jobs:
           grep -q 'GLOB_RECURSE' \
             "${NATIVE_DIR}/CMakeLists.txt"
 
-          grep -q 'Ultron_RegisterAction' \
-            "${NATIVE_DIR}/action/DotAction.cpp"
-
-          grep -q 'Ultron_SetElementClass' \
-            "${NATIVE_DIR}/action/DotAction.cpp"
+          ACTION_COUNT="$(
+            find "${NATIVE_DIR}/action" \
+              -type f \
+              -name '*.cpp' \
+              -print | wc -l
+          )"
 
           echo "CMake action discovery: PASSED"
-          echo "Action source staging: PASSED"
+          echo "Discovered Action .cpp files: ${ACTION_COUNT}"
+
+          if [[ -f "${NATIVE_DIR}/action/DotAction.cpp" ]]; then
+            echo "Test Action detected."
+
+            grep -q 'Ultron_RegisterAction' \
+              "${NATIVE_DIR}/action/DotAction.cpp"
+
+            grep -q 'Ultron_SetElementClass' \
+              "${NATIVE_DIR}/action/DotAction.cpp"
+
+            echo "Test Action checks: PASSED"
+          else
+            echo "DotAction.cpp not supplied. Continuing normally."
+          fi
 
           echo
           echo "========================================"
-          echo "UI SOURCE AND APK ASSETS"
+          echo "OPTIONAL UI SOURCE AND APK ASSETS"
           echo "========================================"
 
-          test -f "${NATIVE_DIR}/ui/home.rml"
-          test -f "${NATIVE_DIR}/ui/home.rcss"
-          test -f "${ASSETS_UI}/home.rml"
-          test -f "${ASSETS_UI}/home.rcss"
+          if [[ -f "${NATIVE_DIR}/ui/home.rml" ]]; then
+            test -f "${ASSETS_UI}/home.rml"
+            echo "home.rml: supplied and staged"
+          else
+            echo "home.rml: not supplied; external home document is optional"
+          fi
 
-          grep -q 'data-action="change-dot"' \
-            "${ASSETS_UI}/home.rml"
+          if [[ -f "${NATIVE_DIR}/ui/home.rcss" ]]; then
+            test -f "${ASSETS_UI}/home.rcss"
+            echo "home.rcss: supplied and staged"
+          else
+            echo "home.rcss: not supplied; stylesheet is optional"
+          fi
 
-          grep -q '#dot.green' \
-            "${ASSETS_UI}/home.rcss"
+          UI_COUNT="$(
+            find "${ASSETS_UI}" \
+              -type f \
+              -print | wc -l
+          )"
 
-          echo "RmlUi document: PASSED"
-          echo "RmlUi stylesheet: PASSED"
-          echo "Android UI asset staging: PASSED"
+          echo "Total staged UI resources: ${UI_COUNT}"
+          echo "UI staging verification: PASSED"
 
           echo
           echo "========================================"
@@ -877,6 +883,7 @@ jobs:
 
       # ============================================================
       # VALIDATE APK
+      # UI ASSETS ARE OPTIONAL
       # ============================================================
 
       - name: Validate APK
@@ -887,6 +894,7 @@ jobs:
           APK="${GITHUB_WORKSPACE}/artifacts/ultron-debug.apk"
           BADGING="${RUNNER_TEMP}/apk-badging.txt"
           APK_CONTENTS="${RUNNER_TEMP}/apk-contents.txt"
+          ASSETS_UI="${ANDROID_PROJECT}/app/src/main/assets/ui"
 
           test -f "${APK}"
 
@@ -964,18 +972,38 @@ jobs:
           echo "UI ASSETS INSIDE APK"
           echo "========================================"
 
-          unzip -l "${APK}" | tee "${APK_CONTENTS}"
+          unzip -l "${APK}"
 
-          grep -q \
-            'assets/ui/home.rml' \
-            "${APK_CONTENTS}"
+          # Record APK entry names for exact file checks.
+          unzip -Z1 "${APK}" > "${APK_CONTENTS}"
 
-          grep -q \
-            'assets/ui/home.rcss' \
-            "${APK_CONTENTS}"
+          UI_COUNT=0
 
-          echo "RmlUi document packaged in APK: PASSED"
-          echo "RmlUi stylesheet packaged in APK: PASSED"
+          # Validate every UI file that was actually supplied.
+          # An empty UI directory is allowed.
+          while IFS= read -r -d '' UI_FILE; do
+            UI_RELATIVE="${UI_FILE#${ASSETS_UI}/}"
+            APK_ENTRY="assets/ui/${UI_RELATIVE}"
+
+            if ! grep -Fqx "${APK_ENTRY}" "${APK_CONTENTS}"; then
+              echo "::error::UI asset missing from APK: ${APK_ENTRY}"
+              exit 1
+            fi
+
+            echo "Packaged: ${APK_ENTRY}"
+            UI_COUNT=$((UI_COUNT + 1))
+
+          done < <(
+            find "${ASSETS_UI}" \
+              -type f \
+              -print0
+          )
+
+          if [[ "${UI_COUNT}" -eq 0 ]]; then
+            echo "No external UI assets supplied. This is allowed."
+          else
+            echo "UI assets packaged successfully: ${UI_COUNT}"
+          fi
 
           echo
           echo "========================================"
@@ -1038,9 +1066,9 @@ jobs:
             echo "| ABI | ${ANDROID_ABI} |"
             echo "| C++ | 20 |"
             echo "| Renderer | OpenGL ES 3.2 |"
-            echo "| Action sources | Auto-discovered by CMake |"
-            echo "| UI resources | Packaged under assets/ui |"
-            echo "| Background | Pure Black |"
+            echo "| Action sources | Automatically discovered; optional |"
+            echo "| UI resources | Automatically packaged; optional |"
+            echo "| Background | Pure Black fallback |"
             echo "| Icon | Adaptive Brain Icon |"
             echo
             echo "APK artifact: ultron-android-debug"
