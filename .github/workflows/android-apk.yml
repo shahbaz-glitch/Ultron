@@ -429,18 +429,60 @@ jobs:
           # Repository sources
           SOURCE_CMAKE="${GITHUB_WORKSPACE}/.github/CMakeLists.txt"
           SOURCE_CPP="${GITHUB_WORKSPACE}/.github/main.cpp"
-          SOURCE_ACTION="${GITHUB_WORKSPACE}/action"
-          SOURCE_UI="${GITHUB_WORKSPACE}/ui"
+
+          # Prefer root folders, but support the existing repository paths.
+          SOURCE_ACTION=""
+
+          for candidate in \
+            "${GITHUB_WORKSPACE}/action" \
+            "${GITHUB_WORKSPACE}/.github/action"; do
+
+            if [[ -d "${candidate}" ]]; then
+              SOURCE_ACTION="${candidate}"
+              break
+            fi
+          done
+
+          SOURCE_UI=""
+
+          for candidate in \
+            "${GITHUB_WORKSPACE}/ui" \
+            "${GITHUB_WORKSPACE}/.github/ui" \
+            "${GITHUB_WORKSPACE}/.github/ ui"; do
+
+            if [[ -d "${candidate}" ]]; then
+              SOURCE_UI="${candidate}"
+              break
+            fi
+          done
+
+          # Show a useful error if a folder is missing.
+          if [[ -z "${SOURCE_ACTION}" ]]; then
+            echo "::error::Action folder not found."
+            echo "Checked action/ and .github/action/"
+            find "${GITHUB_WORKSPACE}" -maxdepth 3 -type d -print
+            exit 1
+          fi
+
+          if [[ -z "${SOURCE_UI}" ]]; then
+            echo "::error::UI folder not found."
+            echo "Checked ui/, .github/ui/ and .github/ ui/"
+            find "${GITHUB_WORKSPACE}" -maxdepth 3 -type d -print
+            exit 1
+          fi
+
+          echo "Action source: ${SOURCE_ACTION}"
+          echo "UI source: ${SOURCE_UI}"
 
           # Generated Android project directories
           NATIVE_DIR="${ANDROID_PROJECT}/app/jni"
           ASSETS_UI="${ANDROID_PROJECT}/app/src/main/assets/ui"
 
-          # Verify the expected repository structure
+          # Verify required files
           test -f "${SOURCE_CMAKE}"
           test -f "${SOURCE_CPP}"
           test -d "${NATIVE_DIR}"
-          test -d "${SOURCE_ACTION}"
+          test -f "${SOURCE_ACTION}/DotAction.cpp"
           test -f "${SOURCE_UI}/home.rml"
           test -f "${SOURCE_UI}/home.rcss"
 
@@ -453,24 +495,21 @@ jobs:
             "${SOURCE_CPP}" \
             "${NATIVE_DIR}/main.cpp"
 
-          # Stage action sources beside CMakeLists.txt.
-          # CMake must discover and compile action/*.cpp automatically.
+          # Stage all actions for automatic CMake discovery.
           mkdir -p "${NATIVE_DIR}/action"
 
           cp -a \
             "${SOURCE_ACTION}/." \
             "${NATIVE_DIR}/action/"
 
-          # Stage UI sources beside CMakeLists.txt.
-          # This keeps the repository's native source layout available.
+          # Stage UI beside native sources.
           mkdir -p "${NATIVE_DIR}/ui"
 
           cp -a \
             "${SOURCE_UI}/." \
             "${NATIVE_DIR}/ui/"
 
-          # Package UI files into Android APK assets.
-          # Nested folders, images, fonts and other UI resources are included.
+          # Package all UI resources into Android assets.
           mkdir -p "${ASSETS_UI}"
 
           cp -a \
@@ -487,22 +526,22 @@ jobs:
             -name '*.cpp' \
             -print
 
-          # Require at least one action implementation.
-          find "${NATIVE_DIR}/action" \
-            -type f \
-            -name '*.cpp' \
-            -print \
-            -quit \
-            | grep -q .
+          # Require at least one action source.
+          if ! find "${NATIVE_DIR}/action" \
+              -type f \
+              -name '*.cpp' \
+              -print \
+              -quit | grep -q .; then
+            echo "::error::No action .cpp source files were staged."
+            exit 1
+          fi
 
           echo
           echo "========================================"
           echo "PACKAGED UI RESOURCES"
           echo "========================================"
 
-          find "${ASSETS_UI}" \
-            -type f \
-            -print
+          find "${ASSETS_UI}" -type f -print
 
           echo
           echo "Native sources, actions and UI installed."
@@ -581,11 +620,8 @@ jobs:
           echo "ACTION SOURCE DISCOVERY"
           echo "========================================"
 
-          test -d "${NATIVE_DIR}/action"
           test -f "${NATIVE_DIR}/action/DotAction.cpp"
 
-          # Fail early if the CMake file doesn't contain the
-          # action auto-discovery implementation.
           grep -q 'ULTRON_ACTION_DIR' \
             "${NATIVE_DIR}/CMakeLists.txt"
 
