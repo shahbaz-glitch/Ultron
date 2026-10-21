@@ -5,90 +5,105 @@ project(
     LANGUAGES C CXX
 )
 
-# ------------------------------------------------------------
-# C++ configuration
-# ------------------------------------------------------------
+# ============================================================
+# C++20
+# ============================================================
 
-set(
-    CMAKE_CXX_STANDARD
-    20
-    CACHE STRING
-    ""
-    FORCE
-)
-
-set(
-    CMAKE_CXX_STANDARD_REQUIRED
-    ON
-    CACHE BOOL
-    ""
-    FORCE
-)
-
-set(
-    CMAKE_CXX_EXTENSIONS
-    OFF
-    CACHE BOOL
-    ""
-    FORCE
-)
+set(CMAKE_CXX_STANDARD 20 CACHE STRING "" FORCE)
+set(CMAKE_CXX_STANDARD_REQUIRED ON CACHE BOOL "" FORCE)
+set(CMAKE_CXX_EXTENSIONS OFF CACHE BOOL "" FORCE)
 
 set(
     CMAKE_POSITION_INDEPENDENT_CODE
     ON
 )
 
-# ------------------------------------------------------------
+# ============================================================
+# Ultron source and resource directories
+#
+# In the Android build, this CMakeLists.txt is staged into:
+# app/jni/
+#
+# Therefore action/ and ui/ are staged alongside this file.
+# ============================================================
+
+set(
+    ULTRON_ACTION_DIR
+    "${CMAKE_CURRENT_LIST_DIR}/action"
+)
+
+set(
+    ULTRON_UI_DIR
+    "${CMAKE_CURRENT_LIST_DIR}/ui"
+)
+
+# Automatically discover every C++ source file inside action/.
+# CONFIGURE_DEPENDS asks CMake to reconfigure when files are
+# added or removed, including files in nested directories.
+
+set(ULTRON_ACTION_SOURCES "")
+
+if(EXISTS "${ULTRON_ACTION_DIR}")
+    file(
+        GLOB_RECURSE ULTRON_ACTION_SOURCES
+        CONFIGURE_DEPENDS
+        "${ULTRON_ACTION_DIR}/*.cpp"
+    )
+endif()
+
+list(SORT ULTRON_ACTION_SOURCES)
+
+list(
+    LENGTH
+    ULTRON_ACTION_SOURCES
+    ULTRON_ACTION_COUNT
+)
+
+message(
+    STATUS
+    "Ultron: discovered ${ULTRON_ACTION_COUNT} action source file(s)"
+)
+
+# Automatically discover UI files and nested resources.
+# These are resources, not C++ compilation units.
+#
+# The workflow packages ui/ recursively into:
+# app/src/main/assets/ui/
+
+set(ULTRON_UI_FILES "")
+
+if(EXISTS "${ULTRON_UI_DIR}")
+    file(
+        GLOB_RECURSE ULTRON_UI_FILES
+        CONFIGURE_DEPENDS
+        LIST_DIRECTORIES false
+        "${ULTRON_UI_DIR}/*"
+    )
+endif()
+
+list(SORT ULTRON_UI_FILES)
+
+list(
+    LENGTH
+    ULTRON_UI_FILES
+    ULTRON_UI_COUNT
+)
+
+message(
+    STATUS
+    "Ultron: discovered ${ULTRON_UI_COUNT} UI/resource file(s)"
+)
+
+# ============================================================
 # SDL3
-# ------------------------------------------------------------
+# ============================================================
 
-set(
-    SDL_SHARED
-    ON
-    CACHE BOOL
-    ""
-    FORCE
-)
-
-set(
-    SDL_STATIC
-    OFF
-    CACHE BOOL
-    ""
-    FORCE
-)
-
-set(
-    SDL_TESTS
-    OFF
-    CACHE BOOL
-    ""
-    FORCE
-)
-
-set(
-    SDL_EXAMPLES
-    OFF
-    CACHE BOOL
-    ""
-    FORCE
-)
-
-set(
-    SDL_INSTALL
-    OFF
-    CACHE BOOL
-    ""
-    FORCE
-)
-
-set(
-    SDL_GPU
-    OFF
-    CACHE BOOL
-    ""
-    FORCE
-)
+set(SDL_SHARED ON CACHE BOOL "" FORCE)
+set(SDL_STATIC OFF CACHE BOOL "" FORCE)
+set(SDL_TESTS OFF CACHE BOOL "" FORCE)
+set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
+set(SDL_GPU OFF CACHE BOOL "" FORCE)
 
 add_subdirectory(
     "${CMAKE_CURRENT_LIST_DIR}/SDL"
@@ -96,57 +111,17 @@ add_subdirectory(
     EXCLUDE_FROM_ALL
 )
 
-# ------------------------------------------------------------
+# ============================================================
 # FreeType
-# ------------------------------------------------------------
+# ============================================================
 
-set(
-    BUILD_SHARED_LIBS
-    OFF
-    CACHE BOOL
-    ""
-    FORCE
-)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 
-set(
-    FT_DISABLE_ZLIB
-    ON
-    CACHE BOOL
-    ""
-    FORCE
-)
-
-set(
-    FT_DISABLE_BZIP2
-    ON
-    CACHE BOOL
-    ""
-    FORCE
-)
-
-set(
-    FT_DISABLE_PNG
-    ON
-    CACHE BOOL
-    ""
-    FORCE
-)
-
-set(
-    FT_DISABLE_HARFBUZZ
-    ON
-    CACHE BOOL
-    ""
-    FORCE
-)
-
-set(
-    FT_DISABLE_BROTLI
-    ON
-    CACHE BOOL
-    ""
-    FORCE
-)
+set(FT_DISABLE_ZLIB ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_BZIP2 ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_PNG ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_HARFBUZZ ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_BROTLI ON CACHE BOOL "" FORCE)
 
 add_subdirectory(
     "${CMAKE_CURRENT_LIST_DIR}/freetype"
@@ -162,65 +137,18 @@ if(NOT TARGET Freetype::Freetype)
     )
 endif()
 
-# ------------------------------------------------------------
+# ============================================================
 # RmlUi
-# ------------------------------------------------------------
+# ============================================================
 
-set(
-    BUILD_SHARED_LIBS
-    OFF
-    CACHE BOOL
-    ""
-    FORCE
-)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 
-set(
-    RMLUI_SAMPLES
-    OFF
-    CACHE BOOL
-    ""
-    FORCE
-)
-
-set(
-    RMLUI_FONT_ENGINE
-    "freetype"
-    CACHE STRING
-    ""
-    FORCE
-)
-
-set(
-    RMLUI_PRECOMPILED_HEADERS
-    OFF
-    CACHE BOOL
-    ""
-    FORCE
-)
-
-set(
-    RMLUI_LUA_BINDINGS
-    OFF
-    CACHE BOOL
-    ""
-    FORCE
-)
-
-set(
-    RMLUI_TRACY_PROFILING
-    OFF
-    CACHE BOOL
-    ""
-    FORCE
-)
-
-set(
-    RMLUI_COMPILER_OPTIONS
-    OFF
-    CACHE BOOL
-    ""
-    FORCE
-)
+set(RMLUI_SAMPLES OFF CACHE BOOL "" FORCE)
+set(RMLUI_FONT_ENGINE "freetype" CACHE STRING "" FORCE)
+set(RMLUI_PRECOMPILED_HEADERS OFF CACHE BOOL "" FORCE)
+set(RMLUI_LUA_BINDINGS OFF CACHE BOOL "" FORCE)
+set(RMLUI_TRACY_PROFILING OFF CACHE BOOL "" FORCE)
+set(RMLUI_COMPILER_OPTIONS OFF CACHE BOOL "" FORCE)
 
 add_subdirectory(
     "${CMAKE_CURRENT_LIST_DIR}/RmlUi"
@@ -228,9 +156,9 @@ add_subdirectory(
     EXCLUDE_FROM_ALL
 )
 
-# ------------------------------------------------------------
+# ============================================================
 # Ultron native application
-# ------------------------------------------------------------
+# ============================================================
 
 add_library(
     main
@@ -239,8 +167,20 @@ add_library(
     main.cpp
 
     "${CMAKE_CURRENT_LIST_DIR}/RmlUi/Backends/RmlUi_Platform_SDL.cpp"
+
     "${CMAKE_CURRENT_LIST_DIR}/RmlUi/Backends/RmlUi_Renderer_GL3.cpp"
 )
+
+# Automatically compile all discovered action .cpp files.
+# No manual target_sources entry is needed for each new action.
+
+if(ULTRON_ACTION_SOURCES)
+    target_sources(
+        main
+        PRIVATE
+        ${ULTRON_ACTION_SOURCES}
+    )
+endif()
 
 target_include_directories(
     main
@@ -268,3 +208,17 @@ target_link_libraries(
     log
     ${CMAKE_DL_LIBS}
 )
+
+# ============================================================
+# Build summary
+# ============================================================
+
+message(STATUS "----------------------------------------")
+message(STATUS "Ultron configuration")
+message(STATUS "C++ standard : C++20")
+message(STATUS "SDL          : SDL3")
+message(STATUS "UI engine    : RmlUi")
+message(STATUS "Renderer     : OpenGL ES 3.2")
+message(STATUS "Action files : ${ULTRON_ACTION_COUNT}")
+message(STATUS "UI files     : ${ULTRON_UI_COUNT}")
+message(STATUS "----------------------------------------")
