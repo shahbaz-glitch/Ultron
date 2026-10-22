@@ -1,0 +1,70 @@
+
+<rml>
+<head>
+    <title>Ultron - Outer Ring</title>
+
+    <style>
+        body {
+            width: 100vw;
+            height: 100vh;
+            margin: 0px;
+            padding: 0px;
+            background-color: #020608;
+            overflow: hidden;
+        }
+
+        #stage {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        .ring {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            display: block;
+            background-color: transparent;
+            transform: translate(-50%, -50%);
+        }
+
+        /* Outer cyan edge and soft glow */
+        #outer-halo {
+            width: 76vw;
+            height: 76vw;
+            border: 0.3vw #0B8197;
+            border-radius: 38.3vw;
+            box-shadow:
+                #00D8FF66 0px 0px 12px 3px,
+                #007D9955 0px 0px 24px 8px;
+        }
+
+        /* Main bright white-cyan ring */
+        #outer-ring {
+            width: 72vw;
+            height: 72vw;
+            border: 1.8vw #E8FCFF;
+            border-radius: 37.8vw;
+            box-shadow:
+                #D8FCFF99 0px 0px 6px 1px,
+                #00CFF077 0px 0px 18px 4px;
+        }
+
+        /* Thin dark-cyan inner edge */
+        #inner-edge {
+            width: 71.4vw;
+            height: 71.4vw;
+            border: 0.3vw #05768A;
+            border-radius: 36vw;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="stage">
+        <div class="ring" id="outer-halo"></div>
+        <div class="ring" id="outer-ring"></div>
+        <div class="ring" id="inner-edge"></div>
+    </div>
+</body>
+</rml>
