@@ -1,4 +1,3 @@
-
 <rml>
 <head>
     <title>Ultron - Outer Ring</title>
@@ -10,51 +9,81 @@
             margin: 0;
             padding: 0;
             overflow: hidden;
+            background-color: #000000;
         }
 
         #stage {
             position: absolute;
             left: 0;
             top: 0;
+
             width: 100vw;
             height: 100vh;
+
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
 
-        #outer-ring {
-            position: absolute;
-
-            left: 50%;
-            top: 50%;
+        /* Shared square area for the ring and its glow. */
+        #ring-stack {
+            position: relative;
 
             width: 80vw;
             height: 80vw;
+        }
 
-            min-width: 80vw;
-            max-width: 80vw;
-            min-height: 80vw;
-            max-height: 80vw;
+        /*
+         * Glow is a separate element.
+         * It does not carry the bright ring border.
+         */
+        #ring-glow {
+            position: absolute;
+            left: 0;
+            top: 0;
+
+            width: 100%;
+            height: 100%;
+
+            background-color: transparent;
+            border-radius: 40vw;
+            border: 0px transparent;
+
+            box-shadow:
+                #00D8FF24 0px 0px 7px 1px,
+                #00A6CC14 0px 0px 12px 1px;
+        }
+
+        /*
+         * Main ring: clean border geometry, without shadow
+         * or transform on this element.
+         */
+        #outer-ring {
+            position: absolute;
+            left: 0;
+            top: 0;
+
+            width: 100%;
+            height: 100%;
 
             box-sizing: border-box;
+
             background-color: transparent;
 
-            /* Original bright white-cyan ring */
             border: 1.8vw #E8FCFF;
             border-radius: 40vw;
 
-            /* Very subtle cyan glow */
-            box-shadow:
-                #00D8FF30 0px 0px 7px 1px,
-                #00A6CC18 0px 0px 12px 1px;
-
-            /* Centre using the element's own dimensions */
-            transform: translate(-50%, -50%);
+            box-shadow: none;
         }
     </style>
 </head>
 
 <body>
     <div id="stage">
-        <div id="outer-ring"></div>
+        <div id="ring-stack">
+            <div id="ring-glow"></div>
+            <div id="outer-ring"></div>
+        </div>
     </div>
 </body>
 </rml>
