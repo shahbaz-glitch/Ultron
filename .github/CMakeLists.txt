@@ -194,6 +194,7 @@ target_compile_definitions(
     PRIVATE
 
     RMLUI_SDL_VERSION_MAJOR=3
+    RMLUI_NUM_MSAA_SAMPLES=4
 )
 
 target_link_libraries(
