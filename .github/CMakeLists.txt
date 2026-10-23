@@ -14,18 +14,10 @@ set(CMAKE_CXX_STANDARD 20 CACHE STRING "" FORCE)
 set(CMAKE_CXX_STANDARD_REQUIRED ON CACHE BOOL "" FORCE)
 set(CMAKE_CXX_EXTENSIONS OFF CACHE BOOL "" FORCE)
 
-set(
-    CMAKE_POSITION_INDEPENDENT_CODE
-    ON
-)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # ============================================================
 # Ultron source and resource directories
-#
-# In the Android build, this CMakeLists.txt is staged into:
-# app/jni/
-#
-# Therefore action/ and ui/ are staged alongside this file.
 # ============================================================
 
 set(
@@ -38,9 +30,7 @@ set(
     "${CMAKE_CURRENT_LIST_DIR}/ui"
 )
 
-# Automatically discover every C++ source file inside action/.
-# CONFIGURE_DEPENDS asks CMake to reconfigure when files are
-# added or removed, including files in nested directories.
+# Automatically discover C++ action files.
 
 set(ULTRON_ACTION_SOURCES "")
 
@@ -65,11 +55,7 @@ message(
     "Ultron: discovered ${ULTRON_ACTION_COUNT} action source file(s)"
 )
 
-# Automatically discover UI files and nested resources.
-# These are resources, not C++ compilation units.
-#
-# The workflow packages ui/ recursively into:
-# app/src/main/assets/ui/
+# Automatically discover UI resources.
 
 set(ULTRON_UI_FILES "")
 
@@ -133,13 +119,12 @@ add_subdirectory(
 if(NOT TARGET Freetype::Freetype)
     add_library(
         Freetype::Freetype
-        ALIAS
-        freetype
+        ALIAS freetype
     )
 endif()
 
 # ============================================================
-# RmlUi
+# RmlUi configuration
 # ============================================================
 
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
@@ -148,41 +133,92 @@ set(RMLUI_SAMPLES OFF CACHE BOOL "" FORCE)
 set(RMLUI_FONT_ENGINE "freetype" CACHE STRING "" FORCE)
 set(RMLUI_PRECOMPILED_HEADERS OFF CACHE BOOL "" FORCE)
 set(RMLUI_LUA_BINDINGS OFF CACHE BOOL "" FORCE)
+set(RMLUI_LOTTIE_PLUGIN OFF CACHE BOOL "" FORCE)
 set(RMLUI_TRACY_PROFILING OFF CACHE BOOL "" FORCE)
 set(RMLUI_COMPILER_OPTIONS OFF CACHE BOOL "" FORCE)
 
-# Enable the built-in RmlUi SVG plugin.
-# The LunaSVG dependency must also be available to CMake.
-
+# Enable SVG support; use LunaSVG as its rendering dependency.
 set(RMLUI_SVG_PLUGIN ON CACHE BOOL "" FORCE)
 
-# Help CMake locate LunaSVG and PlutoVG when their build-tree
-# package configurations are available under RmlUi/Dependencies.
-# If the workflow installs them elsewhere, its existing package
-# search configuration can continue to be used.
+# ============================================================
+# FIX: Find the Android LunaSVG and PlutoVG build packages
+# BEFORE adding RmlUi.
+#
+# The workflow builds LunaSVG in:
+# RmlUi/Dependencies/lunasvg/build
+#
+# Expected package files:
+#   build/lunasvgConfig.cmake
+#   build/plutovg/plutovgConfig.cmake
+# ============================================================
 
 set(
     ULTRON_LUNASVG_BUILD_DIR
     "${CMAKE_CURRENT_LIST_DIR}/RmlUi/Dependencies/lunasvg/build"
 )
 
-if(NOT lunasvg_ROOT AND EXISTS "${ULTRON_LUNASVG_BUILD_DIR}")
-    set(
-        lunasvg_ROOT
-        "${ULTRON_LUNASVG_BUILD_DIR}"
-        CACHE PATH
-        "LunaSVG build directory used by RmlUi"
+set(
+    ULTRON_PLUTOVG_BUILD_DIR
+    "${ULTRON_LUNASVG_BUILD_DIR}/plutovg"
+)
+
+# Fail with a clear message if the dependency build step did
+# not generate the expected package configuration files.
+
+if(NOT EXISTS "${ULTRON_LUNASVG_BUILD_DIR}/lunasvgConfig.cmake")
+    message(FATAL_ERROR
+        "LunaSVG CMake package is missing: "
+        "${ULTRON_LUNASVG_BUILD_DIR}/lunasvgConfig.cmake. "
+        "Build LunaSVG before configuring Ultron."
     )
 endif()
 
-if(NOT plutovg_ROOT AND EXISTS "${ULTRON_LUNASVG_BUILD_DIR}/plutovg")
-    set(
-        plutovg_ROOT
-        "${ULTRON_LUNASVG_BUILD_DIR}/plutovg"
-        CACHE PATH
-        "PlutoVG build directory used by LunaSVG"
+if(NOT EXISTS "${ULTRON_PLUTOVG_BUILD_DIR}/plutovgConfig.cmake")
+    message(FATAL_ERROR
+        "PlutoVG CMake package is missing: "
+        "${ULTRON_PLUTOVG_BUILD_DIR}/plutovgConfig.cmake. "
+        "Check the LunaSVG/PlutoVG Android build step."
     )
 endif()
+
+# Point CMake directly at the generated package directories.
+# FORCE prevents stale paths in the Gradle CMake cache.
+
+set(
+    plutovg_DIR
+    "${ULTRON_PLUTOVG_BUILD_DIR}"
+    CACHE PATH "PlutoVG build-tree package directory" FORCE
+)
+
+set(
+    lunasvg_DIR
+    "${ULTRON_LUNASVG_BUILD_DIR}"
+    CACHE PATH "LunaSVG build-tree package directory" FORCE
+)
+
+# Load PlutoVG first because LunaSVG's package config imports it.
+find_package(plutovg CONFIG REQUIRED)
+find_package(lunasvg CONFIG REQUIRED)
+
+# Ensure the required imported targets really exist.
+if(NOT TARGET plutovg::plutovg)
+    message(FATAL_ERROR
+        "PlutoVG was found, but target plutovg::plutovg is missing."
+    )
+endif()
+
+if(NOT TARGET lunasvg::lunasvg)
+    message(FATAL_ERROR
+        "LunaSVG was found, but target lunasvg::lunasvg is missing."
+    )
+endif()
+
+message(STATUS "Ultron: PlutoVG package found")
+message(STATUS "Ultron: LunaSVG package found")
+
+# ============================================================
+# RmlUi
+# ============================================================
 
 add_subdirectory(
     "${CMAKE_CURRENT_LIST_DIR}/RmlUi"
@@ -205,8 +241,7 @@ add_library(
     "${CMAKE_CURRENT_LIST_DIR}/RmlUi/Backends/RmlUi_Renderer_GL3.cpp"
 )
 
-# Automatically compile all discovered action .cpp files.
-# No manual target_sources entry is needed for each new action.
+# Automatically compile discovered action sources.
 
 if(ULTRON_ACTION_SOURCES)
     target_sources(
@@ -255,7 +290,11 @@ message(STATUS "SDL          : SDL3")
 message(STATUS "UI engine    : RmlUi")
 message(STATUS "Renderer     : OpenGL ES 3.2")
 message(STATUS "SVG plugin   : ON")
+message(STATUS "LunaSVG      : ${lunasvg_DIR}")
+message(STATUS "PlutoVG      : ${plutovg_DIR}")
 message(STATUS "Debugger     : linked")
+message(STATUS "Lua bindings : OFF")
+message(STATUS "Lottie       : OFF")
 message(STATUS "Action files : ${ULTRON_ACTION_COUNT}")
 message(STATUS "UI files     : ${ULTRON_UI_COUNT}")
 message(STATUS "----------------------------------------")
