@@ -1,12 +1,23 @@
-
 <rml>
 <head>
     <title>Circle Demo</title>
 
     <style>
         body {
+            display: block;
+            position: absolute;
+            top: 0px;
+            right: 0px;
+            bottom: 0px;
+            left: 0px;
+
+            box-sizing: border-box;
             background-color: #20242b;
             padding: 30px;
+        }
+
+        div {
+            display: block;
         }
 
         .circle {
@@ -18,10 +29,11 @@
         }
 
         .outline-circle {
+            box-sizing: border-box;
             width: 100px;
             height: 100px;
             background-color: transparent;
-            border: 4px solid #22c55e;
+            border: 4px #22c55e;
             border-radius: 50px;
         }
     </style>
