@@ -1,3 +1,4 @@
+
 cmake_minimum_required(VERSION 3.16)
 
 project(
@@ -150,6 +151,39 @@ set(RMLUI_LUA_BINDINGS OFF CACHE BOOL "" FORCE)
 set(RMLUI_TRACY_PROFILING OFF CACHE BOOL "" FORCE)
 set(RMLUI_COMPILER_OPTIONS OFF CACHE BOOL "" FORCE)
 
+# Enable the built-in RmlUi SVG plugin.
+# The LunaSVG dependency must also be available to CMake.
+
+set(RMLUI_SVG_PLUGIN ON CACHE BOOL "" FORCE)
+
+# Help CMake locate LunaSVG and PlutoVG when their build-tree
+# package configurations are available under RmlUi/Dependencies.
+# If the workflow installs them elsewhere, its existing package
+# search configuration can continue to be used.
+
+set(
+    ULTRON_LUNASVG_BUILD_DIR
+    "${CMAKE_CURRENT_LIST_DIR}/RmlUi/Dependencies/lunasvg/build"
+)
+
+if(NOT lunasvg_ROOT AND EXISTS "${ULTRON_LUNASVG_BUILD_DIR}")
+    set(
+        lunasvg_ROOT
+        "${ULTRON_LUNASVG_BUILD_DIR}"
+        CACHE PATH
+        "LunaSVG build directory used by RmlUi"
+    )
+endif()
+
+if(NOT plutovg_ROOT AND EXISTS "${ULTRON_LUNASVG_BUILD_DIR}/plutovg")
+    set(
+        plutovg_ROOT
+        "${ULTRON_LUNASVG_BUILD_DIR}/plutovg"
+        CACHE PATH
+        "PlutoVG build directory used by LunaSVG"
+    )
+endif()
+
 add_subdirectory(
     "${CMAKE_CURRENT_LIST_DIR}/RmlUi"
     RmlUi
@@ -201,6 +235,7 @@ target_link_libraries(
     PRIVATE
 
     RmlUi::RmlUi
+    RmlUi::Debugger
     SDL3::SDL3-shared
 
     GLESv3
@@ -219,6 +254,8 @@ message(STATUS "C++ standard : C++20")
 message(STATUS "SDL          : SDL3")
 message(STATUS "UI engine    : RmlUi")
 message(STATUS "Renderer     : OpenGL ES 3.2")
+message(STATUS "SVG plugin   : ON")
+message(STATUS "Debugger     : linked")
 message(STATUS "Action files : ${ULTRON_ACTION_COUNT}")
 message(STATUS "UI files     : ${ULTRON_UI_COUNT}")
 message(STATUS "----------------------------------------")
