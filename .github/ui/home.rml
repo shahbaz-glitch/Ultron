@@ -1,89 +1,22 @@
+
 <rml>
 <head>
-    <title>Ultron - Outer Ring</title>
-
-    <style>
-        body {
-            width: 100vw;
-            height: 100vh;
-            margin: 0;
-            padding: 0;
-            overflow: hidden;
-            background-color: #000000;
-        }
-
-        #stage {
-            position: absolute;
-            left: 0;
-            top: 0;
-
-            width: 100vw;
-            height: 100vh;
-
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        /* Shared square area for the ring and its glow. */
-        #ring-stack {
-            position: relative;
-
-            width: 80vw;
-            height: 80vw;
-        }
-
-        /*
-         * Glow is a separate element.
-         * It does not carry the bright ring border.
-         */
-        #ring-glow {
-            position: absolute;
-            left: 0;
-            top: 0;
-
-            width: 100%;
-            height: 100%;
-
-            background-color: transparent;
-            border-radius: 40vw;
-            border: 0px transparent;
-
-            box-shadow:
-                #00D8FF24 0px 0px 7px 1px,
-                #00A6CC14 0px 0px 12px 1px;
-        }
-
-        /*
-         * Main ring: clean border geometry, without shadow
-         * or transform on this element.
-         */
-        #outer-ring {
-            position: absolute;
-            left: 0;
-            top: 0;
-
-            width: 100%;
-            height: 100%;
-
-            box-sizing: border-box;
-
-            background-color: transparent;
-
-            border: 1.8vw #E8FCFF;
-            border-radius: 40vw;
-
-            box-shadow: none;
-        }
-    </style>
+    <title>Circle Preview</title>
 </head>
-
 <body>
-    <div id="stage">
-        <div id="ring-stack">
-            <div id="ring-glow"></div>
-            <div id="outer-ring"></div>
-        </div>
-    </div>
+    <svg
+        viewBox="0 0 240 240"
+        width="240"
+        height="240"
+        xmlns="http://www.w3.org/2000/svg">
+
+        <circle
+            cx="120"
+            cy="120"
+            r="88"
+            fill="none"
+            stroke="#60A5FA"
+            stroke-width="3" />
+    </svg>
 </body>
 </rml>
