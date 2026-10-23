@@ -1,46 +1,50 @@
 <rml>
 <head>
-    <title>Circle Demo</title>
+    <title>Cute Square Ring</title>
 
     <style>
         body {
-            display: block;
-            position: absolute;
-            top: 0px;
-            right: 0px;
-            bottom: 0px;
-            left: 0px;
-
-            box-sizing: border-box;
+            width: 100%;
+            height: 100%;
+            margin: 0;
             background-color: #20242b;
-            padding: 30px;
+
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
 
-        div {
-            display: block;
-        }
+        .square-ring {
+            width: 150px;
+            height: 150px;
 
-        .circle {
-            width: 100px;
-            height: 100px;
-            background-color: #2878ff;
-            border-radius: 50px;
-            margin-bottom: 20px;
-        }
+            border-width: 8px;
+            border-color: #ff7ac8;
+            border-radius: 28px;
 
-        .outline-circle {
-            box-sizing: border-box;
-            width: 100px;
-            height: 100px;
             background-color: transparent;
-            border: 4px #22c55e;
-            border-radius: 50px;
+
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .inner-ring {
+            width: 76px;
+            height: 76px;
+
+            border-width: 5px;
+            border-color: #7dd3fc;
+            border-radius: 17px;
+
+            background-color: transparent;
         }
     </style>
 </head>
 
 <body>
-    <div class="circle"></div>
-    <div class="outline-circle"></div>
+    <div class="square-ring">
+        <div class="inner-ring"></div>
+    </div>
 </body>
 </rml>
