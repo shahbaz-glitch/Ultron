@@ -21,6 +21,7 @@ env:
   RMLUI_VERSION: "6.3"
   SDL_VERSION: "3.4.18"
   FREETYPE_VERSION: "VER-2-14-3"
+  LUNASVG_VERSION: "3.5.0"
 
   ANDROID_API: "36"
   ANDROID_MIN_SDK: "26"
@@ -123,14 +124,81 @@ jobs:
             "https://github.com/mikke89/RmlUi.git" \
             "${ANDROID_PROJECT}/app/jni/RmlUi"
 
+          # Latest stable LunaSVG, including its PlutoVG source dependency.
+          # This dependency is built separately below with the Android NDK,
+          # then discovered by app/jni/CMakeLists.txt through lunasvg_ROOT.
+          mkdir -p \
+            "${ANDROID_PROJECT}/app/jni/RmlUi/Dependencies"
+
+          git clone \
+            --depth 1 \
+            --recurse-submodules \
+            --branch "v${LUNASVG_VERSION}" \
+            "https://github.com/sammycage/lunasvg.git" \
+            "${ANDROID_PROJECT}/app/jni/RmlUi/Dependencies/lunasvg"
+
           # Remove downloaded Git metadata
           rm -rf \
             "${ANDROID_PROJECT}/app/jni/SDL/.git" \
             "${ANDROID_PROJECT}/app/jni/freetype/.git" \
-            "${ANDROID_PROJECT}/app/jni/RmlUi/.git"
+            "${ANDROID_PROJECT}/app/jni/RmlUi/.git" \
+            "${ANDROID_PROJECT}/app/jni/RmlUi/Dependencies/lunasvg/.git" \
+            "${ANDROID_PROJECT}/app/jni/RmlUi/Dependencies/lunasvg/plutovg/.git"
 
           # Make the project path available to later steps
           echo "ANDROID_PROJECT=${ANDROID_PROJECT}" >> "${GITHUB_ENV}"
+
+      # ============================================================
+      # BUILD LUNASVG FOR THE TARGET ANDROID ABI
+      # ============================================================
+
+      - name: Build LunaSVG v${{ env.LUNASVG_VERSION }} for Android
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          LUNASVG_SOURCE="${ANDROID_PROJECT}/app/jni/RmlUi/Dependencies/lunasvg"
+          LUNASVG_BUILD="${LUNASVG_SOURCE}/build"
+          NDK_TOOLCHAIN="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}/build/cmake/android.toolchain.cmake"
+
+          test -f "${LUNASVG_SOURCE}/CMakeLists.txt"
+          test -f "${LUNASVG_SOURCE}/plutovg/CMakeLists.txt"
+          test -f "${NDK_TOOLCHAIN}"
+
+          cmake \
+            -S "${LUNASVG_SOURCE}" \
+            -B "${LUNASVG_BUILD}" \
+            -DCMAKE_TOOLCHAIN_FILE="${NDK_TOOLCHAIN}" \
+            -DANDROID_ABI="${ANDROID_ABI}" \
+            -DANDROID_PLATFORM="android-${ANDROID_MIN_SDK}" \
+            -DANDROID_STL=c++_static \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DLUNASVG_BUILD_EXAMPLES=OFF \
+            -DPLUTOVG_BUILD_EXAMPLES=OFF
+
+          cmake \
+            --build "${LUNASVG_BUILD}" \
+            --config Release \
+            --target lunasvg \
+            --parallel 2
+
+          # The generated package files are consumed by RmlUi's find_package calls.
+          test -f "${LUNASVG_BUILD}/lunasvgConfig.cmake"
+          test -f "${LUNASVG_BUILD}/lunasvgTargets.cmake"
+          test -f "${LUNASVG_BUILD}/plutovg/plutovgConfig.cmake"
+
+          LUNASVG_ARCHIVE="$(find "${LUNASVG_BUILD}" -type f -name 'liblunasvg.a' -print -quit)"
+          PLUTOVG_ARCHIVE="$(find "${LUNASVG_BUILD}" -type f -name 'libplutovg.a' -print -quit)"
+
+          test -n "${LUNASVG_ARCHIVE}"
+          test -n "${PLUTOVG_ARCHIVE}"
+
+          echo "LunaSVG version: ${LUNASVG_VERSION}"
+          echo "LunaSVG archive: ${LUNASVG_ARCHIVE}"
+          echo "PlutoVG archive: ${PLUTOVG_ARCHIVE}"
+          echo "LunaSVG Android build: PASSED"
 
       # ============================================================
       # CONFIGURE GRADLE PROJECT
@@ -171,7 +239,7 @@ jobs:
           cat > "${ANDROID_PROJECT}/gradle/wrapper/gradle-wrapper.properties" <<EOF
           distributionBase=GRADLE_USER_HOME
           distributionPath=wrapper/dists
-          distributionUrl=https\\://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip
+          distributionUrl=https\://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip
           zipStoreBase=GRADLE_USER_HOME
           zipStorePath=wrapper/dists
           EOF
@@ -539,6 +607,8 @@ jobs:
 
           NATIVE_DIR="${ANDROID_PROJECT}/app/jni"
           ASSETS_UI="${ANDROID_PROJECT}/app/src/main/assets/ui"
+          LUNASVG_SOURCE="${NATIVE_DIR}/RmlUi/Dependencies/lunasvg"
+          LUNASVG_BUILD="${LUNASVG_SOURCE}/build"
 
           echo "========================================"
           echo "ULTRON CONFIGURATION"
@@ -550,6 +620,7 @@ jobs:
           echo "RmlUi       : ${RMLUI_VERSION}"
           echo "SDL3        : ${SDL_VERSION}"
           echo "FreeType    : ${FREETYPE_VERSION}"
+          echo "LunaSVG     : ${LUNASVG_VERSION}"
           echo "Android API : ${ANDROID_API}"
           echo "Min SDK     : ${ANDROID_MIN_SDK}"
           echo "Build Tools : ${BUILD_TOOLS_VERSION}"
@@ -598,7 +669,17 @@ jobs:
           test -f "${NATIVE_DIR}/RmlUi/Include/RmlUi/Core/ElementDocument.h"
           test -f "${NATIVE_DIR}/freetype/CMakeLists.txt"
 
-          echo "Dependencies: PASSED"
+          # Verify the pinned SVG source and its Android build-tree packages.
+          test -f "${LUNASVG_SOURCE}/CMakeLists.txt"
+          test -f "${LUNASVG_SOURCE}/plutovg/CMakeLists.txt"
+          test -f "${LUNASVG_BUILD}/lunasvgConfig.cmake"
+          test -f "${LUNASVG_BUILD}/lunasvgTargets.cmake"
+          test -f "${LUNASVG_BUILD}/plutovg/plutovgConfig.cmake"
+          test -n "$(find "${LUNASVG_BUILD}" -type f -name 'liblunasvg.a' -print -quit)"
+          test -n "$(find "${LUNASVG_BUILD}" -type f -name 'libplutovg.a' -print -quit)"
+
+          echo "SDL/FreeType/RmlUi dependencies: PASSED"
+          echo "SVG dependency (LunaSVG ${LUNASVG_VERSION} + PlutoVG): PASSED"
 
           echo
           echo "========================================"
@@ -703,11 +784,19 @@ jobs:
 
           echo
           echo "========================================"
-          echo "RUNTIME"
+          echo "NATIVE CONFIGURATION"
           echo "========================================"
 
           grep -q \
             'RMLUI_SDL_VERSION_MAJOR=3' \
+            "${NATIVE_DIR}/CMakeLists.txt"
+
+          grep -q \
+            'RMLUI_SVG_PLUGIN' \
+            "${NATIVE_DIR}/CMakeLists.txt"
+
+          grep -q \
+            'RmlUi::Debugger' \
             "${NATIVE_DIR}/CMakeLists.txt"
 
           grep -q \
@@ -750,7 +839,7 @@ jobs:
             'glClear(' \
             "${NATIVE_DIR}/main.cpp"
 
-          echo "Runtime configuration: PASSED"
+          echo "Native CMake and runtime configuration: PASSED"
 
           echo
           echo "========================================"
@@ -1057,6 +1146,7 @@ jobs:
             echo "| RmlUi | ${RMLUI_VERSION} |"
             echo "| SDL3 | ${SDL_VERSION} |"
             echo "| FreeType | ${FREETYPE_VERSION} |"
+            echo "| LunaSVG | ${LUNASVG_VERSION} |"
             echo "| Android API | ${ANDROID_API} |"
             echo "| Min SDK | ${ANDROID_MIN_SDK} |"
             echo "| Build Tools | ${BUILD_TOOLS_VERSION} |"
@@ -1066,6 +1156,8 @@ jobs:
             echo "| ABI | ${ANDROID_ABI} |"
             echo "| C++ | 20 |"
             echo "| Renderer | OpenGL ES 3.2 |"
+            echo "| SVG | LunaSVG ${LUNASVG_VERSION} + PlutoVG, built for Android |"
+            echo "| Visual Debugger | CMake target linked; C++ initialization required |"
             echo "| Action sources | Automatically discovered; optional |"
             echo "| UI resources | Automatically packaged; optional |"
             echo "| Background | Pure Black fallback |"
