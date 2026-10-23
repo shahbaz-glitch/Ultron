@@ -1,53 +1,73 @@
 
 <rml>
 <head>
-    <title>Circle Ring</title>
+    <title>RmlUi SVG Gradient Circle Test</title>
 
     <style>
         body {
             width: 100%;
             height: 100%;
             margin: 0;
+            padding: 0;
+            background-color: #20242b;
+        }
 
+        .test-container {
+            width: 100%;
+            height: 100%;
             display: flex;
             align-items: center;
             justify-content: center;
         }
 
-        .layout {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-        }
-
-        .circle-ring {
-            width: 100px;
-            height: 100px;
-
-            border-width: 6px;
-            border-color: #38bdf8;
-            border-radius: 56px;
-        }
-
-        button {
-            margin-top: 24px;
-            padding: 10px 18px;
-            color: #ffffff;
-            background-color: #343a46;
-            border-width: 1px;
-            border-color: #707987;
-            border-radius: 8px;
+        .test-svg {
+            width: 220px;
+            height: 220px;
         }
     </style>
 </head>
 
 <body>
-    <div class="layout">
-        <div class="circle-ring"></div>
+    <div class="test-container">
+        <svg
+            class="test-svg"
+            width="220"
+            height="220"
+            viewBox="0 0 200 200"
+            xmlns="http://www.w3.org/2000/svg"
+        >
+            <defs>
+                <linearGradient
+                    id="circleGradient"
+                    x1="0%"
+                    y1="0%"
+                    x2="100%"
+                    y2="100%"
+                >
+                    <stop
+                        offset="0%"
+                        stop-color="#8BFFFF"
+                    />
+                    <stop
+                        offset="45%"
+                        stop-color="#2878FF"
+                    />
+                    <stop
+                        offset="100%"
+                        stop-color="#10105C"
+                    />
+                </linearGradient>
+            </defs>
 
-        <button data-action="toggle_ring">
-            Switch Shape
-        </button>
+            <circle
+                cx="100"
+                cy="100"
+                r="70"
+                fill="url(#circleGradient)"
+                stroke="#D8FBFF"
+                stroke-width="3"
+            />
+        </svg>
     </div>
 </body>
 </rml>
