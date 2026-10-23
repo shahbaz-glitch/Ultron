@@ -11,6 +11,7 @@
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/FileInterface.h>
+#include <RmlUi/Debugger.h>
 
 #include "RmlUi_Platform_SDL.h"
 #include "RmlUi_Renderer_GL3.h"
@@ -29,7 +30,7 @@
 #include <utility>
 #include <vector>
 
-// FIX: Correct C++ function-pointer aliases.
+// Correct C++ function-pointer aliases.
 using UltronActionCallback = void (*)();
 using UltronUITaskCallback = void (*)(void* user_data);
 
@@ -1520,6 +1521,37 @@ int main(int argc, char** argv)
             {
                 g_context_root = g_context->GetRootElement();
 
+                // -------------------------------------------------
+                // Visual Debugger initialization
+                // -------------------------------------------------
+                //
+                // Requires the RmlUi debugger target to be linked
+                // in CMakeLists.txt.
+                //
+                // The debugger starts hidden. Press F8 on a keyboard
+                // to show or hide it.
+                //
+                // If initialization fails, the regular UI continues.
+                // -------------------------------------------------
+
+                const bool debugger_initialized =
+                    Rml::Debugger::Initialise(g_context);
+
+                if (debugger_initialized)
+                {
+                    SDL_LogInfo(
+                        SDL_LOG_CATEGORY_APPLICATION,
+                        "Ultron: Visual Debugger initialized. "
+                        "Press F8 to toggle visibility.");
+                }
+                else
+                {
+                    SDL_LogWarn(
+                        SDL_LOG_CATEGORY_APPLICATION,
+                        "Ultron: Visual Debugger initialization failed; "
+                        "continuing without the debugger.");
+                }
+
                 float window_scale =
                     SDL_GetWindowDisplayScale(window);
 
@@ -1593,6 +1625,8 @@ int main(int argc, char** argv)
                     g_context_root = nullptr;
                     g_context = nullptr;
 
+                    // Rml::Shutdown() automatically shuts down the
+                    // debugger plugin if it was initialized.
                     Rml::RemoveContext("main");
                     Rml::Shutdown();
                 }
@@ -1619,6 +1653,27 @@ int main(int argc, char** argv)
                                 g_running.store(
                                     false,
                                     std::memory_order_relaxed);
+
+                                continue;
+                            }
+
+                            // Toggle the Visual Debugger with F8.
+                            // Consume this key event so the regular UI
+                            // does not also process it.
+                            if (debugger_initialized &&
+                                event.type == SDL_EVENT_KEY_DOWN &&
+                                event.key.key == SDLK_F8 &&
+                                !event.key.repeat)
+                            {
+                                const bool make_visible =
+                                    !Rml::Debugger::IsVisible();
+
+                                Rml::Debugger::SetVisible(make_visible);
+
+                                SDL_LogInfo(
+                                    SDL_LOG_CATEGORY_APPLICATION,
+                                    "Ultron: Visual Debugger %s.",
+                                    make_visible ? "shown" : "hidden");
 
                                 continue;
                             }
@@ -1704,6 +1759,8 @@ int main(int argc, char** argv)
                     g_context = nullptr;
 
                     // The click listener is still alive at this point.
+                    // Rml::Shutdown() automatically releases the
+                    // Visual Debugger plugin.
                     Rml::RemoveContext("main");
                     Rml::Shutdown();
                 }
