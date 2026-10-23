@@ -1,10 +1,17 @@
-
 cmake_minimum_required(VERSION 3.16)
 
 project(
     Ultron
     LANGUAGES C CXX
 )
+
+# ============================================================
+# Thread dependency
+# Must be available before configuring dependencies that may
+# refer to the imported Threads::Threads target.
+# ============================================================
+
+find_package(Threads REQUIRED)
 
 # ============================================================
 # C++20
@@ -137,19 +144,12 @@ set(RMLUI_LOTTIE_PLUGIN OFF CACHE BOOL "" FORCE)
 set(RMLUI_TRACY_PROFILING OFF CACHE BOOL "" FORCE)
 set(RMLUI_COMPILER_OPTIONS OFF CACHE BOOL "" FORCE)
 
-# Enable SVG support; use LunaSVG as its rendering dependency.
+# Enable the RmlUi SVG plugin.
+
 set(RMLUI_SVG_PLUGIN ON CACHE BOOL "" FORCE)
 
 # ============================================================
-# FIX: Find the Android LunaSVG and PlutoVG build packages
-# BEFORE adding RmlUi.
-#
-# The workflow builds LunaSVG in:
-# RmlUi/Dependencies/lunasvg/build
-#
-# Expected package files:
-#   build/lunasvgConfig.cmake
-#   build/plutovg/plutovgConfig.cmake
+# LunaSVG and PlutoVG package discovery
 # ============================================================
 
 set(
@@ -162,45 +162,39 @@ set(
     "${ULTRON_LUNASVG_BUILD_DIR}/plutovg"
 )
 
-# Fail with a clear message if the dependency build step did
-# not generate the expected package configuration files.
+# The Android workflow must build these packages first.
 
 if(NOT EXISTS "${ULTRON_LUNASVG_BUILD_DIR}/lunasvgConfig.cmake")
     message(FATAL_ERROR
-        "LunaSVG CMake package is missing: "
-        "${ULTRON_LUNASVG_BUILD_DIR}/lunasvgConfig.cmake. "
-        "Build LunaSVG before configuring Ultron."
+        "LunaSVG package configuration is missing: "
+        "${ULTRON_LUNASVG_BUILD_DIR}/lunasvgConfig.cmake"
     )
 endif()
 
 if(NOT EXISTS "${ULTRON_PLUTOVG_BUILD_DIR}/plutovgConfig.cmake")
     message(FATAL_ERROR
-        "PlutoVG CMake package is missing: "
-        "${ULTRON_PLUTOVG_BUILD_DIR}/plutovgConfig.cmake. "
-        "Check the LunaSVG/PlutoVG Android build step."
+        "PlutoVG package configuration is missing: "
+        "${ULTRON_PLUTOVG_BUILD_DIR}/plutovgConfig.cmake"
     )
 endif()
 
-# Point CMake directly at the generated package directories.
-# FORCE prevents stale paths in the Gradle CMake cache.
-
+# Tell CMake where the generated build-tree packages live.
 set(
     plutovg_DIR
     "${ULTRON_PLUTOVG_BUILD_DIR}"
-    CACHE PATH "PlutoVG build-tree package directory" FORCE
+    CACHE PATH "PlutoVG package directory" FORCE
 )
 
 set(
     lunasvg_DIR
     "${ULTRON_LUNASVG_BUILD_DIR}"
-    CACHE PATH "LunaSVG build-tree package directory" FORCE
+    CACHE PATH "LunaSVG package directory" FORCE
 )
 
-# Load PlutoVG first because LunaSVG's package config imports it.
+# PlutoVG first because LunaSVG's config imports its dependency.
 find_package(plutovg CONFIG REQUIRED)
 find_package(lunasvg CONFIG REQUIRED)
 
-# Ensure the required imported targets really exist.
 if(NOT TARGET plutovg::plutovg)
     message(FATAL_ERROR
         "PlutoVG was found, but target plutovg::plutovg is missing."
@@ -215,6 +209,7 @@ endif()
 
 message(STATUS "Ultron: PlutoVG package found")
 message(STATUS "Ultron: LunaSVG package found")
+message(STATUS "Ultron: Threads package found")
 
 # ============================================================
 # RmlUi
@@ -273,6 +268,8 @@ target_link_libraries(
     RmlUi::Debugger
     SDL3::SDL3-shared
 
+    Threads::Threads
+
     GLESv3
     android
     log
@@ -292,6 +289,7 @@ message(STATUS "Renderer     : OpenGL ES 3.2")
 message(STATUS "SVG plugin   : ON")
 message(STATUS "LunaSVG      : ${lunasvg_DIR}")
 message(STATUS "PlutoVG      : ${plutovg_DIR}")
+message(STATUS "Threads      : enabled")
 message(STATUS "Debugger     : linked")
 message(STATUS "Lua bindings : OFF")
 message(STATUS "Lottie       : OFF")
