@@ -1,0 +1,50 @@
+<rml>
+<head>
+    <title>Cute Square Ring</title>
+
+    <style>
+        body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            background-color: #20242b;
+
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .square-ring {
+            width: 150px;
+            height: 150px;
+
+            border-width: 8px;
+            border-color: #ff7ac8;
+            border-radius: 28px;
+
+            background-color: transparent;
+
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .inner-ring {
+            width: 76px;
+            height: 76px;
+
+            border-width: 5px;
+            border-color: #7dd3fc;
+            border-radius: 17px;
+
+            background-color: transparent;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="square-ring">
+        <div class="inner-ring"></div>
+    </div>
+</body>
+</rml>
