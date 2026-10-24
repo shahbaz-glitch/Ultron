@@ -1,73 +1,104 @@
-
 <rml>
 <head>
-    <title>RmlUi SVG Gradient Circle Test</title>
+    <title>JARVIS - Outer Ring</title>
 
     <style>
         body {
+            margin: 0px;
             width: 100%;
             height: 100%;
-            margin: 0;
-            padding: 0;
-            background-color: #20242b;
-        }
 
-        .test-container {
-            width: 100%;
-            height: 100%;
+            background-color: #020608;
+
             display: flex;
-            align-items: center;
             justify-content: center;
-        }
+            align-items: center;
 
-        .test-svg {
-            width: 220px;
-            height: 220px;
+            overflow: hidden;
         }
     </style>
 </head>
 
 <body>
-    <div class="test-container">
-        <svg
-            class="test-svg"
-            width="220"
-            height="220"
-            viewBox="0 0 200 200"
-            xmlns="http://www.w3.org/2000/svg"
-        >
-            <defs>
-                <linearGradient
-                    id="circleGradient"
-                    x1="0%"
-                    y1="0%"
-                    x2="100%"
-                    y2="100%"
-                >
-                    <stop
-                        offset="0%"
-                        stop-color="#8BFFFF"
-                    />
-                    <stop
-                        offset="45%"
-                        stop-color="#2878FF"
-                    />
-                    <stop
-                        offset="100%"
-                        stop-color="#10105C"
-                    />
-                </linearGradient>
-            </defs>
 
-            <circle
-                cx="100"
-                cy="100"
-                r="70"
-                fill="url(#circleGradient)"
-                stroke="#D8FBFF"
-                stroke-width="3"
-            />
-        </svg>
-    </div>
+    <svg
+        width="600"
+        height="600"
+        viewBox="0 0 600 600"
+        xmlns="http://www.w3.org/2000/svg">
+
+        <defs>
+            <radialGradient
+                id="ambient-cyan"
+                cx="50%"
+                cy="50%"
+                r="45%"
+                gradientUnits="userSpaceOnUse">
+
+                <stop
+                    offset="0%"
+                    stop-color="#020608"
+                    stop-opacity="0"/>
+
+                <stop
+                    offset="76%"
+                    stop-color="#020608"
+                    stop-opacity="0"/>
+
+                <stop
+                    offset="80%"
+                    stop-color="#00DFFF"
+                    stop-opacity="0.015"/>
+
+                <stop
+                    offset="83%"
+                    stop-color="#00DFFF"
+                    stop-opacity="0.06"/>
+
+                <stop
+                    offset="86%"
+                    stop-color="#00DFFF"
+                    stop-opacity="0.19"/>
+
+                <stop
+                    offset="88%"
+                    stop-color="#00DFFF"
+                    stop-opacity="0.25"/>
+
+                <stop
+                    offset="91%"
+                    stop-color="#00DFFF"
+                    stop-opacity="0.13"/>
+
+                <stop
+                    offset="95%"
+                    stop-color="#00DFFF"
+                    stop-opacity="0.035"/>
+
+                <stop
+                    offset="100%"
+                    stop-color="#00DFFF"
+                    stop-opacity="0"/>
+            </radialGradient>
+        </defs>
+
+        <!-- Soft, diffuse cyan-blue ambient light -->
+        <circle
+            cx="300"
+            cy="300"
+            r="270"
+            fill="url(#ambient-cyan)"/>
+
+        <!-- Main thin ring -->
+        <circle
+            cx="300"
+            cy="300"
+            r="235"
+            fill="none"
+            stroke="#EAFBFF"
+            stroke-width="14"/>
+
+    </svg>
+
 </body>
 </rml>
