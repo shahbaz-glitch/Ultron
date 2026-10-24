@@ -3,10 +3,6 @@
     <title>J.A.R.V.I.S. First Outer Ring</title>
 
     <style>
-        /*
-         * Transparent document.
-         * Center the ring inside the RmlUi context.
-         */
         rml,
         body {
             width: 100%;
@@ -21,10 +17,7 @@
             overflow: hidden;
         }
 
-        /*
-         * Ring uses 88% of the shorter viewport dimension.
-         * No maximum-size cap.
-         */
+        /* Ring size — keep this as it is */
         #hud-container {
             position: relative;
             width: 88vw;
@@ -44,66 +37,71 @@
         }
 
         /*
-         * Soft cyan-blue glow around the ring.
-         * Keep the original ring geometry unchanged.
+         * Apply the cyan-blue glow to the complete SVG output.
+         * RmlUi supports #RRGGBBAA colour notation.
          */
+        #ring-glow {
+            width: 100%;
+            height: 100%;
+            flex-shrink: 0;
+
+            filter:
+                drop-shadow(#00bfffbf 0px 0px 3.2px)
+                drop-shadow(#00a6ff73 0px 0px 7px);
+        }
+
         #jarvis-ring {
             width: 100%;
             height: 100%;
-            filter:
-                drop-shadow(
-                    rgba(0, 191, 255, 191)
-                    0px 0px 3.2px
-                )
-                drop-shadow(
-                    rgba(0, 166, 255, 115)
-                    0px 0px 7px
-                );
         }
     </style>
 </head>
 
 <body>
     <div id="hud-container">
-        <svg
-            id="jarvis-ring"
-            viewBox="0 0 600 600"
-            xmlns="http://www.w3.org/2000/svg">
 
-            <g class="outer-ring-group">
+        <div id="ring-glow">
+            <svg
+                id="jarvis-ring"
+                viewBox="0 0 600 600"
+                xmlns="http://www.w3.org/2000/svg">
 
-                <!-- Original outer cyan glow layer -->
-                <circle
-                    cx="300"
-                    cy="300"
-                    r="270"
-                    fill="none"
-                    stroke="#00d2ff"
-                    stroke-width="14"
-                />
+                <g class="outer-ring-group">
 
-                <!-- Cyan rim -->
-                <circle
-                    cx="300"
-                    cy="300"
-                    r="270"
-                    fill="none"
-                    stroke="#6be6ff"
-                    stroke-width="16"
-                />
+                    <!-- Original outer cyan layer -->
+                    <circle
+                        cx="300"
+                        cy="300"
+                        r="270"
+                        fill="none"
+                        stroke="#00d2ff"
+                        stroke-width="14"
+                    />
 
-                <!-- Sharp white ring -->
-                <circle
-                    cx="300"
-                    cy="300"
-                    r="270"
-                    fill="none"
-                    stroke="#ffffff"
-                    stroke-width="16"
-                />
+                    <!-- Original cyan rim -->
+                    <circle
+                        cx="300"
+                        cy="300"
+                        r="270"
+                        fill="none"
+                        stroke="#6be6ff"
+                        stroke-width="16"
+                    />
 
-            </g>
-        </svg>
+                    <!-- Original sharp white ring -->
+                    <circle
+                        cx="300"
+                        cy="300"
+                        r="270"
+                        fill="none"
+                        stroke="#ffffff"
+                        stroke-width="16"
+                    />
+
+                </g>
+            </svg>
+        </div>
+
     </div>
 </body>
 </rml>
