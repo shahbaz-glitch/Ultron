@@ -1,85 +1,106 @@
 <rml>
-    <head>
-        <title>JARVIS Outer Ring</title>
+<head>
+    <title>J.A.R.V.I.S. First Outer Ring</title>
 
-        <style>
-            #outer-ring {
-                display: block;
-                width: 600px;
-                height: 600px;
+    <style>
+        /*
+         * Transparent document.
+         * Center the ring inside the RmlUi context.
+         */
+        rml,
+        body {
+            width: 100%;
+            height: 100%;
+            margin: 0px;
+        }
+
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+        }
+
+        /*
+         * Match the original min(88vw, 88vh) sizing.
+         * The landscape rule uses the shorter viewport dimension.
+         */
+        #hud-container {
+            position: relative;
+            width: 88vw;
+            height: 88vw;
+            max-width: 600px;
+            max-height: 600px;
+            flex-shrink: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: visible;
+        }
+
+        @media (orientation: landscape) {
+            #hud-container {
+                width: 88vh;
+                height: 88vh;
             }
-        </style>
-    </head>
+        }
 
-    <body>
+        /*
+         * RmlUi-native glow.
+         * The two shadows approximate the original
+         * 3.2px and 7px cyan glow layers.
+         */
+        #jarvis-ring {
+            width: 100%;
+            height: 100%;
+            filter:
+                drop-shadow(rgba(0, 191, 255, 191) 0px 0px 3.2px)
+                drop-shadow(rgba(0, 166, 255, 115) 0px 0px 7px);
+        }
+    </style>
+</head>
+
+<body>
+    <div id="hud-container">
         <svg
-            id="outer-ring"
-            width="600"
-            height="600"
+            id="jarvis-ring"
             viewBox="0 0 600 600"
             xmlns="http://www.w3.org/2000/svg">
 
-            <defs>
-                <radialGradient
-                    id="ambient-cyan"
+            <!-- Original outer glow layer; its blur is supplied by RCSS -->
+            <g class="outer-ring-group">
+
+                <circle
                     cx="300"
                     cy="300"
                     r="270"
-                    gradientUnits="userSpaceOnUse">
+                    fill="none"
+                    stroke="#00d2ff"
+                    stroke-width="14"
+                />
 
-                    <stop offset="0%"
-                          stop-color="#020608"
-                          stop-opacity="0"/>
+                <!-- Cyan rim -->
+                <circle
+                    cx="300"
+                    cy="300"
+                    r="270"
+                    fill="none"
+                    stroke="#6be6ff"
+                    stroke-width="16"
+                />
 
-                    <stop offset="76%"
-                          stop-color="#020608"
-                          stop-opacity="0"/>
+                <!-- Sharp white ring -->
+                <circle
+                    cx="300"
+                    cy="300"
+                    r="270"
+                    fill="none"
+                    stroke="#ffffff"
+                    stroke-width="16"
+                />
 
-                    <stop offset="80%"
-                          stop-color="#00DFFF"
-                          stop-opacity="0.015"/>
-
-                    <stop offset="83%"
-                          stop-color="#00DFFF"
-                          stop-opacity="0.06"/>
-
-                    <stop offset="86%"
-                          stop-color="#00DFFF"
-                          stop-opacity="0.19"/>
-
-                    <stop offset="88%"
-                          stop-color="#00DFFF"
-                          stop-opacity="0.25"/>
-
-                    <stop offset="91%"
-                          stop-color="#00DFFF"
-                          stop-opacity="0.13"/>
-
-                    <stop offset="95%"
-                          stop-color="#00DFFF"
-                          stop-opacity="0.035"/>
-
-                    <stop offset="100%"
-                          stop-color="#00DFFF"
-                          stop-opacity="0"/>
-                </radialGradient>
-            </defs>
-
-            <!-- Soft cyan ambient glow -->
-            <circle
-                cx="300"
-                cy="300"
-                r="270"
-                fill="url(#ambient-cyan)"/>
-
-            <!-- Main thin ring -->
-            <circle
-                cx="300"
-                cy="300"
-                r="235"
-                fill="none"
-                stroke="#EAFBFF"
-                stroke-width="14"/>
+            </g>
         </svg>
-    </body>
+    </div>
+</body>
 </rml>
