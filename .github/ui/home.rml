@@ -61,10 +61,10 @@
                 viewBox="0 0 600 600"
                 xmlns="http://www.w3.org/2000/svg">
 
-                <!-- FIRST RING — FOUR SEGMENTS, 6-UNIT GAPS -->
+                <!-- FIRST RING -->
                 <g class="outer-ring-group">
 
-                    <!-- Original outer cyan layer -->
+                    <!-- Continuous cyan base — fills the four gaps -->
                     <circle
                         cx="300"
                         cy="300"
@@ -72,30 +72,73 @@
                         fill="none"
                         stroke="#00d2ff"
                         stroke-width="14"
-                        stroke-dasharray="418.115 6"
                     />
 
-                    <!-- Original cyan rim -->
-                    <circle
-                        cx="300"
-                        cy="300"
-                        r="270"
+                    <!-- Cyan rim — four equal arcs, 6-unit gaps -->
+                    <g
                         fill="none"
                         stroke="#6be6ff"
                         stroke-width="16"
-                        stroke-dasharray="418.115 6"
-                    />
+                        stroke-linecap="butt">
 
-                    <!-- Original sharp white ring -->
-                    <circle
-                        cx="300"
-                        cy="300"
-                        r="270"
+                        <!-- Segment 1 -->
+                        <path
+                            d="M 569.9833 302.9999
+                               A 270 270 0 0 1 302.9999 569.9833"
+                        />
+
+                        <!-- Segment 2 -->
+                        <path
+                            d="M 297.0001 569.9833
+                               A 270 270 0 0 1 30.0167 302.9999"
+                        />
+
+                        <!-- Segment 3 -->
+                        <path
+                            d="M 30.0167 297.0001
+                               A 270 270 0 0 1 297.0001 30.0167"
+                        />
+
+                        <!-- Segment 4 -->
+                        <path
+                            d="M 302.9999 30.0167
+                               A 270 270 0 0 1 569.9833 297.0001"
+                        />
+
+                    </g>
+
+                    <!-- White ring — same four cuts -->
+                    <g
                         fill="none"
                         stroke="#ffffff"
                         stroke-width="16"
-                        stroke-dasharray="418.115 6"
-                    />
+                        stroke-linecap="butt">
+
+                        <!-- Segment 1 -->
+                        <path
+                            d="M 569.9833 302.9999
+                               A 270 270 0 0 1 302.9999 569.9833"
+                        />
+
+                        <!-- Segment 2 -->
+                        <path
+                            d="M 297.0001 569.9833
+                               A 270 270 0 0 1 30.0167 302.9999"
+                        />
+
+                        <!-- Segment 3 -->
+                        <path
+                            d="M 30.0167 297.0001
+                               A 270 270 0 0 1 297.0001 30.0167"
+                        />
+
+                        <!-- Segment 4 -->
+                        <path
+                            d="M 302.9999 30.0167
+                               A 270 270 0 0 1 569.9833 297.0001"
+                        />
+
+                    </g>
 
                 </g>
 
