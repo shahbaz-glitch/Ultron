@@ -1,3 +1,4 @@
+
 <rml>
 <head>
     <title>J.A.R.V.I.S. First Outer Ring</title>
@@ -17,7 +18,6 @@
             overflow: hidden;
         }
 
-        /* Ring size — keep this as it is */
         #hud-container {
             position: relative;
             width: 88vw;
@@ -36,10 +36,6 @@
             }
         }
 
-        /*
-         * Apply the cyan-blue glow to the complete SVG output.
-         * RmlUi supports #RRGGBBAA colour notation.
-         */
         #ring-glow {
             width: 100%;
             height: 100%;
@@ -59,7 +55,6 @@
 
 <body>
     <div id="hud-container">
-
         <div id="ring-glow">
             <svg
                 id="jarvis-ring"
@@ -67,8 +62,6 @@
                 xmlns="http://www.w3.org/2000/svg">
 
                 <g class="outer-ring-group">
-
-                    <!-- Original outer cyan layer -->
                     <circle
                         cx="300"
                         cy="300"
@@ -78,7 +71,6 @@
                         stroke-width="14"
                     />
 
-                    <!-- Original cyan rim -->
                     <circle
                         cx="300"
                         cy="300"
@@ -88,7 +80,6 @@
                         stroke-width="16"
                     />
 
-                    <!-- Original sharp white ring -->
                     <circle
                         cx="300"
                         cy="300"
@@ -97,11 +88,9 @@
                         stroke="#ffffff"
                         stroke-width="16"
                     />
-
                 </g>
             </svg>
         </div>
-
     </div>
 </body>
 </rml>
