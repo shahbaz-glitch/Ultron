@@ -96,9 +96,30 @@
 
                 </g>
 
-                <!-- SECOND RING — CLEAN, NO REDUNDANT CIRCLES -->
+                <!-- SECOND RING — SAME DESIGN, 18px WHITE STROKE -->
                 <g class="second-ring-group">
 
+                    <!-- Inner outer cyan layer -->
+                    <circle
+                        cx="300"
+                        cy="300"
+                        r="244"
+                        fill="none"
+                        stroke="#00d2ff"
+                        stroke-width="14"
+                    />
+
+                    <!-- Inner cyan rim -->
+                    <circle
+                        cx="300"
+                        cy="300"
+                        r="244"
+                        fill="none"
+                        stroke="#6be6ff"
+                        stroke-width="16"
+                    />
+
+                    <!-- Inner sharp white ring — 18px -->
                     <circle
                         cx="300"
                         cy="300"
