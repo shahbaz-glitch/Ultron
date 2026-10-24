@@ -22,15 +22,13 @@
         }
 
         /*
-         * Match the original min(88vw, 88vh) sizing.
-         * The landscape rule uses the shorter viewport dimension.
+         * Ring uses 88% of the shorter viewport dimension.
+         * No maximum-size cap.
          */
         #hud-container {
             position: relative;
             width: 88vw;
             height: 88vw;
-            max-width: 600px;
-            max-height: 600px;
             flex-shrink: 0;
             display: flex;
             justify-content: center;
@@ -46,16 +44,21 @@
         }
 
         /*
-         * RmlUi-native glow.
-         * The two shadows approximate the original
-         * 3.2px and 7px cyan glow layers.
+         * Soft cyan-blue glow around the ring.
+         * Keep the original ring geometry unchanged.
          */
         #jarvis-ring {
             width: 100%;
             height: 100%;
             filter:
-                drop-shadow(rgba(0, 191, 255, 191) 0px 0px 3.2px)
-                drop-shadow(rgba(0, 166, 255, 115) 0px 0px 7px);
+                drop-shadow(
+                    rgba(0, 191, 255, 191)
+                    0px 0px 3.2px
+                )
+                drop-shadow(
+                    rgba(0, 166, 255, 115)
+                    0px 0px 7px
+                );
         }
     </style>
 </head>
@@ -67,9 +70,9 @@
             viewBox="0 0 600 600"
             xmlns="http://www.w3.org/2000/svg">
 
-            <!-- Original outer glow layer; its blur is supplied by RCSS -->
             <g class="outer-ring-group">
 
+                <!-- Original outer cyan glow layer -->
                 <circle
                     cx="300"
                     cy="300"
