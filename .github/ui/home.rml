@@ -3,12 +3,6 @@
     <title>J.A.R.V.I.S. First Outer Ring</title>
 
     <style>
-        @font-face {
-            font-family: "JarvisFont";
-            src: "fonts/Orbitron-Medium.ttf";
-            font-weight: 500;
-        }
-
         rml,
         body {
             width: 100%;
@@ -70,29 +64,20 @@
             height: 100%;
         }
 
-        /* ADDED — J.A.R.V.I.S. CENTER TEXT ONLY */
-        #jarvis-title-layer {
+        /* ADDED — CENTER J.A.R.V.I.S. VECTOR WORDMARK */
+        #jarvis-wordmark {
             position: absolute;
             top: 0px;
             left: 0px;
             width: 100%;
             height: 100%;
-            display: flex;
-            justify-content: center;
-            align-items: center;
             z-index: 10;
         }
 
-        #jarvis-title {
-            margin: 0px;
-            padding: 0px;
-            font-family: "JarvisFont";
-            font-size: 38px;
-            font-weight: 500;
-            letter-spacing: 1.25px;
-            line-height: 1;
-            text-align: center;
-            color: #b9f2fc;
+        #jarvis-wordmark-svg {
+            display: block;
+            width: 100%;
+            height: 100%;
         }
     </style>
 </head>
@@ -510,9 +495,105 @@
             </svg>
         </div>
 
-        <!-- ADDED — RML TEXT ABOVE THE EXISTING SVG RINGS -->
-        <div id="jarvis-title-layer">
-            <div id="jarvis-title">J.A.R.V.I.S.</div>
+        <!-- ADDED — J.A.R.V.I.S. VECTOR LETTERING -->
+        <div id="jarvis-wordmark">
+            <svg
+                id="jarvis-wordmark-svg"
+                viewBox="0 0 600 600"
+                xmlns="http://www.w3.org/2000/svg">
+
+                <!-- Subtle cyan depth layer -->
+                <g
+                    fill="none"
+                    stroke="#087f9d"
+                    stroke-width="5.5"
+                    stroke-linecap="square"
+                    stroke-linejoin="round"
+                    transform="translate(1.5 2)">
+
+                    <!-- J -->
+                    <path d="M 187 284 H 210 V 306
+                             Q 210 320 198 320
+                             Q 188 320 185 310"/>
+
+                    <!-- A -->
+                    <path d="M 224 320 L 237 285 L 250 320
+                             M 229 307 H 245"/>
+
+                    <!-- R -->
+                    <path d="M 265 320 V 285 H 280
+                             Q 293 285 293 296
+                             Q 293 306 280 306 H 265
+                             M 280 306 L 295 320"/>
+
+                    <!-- V -->
+                    <path d="M 312 285 L 326 320 L 340 285"/>
+
+                    <!-- I -->
+                    <path d="M 357 285 V 320"/>
+
+                    <!-- S -->
+                    <path d="M 405 289
+                             Q 399 284 391 285
+                             Q 379 285 379 294
+                             Q 379 302 392 306
+                             Q 405 309 405 314
+                             Q 405 320 392 320
+                             Q 383 320 378 315"/>
+
+                </g>
+
+                <!-- Main icy-cyan strokes -->
+                <g
+                    fill="none"
+                    stroke="#c7f7ff"
+                    stroke-width="4.5"
+                    stroke-linecap="square"
+                    stroke-linejoin="round">
+
+                    <!-- J -->
+                    <path d="M 187 282 H 210 V 304
+                             Q 210 318 198 318
+                             Q 188 318 185 308"/>
+
+                    <!-- A -->
+                    <path d="M 224 318 L 237 283 L 250 318
+                             M 229 305 H 245"/>
+
+                    <!-- R -->
+                    <path d="M 265 318 V 283 H 280
+                             Q 293 283 293 294
+                             Q 293 304 280 304 H 265
+                             M 280 304 L 295 318"/>
+
+                    <!-- V -->
+                    <path d="M 312 283 L 326 318 L 340 283"/>
+
+                    <!-- I -->
+                    <path d="M 357 283 V 318"/>
+
+                    <!-- S -->
+                    <path d="M 405 287
+                             Q 399 282 391 283
+                             Q 379 283 379 292
+                             Q 379 300 392 304
+                             Q 405 307 405 312
+                             Q 405 318 392 318
+                             Q 383 318 378 313"/>
+
+                </g>
+
+                <!-- Letter separators: J.A.R.V.I.S. -->
+                <g fill="#c7f7ff">
+                    <circle cx="217" cy="318" r="2.5"/>
+                    <circle cx="258" cy="318" r="2.5"/>
+                    <circle cx="303" cy="318" r="2.5"/>
+                    <circle cx="348" cy="318" r="2.5"/>
+                    <circle cx="366" cy="318" r="2.5"/>
+                    <circle cx="414" cy="318" r="2.5"/>
+                </g>
+
+            </svg>
         </div>
 
     </div>
