@@ -3,6 +3,12 @@
     <title>J.A.R.V.I.S. First Outer Ring</title>
 
     <style>
+        @font-face {
+            font-family: "JarvisFont";
+            src: "fonts/Orbitron-Medium.ttf";
+            font-weight: 500;
+        }
+
         rml,
         body {
             width: 100%;
@@ -62,6 +68,31 @@
         #jarvis-detail-rings {
             width: 100%;
             height: 100%;
+        }
+
+        /* ADDED — J.A.R.V.I.S. CENTER TEXT ONLY */
+        #jarvis-title-layer {
+            position: absolute;
+            top: 0px;
+            left: 0px;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+        }
+
+        #jarvis-title {
+            margin: 0px;
+            padding: 0px;
+            font-family: "JarvisFont";
+            font-size: 38px;
+            font-weight: 500;
+            letter-spacing: 1.25px;
+            line-height: 1;
+            text-align: center;
+            color: #b9f2fc;
         }
     </style>
 </head>
@@ -184,29 +215,12 @@
             </svg>
         </div>
 
-        <!-- NO-GLOW LAYER: RINGS 3–6 AND CENTER TITLE -->
+        <!-- NO-GLOW LAYER: THIRD, FOURTH AND FIFTH RINGS -->
         <div id="detail-rings">
             <svg
                 id="jarvis-detail-rings"
                 viewBox="0 0 600 600"
                 xmlns="http://www.w3.org/2000/svg">
-
-                <!-- ADDED: SMOOTH, UNIFIED CYAN-WHITE TEXT COLOUR -->
-                <defs>
-                    <linearGradient
-                        id="jarvis-text-cyan"
-                        x1="0"
-                        y1="0"
-                        x2="0.25"
-                        y2="1">
-
-                        <stop offset="0%" stop-color="#c8f6ff"/>
-                        <stop offset="35%" stop-color="#b9f2fc"/>
-                        <stop offset="70%" stop-color="#a9edf9"/>
-                        <stop offset="100%" stop-color="#9ee8f7"/>
-
-                    </linearGradient>
-                </defs>
 
                 <!-- THIRD RING — 12 SVG UNITS FROM SECOND RING -->
                 <g
@@ -493,35 +507,12 @@
                     stroke-linecap="round"
                 />
 
-                <!-- J.A.R.V.I.S. — ADDED CENTER TITLE ONLY -->
-                <!-- Subtle cyan depth; no blur or shadow filter -->
-                <g
-                    class="jarvis-center-title"
-                    text-anchor="middle"
-                    font-family="Arial, Helvetica, sans-serif"
-                    font-weight="700"
-                    font-size="39"
-                    letter-spacing="1.25">
-
-                    <!-- Subtle 3D depth -->
-                    <text
-                        x="300"
-                        y="322"
-                        fill="#087f9d"
-                        opacity="0.65">J.A.R.V.I.S.</text>
-
-                    <!-- Clean, sharp, smoothly blended cyan-white face -->
-                    <text
-                        x="300"
-                        y="320"
-                        fill="url(#jarvis-text-cyan)"
-                        stroke="#aeeffc"
-                        stroke-width="0.25"
-                        paint-order="stroke">J.A.R.V.I.S.</text>
-
-                </g>
-
             </svg>
+        </div>
+
+        <!-- ADDED — RML TEXT ABOVE THE EXISTING SVG RINGS -->
+        <div id="jarvis-title-layer">
+            <div id="jarvis-title">J.A.R.V.I.S.</div>
         </div>
 
     </div>
