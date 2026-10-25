@@ -225,6 +225,93 @@
 
                 </g>
 
+                <!-- FOURTH RING — LATEST DESIGN -->
+                <!-- Thin cyan segments -->
+                <g
+                    class="fourth-ring-thin-segments"
+                    fill="none"
+                    stroke="#00dfff"
+                    stroke-width="2.5"
+                    stroke-linecap="butt">
+
+                    <!-- Segment 1 -->
+                    <path
+                        d="M 483.9301 399.7760
+                           A 209.25 209.25 0 0 1 294.4435 509.1762"
+                    />
+
+                    <!-- Segment 2 -->
+                    <path
+                        d="M 121.6263 409.4002
+                           A 209.25 209.25 0 0 1 121.6263 190.5998"
+                    />
+
+                    <!-- Segment 3 -->
+                    <path
+                        d="M 294.4435 90.8238
+                           A 209.25 209.25 0 0 1 483.9301 200.2240"
+                    />
+
+                </g>
+
+                <!-- FOURTH RING — ADDED ARCS -->
+                <!-- Thin portion: 4.5 SVG units -->
+                <g
+                    class="fourth-ring-added-arcs"
+                    fill="none"
+                    stroke="#00cfff"
+                    stroke-width="4.5"
+                    stroke-linecap="butt">
+
+                    <!-- Added arc 1 -->
+                    <path
+                        d="M 487.5759 207.2592
+                           A 209.25 209.25 0 0 1 487.5759 392.7408"
+                    />
+
+                    <!-- Added arc 2 -->
+                    <path
+                        d="M 286.5280 508.8158
+                           A 209.25 209.25 0 0 1 125.8962 416.0751"
+                    />
+
+                    <!-- Added arc 3 -->
+                    <path
+                        d="M 125.8962 183.9249
+                           A 209.25 209.25 0 0 1 286.5280 91.1842"
+                    />
+
+                </g>
+
+                <!-- FOURTH RING — THICK PORTIONS -->
+                <!-- Thickness: 9 SVG units -->
+                <g
+                    class="fourth-ring-thick-portions"
+                    fill="none"
+                    stroke="#00cfff"
+                    stroke-width="9"
+                    stroke-linecap="butt">
+
+                    <!-- Thick portion 1 -->
+                    <path
+                        d="M 509.25 300
+                           A 209.25 209.25 0 0 1 487.5759 392.7408"
+                    />
+
+                    <!-- Thick portion 2 -->
+                    <path
+                        d="M 286.5280 508.8158
+                           A 209.25 209.25 0 0 1 195.3750 481.2158"
+                    />
+
+                    <!-- Thick portion 3 -->
+                    <path
+                        d="M 125.8962 183.9249
+                           A 209.25 209.25 0 0 1 195.3750 118.7842"
+                    />
+
+                </g>
+
             </svg>
         </div>
 
