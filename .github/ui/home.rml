@@ -1,3 +1,4 @@
+
 <rml>
 <head>
     <title>J.A.R.V.I.S. First Outer Ring</title>
@@ -174,6 +175,53 @@
                         stroke="#ffffff"
                         stroke-width="18"
                     />
+
+                </g>
+
+                <!-- THIRD RING — 8 SVG UNITS FROM SECOND RING -->
+                <g
+                    class="third-ring-group"
+                    fill="none"
+                    stroke="#00dfff"
+                    stroke-width="2.5"
+                    stroke-linecap="butt">
+
+                    <!-- Segment 1 -->
+                    <path
+                        d="M 525.6830 305.5000
+                           A 225.75 225.75 0 0 1 191.9216 498.1972"
+                    />
+
+                    <!-- Segment 2 -->
+                    <path
+                        d="M 182.3954 492.6972
+                           A 225.75 225.75 0 0 1 182.3954 107.3028"
+                    />
+
+                    <!-- Segment 3 -->
+                    <path
+                        d="M 191.9216 101.8028
+                           A 225.75 225.75 0 0 1 525.6830 294.5000"
+                    />
+
+                </g>
+
+                <!-- THIRD RING — WHITE ENDPOINT DOT PAIRS -->
+                <g
+                    class="third-ring-dots"
+                    fill="#ffffff">
+
+                    <!-- Pair 1 — right side -->
+                    <circle cx="525.6830" cy="305.5000" r="4.5"/>
+                    <circle cx="525.6830" cy="294.5000" r="4.5"/>
+
+                    <!-- Pair 2 — lower-left side -->
+                    <circle cx="191.9216" cy="498.1972" r="4.5"/>
+                    <circle cx="182.3954" cy="492.6972" r="4.5"/>
+
+                    <!-- Pair 3 — upper-left side -->
+                    <circle cx="182.3954" cy="107.3028" r="4.5"/>
+                    <circle cx="191.9216" cy="101.8028" r="4.5"/>
 
                 </g>
 
