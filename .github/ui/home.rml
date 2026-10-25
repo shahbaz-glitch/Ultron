@@ -49,7 +49,7 @@
             filter: drop-shadow(#00BFFF 0px 0px 12px);
         }
 
-        /* SECOND LAYER — no shadow for rings 3 and 4 */
+        /* SECOND LAYER — no shadow for rings 3, 4 and 5 */
         #detail-rings {
             position: absolute;
             top: 0px;
@@ -185,7 +185,7 @@
             </svg>
         </div>
 
-        <!-- NO-GLOW LAYER: THIRD AND FOURTH RINGS -->
+        <!-- NO-GLOW LAYER: THIRD, FOURTH AND FIFTH RINGS -->
         <div id="detail-rings">
             <svg
                 id="jarvis-detail-rings"
@@ -307,6 +307,175 @@
                     />
 
                 </g>
+
+                <!-- FIFTH RING — THREE EQUAL SEGMENTS -->
+                <!-- Radius: 179.5 SVG units -->
+                <!-- Thin cyan stroke: 2.5 SVG units -->
+                <!-- No dots and no added shadow -->
+                <g
+                    class="fifth-ring-group"
+                    fill="none"
+                    stroke="#00dfff"
+                    stroke-width="2.5"
+                    stroke-linecap="butt">
+
+                    <path
+                        d="M 468.6748 361.3926
+                           A 179.5 179.5 0 0 1 268.8301 476.7730"
+                    />
+
+                    <path
+                        d="M 162.4950 415.3804
+                           A 179.5 179.5 0 0 1 162.4950 184.6196"
+                    />
+
+                    <path
+                        d="M 268.8301 123.2270
+                           A 179.5 179.5 0 0 1 468.6748 238.6074"
+                    />
+
+                </g>
+
+                <!-- FIFTH RING — RADIAL TICK BARS -->
+                <g
+                    class="fifth-ring-radial-ticks"
+                    fill="none"
+                    stroke="#00dfff"
+                    stroke-linecap="butt">
+
+                    <!-- TICK CLUSTER 1 -->
+                    <g transform="rotate(0 300 300)">
+
+                        <!-- Regular tick bars -->
+                        <g stroke-width="3.5">
+
+                            <line x1="470" y1="300" x2="480" y2="300"
+                                  transform="rotate(-13.5 300 300)"/>
+
+                            <line x1="470" y1="300" x2="480" y2="300"
+                                  transform="rotate(0 300 300)"/>
+
+                            <line x1="470" y1="300" x2="480" y2="300"
+                                  transform="rotate(13.5 300 300)"/>
+
+                        </g>
+
+                        <!-- Slightly larger tick bars -->
+                        <g stroke-width="3.8">
+
+                            <line x1="469.5" y1="300" x2="481" y2="300"
+                                  transform="rotate(-9 300 300)"/>
+
+                            <line x1="469.5" y1="300" x2="481" y2="300"
+                                  transform="rotate(9 300 300)"/>
+
+                        </g>
+
+                        <!-- Two central, slightly longer bars -->
+                        <g stroke-width="3.5">
+
+                            <line x1="470" y1="300" x2="482" y2="300"
+                                  transform="rotate(-4.5 300 300)"/>
+
+                            <line x1="470" y1="300" x2="482" y2="300"
+                                  transform="rotate(4.5 300 300)"/>
+
+                        </g>
+
+                    </g>
+
+                    <!-- TICK CLUSTER 2 — rotated 120 degrees -->
+                    <g transform="rotate(120 300 300)">
+
+                        <g stroke-width="3.5">
+
+                            <line x1="470" y1="300" x2="480" y2="300"
+                                  transform="rotate(-13.5 300 300)"/>
+
+                            <line x1="470" y1="300" x2="480" y2="300"
+                                  transform="rotate(0 300 300)"/>
+
+                            <line x1="470" y1="300" x2="480" y2="300"
+                                  transform="rotate(13.5 300 300)"/>
+
+                        </g>
+
+                        <g stroke-width="3.8">
+
+                            <line x1="469.5" y1="300" x2="481" y2="300"
+                                  transform="rotate(-9 300 300)"/>
+
+                            <line x1="469.5" y1="300" x2="481" y2="300"
+                                  transform="rotate(9 300 300)"/>
+
+                        </g>
+
+                        <g stroke-width="3.5">
+
+                            <line x1="470" y1="300" x2="482" y2="300"
+                                  transform="rotate(-4.5 300 300)"/>
+
+                            <line x1="470" y1="300" x2="482" y2="300"
+                                  transform="rotate(4.5 300 300)"/>
+
+                        </g>
+
+                    </g>
+
+                    <!-- TICK CLUSTER 3 — rotated 240 degrees -->
+                    <g transform="rotate(240 300 300)">
+
+                        <g stroke-width="3.5">
+
+                            <line x1="470" y1="300" x2="480" y2="300"
+                                  transform="rotate(-13.5 300 300)"/>
+
+                            <line x1="470" y1="300" x2="480" y2="300"
+                                  transform="rotate(0 300 300)"/>
+
+                            <line x1="470" y1="300" x2="480" y2="300"
+                                  transform="rotate(13.5 300 300)"/>
+
+                        </g>
+
+                        <g stroke-width="3.8">
+
+                            <line x1="469.5" y1="300" x2="481" y2="300"
+                                  transform="rotate(-9 300 300)"/>
+
+                            <line x1="469.5" y1="300" x2="481" y2="300"
+                                  transform="rotate(9 300 300)"/>
+
+                        </g>
+
+                        <g stroke-width="3.5">
+
+                            <line x1="470" y1="300" x2="482" y2="300"
+                                  transform="rotate(-4.5 300 300)"/>
+
+                            <line x1="470" y1="300" x2="482" y2="300"
+                                  transform="rotate(4.5 300 300)"/>
+
+                        </g>
+
+                    </g>
+
+                </g>
+
+                <!-- SIXTH RING — COMPLETE DOTTED CIRCLE -->
+                <!-- Only dots; no continuous solid stroke -->
+                <!-- Dot spacing: 16 SVG units -->
+                <circle
+                    class="sixth-ring-dot-circle"
+                    cx="300"
+                    cy="300"
+                    r="156"
+                    fill="none"
+                    stroke="#00dfff"
+                    stroke-width="4"
+                    stroke-dasharray="0.1 16"
+                    stroke-linecap="round"
+                />
 
             </svg>
         </div>
