@@ -17,7 +17,7 @@
             overflow: hidden;
         }
 
-        /* Ring size — unchanged */
+        /* Ring size — preserved */
         #hud-container {
             position: relative;
             width: 88vw;
@@ -36,7 +36,7 @@
             }
         }
 
-        /* FIRST LAYER — glow only for rings 1 and 2 */
+        /* OUTER RING — ANTICLOCKWISE */
         #ring-glow {
             position: absolute;
             top: 0px;
@@ -44,11 +44,41 @@
             width: 100%;
             height: 100%;
             flex-shrink: 0;
-
             filter: drop-shadow(#00BFFF 0px 0px 12px);
         }
 
-        /* SECOND LAYER — no shadow for rings 3, 4 and 5 */
+        #outer-ring-rotation {
+            position: absolute;
+            top: 0px;
+            left: 0px;
+            width: 100%;
+            height: 100%;
+            transform-origin: 50% 50%;
+            animation: 30s linear-in-out infinite outer-anticlockwise;
+        }
+
+        @keyframes outer-anticlockwise {
+            from {
+                transform: rotate(0deg);
+            }
+
+            to {
+                transform: rotate(-360deg);
+            }
+        }
+
+        /* SECOND RING — STATIC, WITH ORIGINAL GLOW */
+        #second-ring-glow {
+            position: absolute;
+            top: 0px;
+            left: 0px;
+            width: 100%;
+            height: 100%;
+            flex-shrink: 0;
+            filter: drop-shadow(#00BFFF 0px 0px 12px);
+        }
+
+        /* DETAIL RINGS AND TICKS — CLOCKWISE */
         #detail-rings {
             position: absolute;
             top: 0px;
@@ -56,15 +86,31 @@
             width: 100%;
             height: 100%;
             flex-shrink: 0;
+            transform-origin: 50% 50%;
+            animation: 24s linear-in-out infinite details-clockwise;
         }
 
-        #jarvis-ring,
-        #jarvis-detail-rings {
+        @keyframes details-clockwise {
+            from {
+                transform: rotate(0deg);
+            }
+
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* SIXTH DOTTED RING — STATIC */
+        #sixth-ring {
+            position: absolute;
+            top: 0px;
+            left: 0px;
             width: 100%;
             height: 100%;
+            flex-shrink: 0;
         }
 
-        /* ADDED — CENTER J.A.R.V.I.S. VECTOR LAYER */
+        /* CENTER J.A.R.V.I.S. — STATIC */
         #jarvis-center {
             position: absolute;
             top: 0px;
@@ -72,9 +118,12 @@
             width: 100%;
             height: 100%;
             flex-shrink: 0;
-            z-index: 3;
         }
 
+        #jarvis-outer-svg,
+        #jarvis-second-svg,
+        #jarvis-detail-rings,
+        #jarvis-sixth-svg,
         #jarvis-center-svg {
             width: 100%;
             height: 100%;
@@ -85,87 +134,96 @@
 <body>
     <div id="hud-container">
 
-        <!-- GLOW LAYER: FIRST AND SECOND RINGS ONLY -->
+        <!-- FIRST RING — ANTICLOCKWISE -->
         <div id="ring-glow">
+            <div id="outer-ring-rotation">
+                <svg
+                    id="jarvis-outer-svg"
+                    viewBox="0 0 600 600"
+                    xmlns="http://www.w3.org/2000/svg">
+
+                    <g class="outer-ring-group">
+
+                        <!-- Continuous cyan base -->
+                        <circle
+                            cx="300"
+                            cy="300"
+                            r="270"
+                            fill="none"
+                            stroke="#00d2ff"
+                            stroke-width="14"
+                        />
+
+                        <!-- Cyan rim — four arcs -->
+                        <g
+                            fill="none"
+                            stroke="#6be6ff"
+                            stroke-width="16"
+                            stroke-linecap="butt">
+
+                            <path
+                                d="M 569.9833 302.9999
+                                   A 270 270 0 0 1 302.9999 569.9833"
+                            />
+
+                            <path
+                                d="M 297.0001 569.9833
+                                   A 270 270 0 0 1 30.0167 302.9999"
+                            />
+
+                            <path
+                                d="M 30.0167 297.0001
+                                   A 270 270 0 0 1 297.0001 30.0167"
+                            />
+
+                            <path
+                                d="M 302.9999 30.0167
+                                   A 270 270 0 0 1 569.9833 297.0001"
+                            />
+
+                        </g>
+
+                        <!-- White ring — same four cuts -->
+                        <g
+                            fill="none"
+                            stroke="#ffffff"
+                            stroke-width="16"
+                            stroke-linecap="butt">
+
+                            <path
+                                d="M 569.9833 302.9999
+                                   A 270 270 0 0 1 302.9999 569.9833"
+                            />
+
+                            <path
+                                d="M 297.0001 569.9833
+                                   A 270 270 0 0 1 30.0167 302.9999"
+                            />
+
+                            <path
+                                d="M 30.0167 297.0001
+                                   A 270 270 0 0 1 297.0001 30.0167"
+                            />
+
+                            <path
+                                d="M 302.9999 30.0167
+                                   A 270 270 0 0 1 569.9833 297.0001"
+                            />
+
+                        </g>
+
+                    </g>
+                </svg>
+            </div>
+        </div>
+
+        <!-- SECOND RING — STATIC -->
+        <div id="second-ring-glow">
             <svg
-                id="jarvis-ring"
+                id="jarvis-second-svg"
                 viewBox="0 0 600 600"
                 xmlns="http://www.w3.org/2000/svg">
 
-                <!-- FIRST RING — UNCHANGED -->
-                <g class="outer-ring-group">
-
-                    <!-- Continuous cyan base -->
-                    <circle
-                        cx="300"
-                        cy="300"
-                        r="270"
-                        fill="none"
-                        stroke="#00d2ff"
-                        stroke-width="14"
-                    />
-
-                    <!-- Cyan rim — four arcs -->
-                    <g
-                        fill="none"
-                        stroke="#6be6ff"
-                        stroke-width="16"
-                        stroke-linecap="butt">
-
-                        <path
-                            d="M 569.9833 302.9999
-                               A 270 270 0 0 1 302.9999 569.9833"
-                        />
-
-                        <path
-                            d="M 297.0001 569.9833
-                               A 270 270 0 0 1 30.0167 302.9999"
-                        />
-
-                        <path
-                            d="M 30.0167 297.0001
-                               A 270 270 0 0 1 297.0001 30.0167"
-                        />
-
-                        <path
-                            d="M 302.9999 30.0167
-                               A 270 270 0 0 1 569.9833 297.0001"
-                        />
-
-                    </g>
-
-                    <!-- White ring — same four cuts -->
-                    <g
-                        fill="none"
-                        stroke="#ffffff"
-                        stroke-width="16"
-                        stroke-linecap="butt">
-
-                        <path
-                            d="M 569.9833 302.9999
-                               A 270 270 0 0 1 302.9999 569.9833"
-                        />
-
-                        <path
-                            d="M 297.0001 569.9833
-                               A 270 270 0 0 1 30.0167 302.9999"
-                        />
-
-                        <path
-                            d="M 30.0167 297.0001
-                               A 270 270 0 0 1 297.0001 30.0167"
-                        />
-
-                        <path
-                            d="M 302.9999 30.0167
-                               A 270 270 0 0 1 569.9833 297.0001"
-                        />
-
-                    </g>
-
-                </g>
-
-                <!-- SECOND RING — UNCHANGED -->
                 <g class="second-ring-group">
 
                     <circle
@@ -196,18 +254,17 @@
                     />
 
                 </g>
-
             </svg>
         </div>
 
-        <!-- NO-GLOW LAYER: THIRD, FOURTH AND FIFTH RINGS -->
+        <!-- THIRD, FOURTH AND FIFTH RINGS — CLOCKWISE -->
         <div id="detail-rings">
             <svg
                 id="jarvis-detail-rings"
                 viewBox="0 0 600 600"
                 xmlns="http://www.w3.org/2000/svg">
 
-                <!-- THIRD RING — 12 SVG UNITS FROM SECOND RING -->
+                <!-- THIRD RING -->
                 <g
                     class="third-ring-group"
                     fill="none"
@@ -233,9 +290,7 @@
                 </g>
 
                 <!-- THIRD RING — WHITE ENDPOINT DOT PAIRS -->
-                <g
-                    class="third-ring-dots"
-                    fill="#ffffff">
+                <g class="third-ring-dots" fill="#ffffff">
 
                     <circle cx="521.6818" cy="305.5000" r="4.5"/>
                     <circle cx="521.6818" cy="294.5000" r="4.5"/>
@@ -298,7 +353,7 @@
 
                 </g>
 
-                <!-- FOURTH RING — THICK PORTIONS, 9 SVG UNITS -->
+                <!-- FOURTH RING — THICK PORTIONS -->
                 <g
                     class="fourth-ring-thick-portions"
                     fill="none"
@@ -324,9 +379,6 @@
                 </g>
 
                 <!-- FIFTH RING — THREE EQUAL SEGMENTS -->
-                <!-- Radius: 179.5 SVG units -->
-                <!-- Thin cyan stroke: 2.5 SVG units -->
-                <!-- No dots and no added shadow -->
                 <g
                     class="fifth-ring-group"
                     fill="none"
@@ -351,7 +403,7 @@
 
                 </g>
 
-                <!-- FIFTH RING — RADIAL TICK BARS -->
+                <!-- FIFTH RING — RADIAL TICKS -->
                 <g
                     class="fifth-ring-radial-ticks"
                     fill="none"
@@ -361,7 +413,6 @@
                     <!-- TICK CLUSTER 1 -->
                     <g transform="rotate(0 300 300)">
 
-                        <!-- Regular tick bars -->
                         <g stroke-width="3.5">
 
                             <line x1="470" y1="300" x2="480" y2="300"
@@ -375,7 +426,6 @@
 
                         </g>
 
-                        <!-- Slightly larger tick bars -->
                         <g stroke-width="3.8">
 
                             <line x1="469.5" y1="300" x2="481" y2="300"
@@ -386,7 +436,6 @@
 
                         </g>
 
-                        <!-- Two central, slightly longer bars -->
                         <g stroke-width="3.5">
 
                             <line x1="470" y1="300" x2="482" y2="300"
@@ -399,7 +448,7 @@
 
                     </g>
 
-                    <!-- TICK CLUSTER 2 — rotated 120 degrees -->
+                    <!-- TICK CLUSTER 2 -->
                     <g transform="rotate(120 300 300)">
 
                         <g stroke-width="3.5">
@@ -437,7 +486,7 @@
 
                     </g>
 
-                    <!-- TICK CLUSTER 3 — rotated 240 degrees -->
+                    <!-- TICK CLUSTER 3 -->
                     <g transform="rotate(240 300 300)">
 
                         <g stroke-width="3.5">
@@ -477,9 +526,16 @@
 
                 </g>
 
-                <!-- SIXTH RING — COMPLETE DOTTED CIRCLE -->
-                <!-- Only dots; no continuous solid stroke -->
-                <!-- Dot spacing: 16 SVG units -->
+            </svg>
+        </div>
+
+        <!-- SIXTH DOTTED RING — STATIC -->
+        <div id="sixth-ring">
+            <svg
+                id="jarvis-sixth-svg"
+                viewBox="0 0 600 600"
+                xmlns="http://www.w3.org/2000/svg">
+
                 <circle
                     class="sixth-ring-dot-circle"
                     cx="300"
@@ -495,7 +551,7 @@
             </svg>
         </div>
 
-        <!-- ADDED — J.A.R.V.I.S. LETTERING FROM THE ACCEPTED PREVIEW -->
+        <!-- J.A.R.V.I.S. VECTOR LETTERING — STATIC -->
         <div id="jarvis-center">
             <svg
                 id="jarvis-center-svg"
@@ -535,7 +591,7 @@
                     </filter>
                 </defs>
 
-                <!-- CUSTOM VECTOR LETTERING — SUBTLE DEPTH -->
+                <!-- ACCEPTED J.A.R.V.I.S. COMPOUND VECTOR PATH -->
                 <path
                     d="M 408.87 314.92 L 408.47 315.32 L 408.47 318.95 L 408.87 319.35 L 412.9 319.35 L 413.31 318.95 L 413.31 315.32 L 412.9 314.92 Z
                        M 370.16 314.92 L 369.76 315.32 L 369.76 318.55 L 370.56 319.35 L 374.19 319.35 L 374.6 318.95 L 374.6 315.32 L 374.19 314.92 Z
