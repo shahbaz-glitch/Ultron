@@ -1,4 +1,3 @@
-
 <rml>
 <head>
     <title>J.A.R.V.I.S. First Outer Ring</title>
@@ -185,12 +184,29 @@
             </svg>
         </div>
 
-        <!-- NO-GLOW LAYER: THIRD, FOURTH AND FIFTH RINGS -->
+        <!-- NO-GLOW LAYER: RINGS 3–6 AND CENTER TITLE -->
         <div id="detail-rings">
             <svg
                 id="jarvis-detail-rings"
                 viewBox="0 0 600 600"
                 xmlns="http://www.w3.org/2000/svg">
+
+                <!-- ADDED: SMOOTH, UNIFIED CYAN-WHITE TEXT COLOUR -->
+                <defs>
+                    <linearGradient
+                        id="jarvis-text-cyan"
+                        x1="0"
+                        y1="0"
+                        x2="0.25"
+                        y2="1">
+
+                        <stop offset="0%" stop-color="#c8f6ff"/>
+                        <stop offset="35%" stop-color="#b9f2fc"/>
+                        <stop offset="70%" stop-color="#a9edf9"/>
+                        <stop offset="100%" stop-color="#9ee8f7"/>
+
+                    </linearGradient>
+                </defs>
 
                 <!-- THIRD RING — 12 SVG UNITS FROM SECOND RING -->
                 <g
@@ -476,6 +492,34 @@
                     stroke-dasharray="0.1 16"
                     stroke-linecap="round"
                 />
+
+                <!-- J.A.R.V.I.S. — ADDED CENTER TITLE ONLY -->
+                <!-- Subtle cyan depth; no blur or shadow filter -->
+                <g
+                    class="jarvis-center-title"
+                    text-anchor="middle"
+                    font-family="Arial, Helvetica, sans-serif"
+                    font-weight="700"
+                    font-size="39"
+                    letter-spacing="1.25">
+
+                    <!-- Subtle 3D depth -->
+                    <text
+                        x="300"
+                        y="322"
+                        fill="#087f9d"
+                        opacity="0.65">J.A.R.V.I.S.</text>
+
+                    <!-- Clean, sharp, smoothly blended cyan-white face -->
+                    <text
+                        x="300"
+                        y="320"
+                        fill="url(#jarvis-text-cyan)"
+                        stroke="#aeeffc"
+                        stroke-width="0.25"
+                        paint-order="stroke">J.A.R.V.I.S.</text>
+
+                </g>
 
             </svg>
         </div>
