@@ -815,8 +815,18 @@ jobs:
             '#include <GLES3/gl3.h>' \
             "${NATIVE_DIR}/main.cpp"
 
+          # Updated checks for the main.cpp touch/lifecycle implementation.
+          # SDL_SetEventFilter is no longer required by the current design.
           grep -q \
-            'SDL_SetEventFilter' \
+            'HandleApplicationEvent' \
+            "${NATIVE_DIR}/main.cpp"
+
+          grep -q \
+            'SDL_EVENT_FINGER_CANCELED' \
+            "${NATIVE_DIR}/main.cpp"
+
+          grep -q \
+            'ProcessTouchCancel' \
             "${NATIVE_DIR}/main.cpp"
 
           grep -q \
