@@ -21,6 +21,7 @@
 #include <cctype>
 #include <cstdio>
 #include <exception>
+#include <functional>
 #include <mutex>
 #include <queue>
 #include <string>
@@ -103,6 +104,56 @@ std::unordered_map<std::string, Rml::ElementDocument*> g_documents;
 std::string g_active_document_name;
 std::vector<std::string> g_document_history;
 std::thread::id g_ui_thread_id{};
+
+// -------------------------------------------------------------
+// Robust touch identity
+// -------------------------------------------------------------
+//
+// RmlUi's SDL3 backend currently derives Rml::TouchId from
+// SDL_FingerID alone.
+//
+// Here, the SDL touch-device ID and finger ID are tracked together.
+// RmlUi receives a unique, app-managed ID for each active contact.
+//
+// This keeps contacts from different SDL touch devices from
+// colliding merely because their finger IDs happen to match.
+// -------------------------------------------------------------
+
+struct SDLTouchKey
+{
+    SDL_TouchID touch_id{};
+    SDL_FingerID finger_id{};
+
+    bool operator==(const SDLTouchKey&) const = default;
+};
+
+struct SDLTouchKeyHash
+{
+    size_t operator()(const SDLTouchKey& key) const noexcept
+    {
+        const size_t first_hash =
+            std::hash<SDL_TouchID>{}(key.touch_id);
+
+        const size_t second_hash =
+            std::hash<SDL_FingerID>{}(key.finger_id);
+
+        return first_hash ^
+            (second_hash +
+             static_cast<size_t>(0x9e3779b9U) +
+             (first_hash << 6U) +
+             (first_hash >> 2U));
+    }
+};
+
+// Key: SDL touch-device ID + finger ID.
+// Value: the corresponding active RmlUi touch ID.
+std::unordered_map<
+    SDLTouchKey,
+    Rml::TouchId,
+    SDLTouchKeyHash> g_active_touches;
+
+// Start at a non-zero ID. Zero is deliberately skipped.
+Rml::TouchId g_next_rml_touch_id{1};
 
 // -------------------------------------------------------------
 // Native action registry
@@ -883,44 +934,335 @@ bool ShowBlackFallback()
 }
 
 // -------------------------------------------------------------
-// Android / SDL lifecycle events
+// Touch handling helpers
 // -------------------------------------------------------------
 
-bool HandleAppEvents(void* userdata, SDL_Event* event)
+Rml::TouchId AllocateRmlTouchId()
 {
-    (void)userdata;
-
-    if (event == nullptr)
+    // Active contacts are finite in number. Skip zero and every ID
+    // currently assigned to an active contact, including after wraparound.
+    for (;;)
     {
-        return true;
+        const Rml::TouchId candidate = g_next_rml_touch_id++;
+
+        if (candidate == 0)
+        {
+            continue;
+        }
+
+        bool already_used = false;
+
+        for (const auto& entry : g_active_touches)
+        {
+            if (entry.second == candidate)
+            {
+                already_used = true;
+                break;
+            }
+        }
+
+        if (!already_used)
+        {
+            return candidate;
+        }
+    }
+}
+
+Rml::Touch MakeRmlTouch(
+    const SDL_Event& event,
+    Rml::TouchId identifier)
+{
+    const Rml::Vector2i dimensions = g_context->GetDimensions();
+
+    // Match the coordinate conversion used by the RmlUi SDL3 backend.
+    // SDL finger coordinates are normalized to the window.
+    const Rml::Vector2f position{
+        event.tfinger.x * static_cast<float>(dimensions.x),
+        event.tfinger.y * static_cast<float>(dimensions.y)
+    };
+
+    return Rml::Touch{identifier, position};
+}
+
+void CancelRmlTouchStates(const Rml::TouchList& touches)
+{
+    if (g_context == nullptr || touches.empty())
+    {
+        return;
     }
 
-    switch (event->type)
+    // RmlUi's ProcessTouchCancel currently releases the primary mouse
+    // button internally. Move the pointer outside the UI first so a
+    // cancelled press does not accidentally become a click on the
+    // element where the finger was originally pressed.
+    //
+    // The touch cancellation still goes through RmlUi's public API,
+    // which clears the corresponding internal touch states.
+    g_context->ProcessMouseMove(
+        -1,
+        -1,
+        RmlSDL::GetKeyModifierState());
+
+    g_context->ProcessTouchCancel(touches);
+}
+
+void CancelTouchForKey(const SDLTouchKey& key)
+{
+    const auto found = g_active_touches.find(key);
+
+    if (found == g_active_touches.end())
+    {
+        return;
+    }
+
+    if (g_context != nullptr)
+    {
+        Rml::TouchList touches;
+        touches.push_back(
+            Rml::Touch{
+                found->second,
+                Rml::Vector2f{0.0f, 0.0f}
+            });
+
+        CancelRmlTouchStates(touches);
+    }
+
+    g_active_touches.erase(found);
+}
+
+void CancelAllActiveTouches()
+{
+    if (g_active_touches.empty())
+    {
+        return;
+    }
+
+    if (g_context != nullptr)
+    {
+        Rml::TouchList touches;
+        touches.reserve(g_active_touches.size());
+
+        for (const auto& entry : g_active_touches)
+        {
+            touches.push_back(
+                Rml::Touch{
+                    entry.second,
+                    Rml::Vector2f{0.0f, 0.0f}
+                });
+        }
+
+        CancelRmlTouchStates(touches);
+    }
+
+    g_active_touches.clear();
+}
+
+void HandleTouchEvent(const SDL_Event& event)
+{
+    if (g_context == nullptr)
+    {
+        return;
+    }
+
+    const SDLTouchKey key{
+        event.tfinger.touchID,
+        event.tfinger.fingerID
+    };
+
+    // Do not start or move touches while the app is paused. Any existing
+    // mapping for this contact is cancelled instead.
+    if (g_paused.load(std::memory_order_relaxed))
+    {
+        CancelTouchForKey(key);
+        return;
+    }
+
+    switch (event.type)
+    {
+        case SDL_EVENT_FINGER_DOWN:
+        {
+            const auto existing = g_active_touches.find(key);
+
+            if (existing != g_active_touches.end())
+            {
+                // A second DOWN for the same device/finger pair arrived
+                // before the prior contact was closed. Recover the state
+                // rather than sending a duplicate start to RmlUi.
+                SDL_LogWarn(
+                    SDL_LOG_CATEGORY_APPLICATION,
+                    "Ultron: duplicate finger-down detected; "
+                    "cancelling stale touch before restarting it.");
+
+                CancelTouchForKey(key);
+            }
+
+            const Rml::TouchId identifier = AllocateRmlTouchId();
+
+            g_active_touches.emplace(key, identifier);
+
+            const Rml::Touch touch =
+                MakeRmlTouch(event, identifier);
+
+            g_context->ProcessTouchStart(
+                Rml::TouchList{touch},
+                RmlSDL::GetKeyModifierState());
+
+            return;
+        }
+
+        case SDL_EVENT_FINGER_MOTION:
+        {
+            const auto found = g_active_touches.find(key);
+
+            // Ignore an orphan motion event. It must not create a new
+            // contact or resurrect a touch that has already ended.
+            if (found == g_active_touches.end())
+            {
+                return;
+            }
+
+            const Rml::Touch touch =
+                MakeRmlTouch(event, found->second);
+
+            g_context->ProcessTouchMove(
+                Rml::TouchList{touch},
+                RmlSDL::GetKeyModifierState());
+
+            return;
+        }
+
+        case SDL_EVENT_FINGER_UP:
+        {
+            const auto found = g_active_touches.find(key);
+
+            // An unmatched UP is harmless; there is no active contact
+            // to release in RmlUi.
+            if (found == g_active_touches.end())
+            {
+                return;
+            }
+
+            const Rml::Touch touch =
+                MakeRmlTouch(event, found->second);
+
+            g_context->ProcessTouchEnd(
+                Rml::TouchList{touch},
+                RmlSDL::GetKeyModifierState());
+
+            g_active_touches.erase(found);
+
+            return;
+        }
+
+        case SDL_EVENT_FINGER_CANCELED:
+        {
+            // Cancellation is not a normal finger-up. Clear the tracked
+            // RmlUi touch state without treating it as a successful tap.
+            CancelTouchForKey(key);
+            return;
+        }
+
+        default:
+            return;
+    }
+}
+
+void HandleInputEvent(
+    SDL_Window* window,
+    SDL_Event& event)
+{
+    if (g_context == nullptr)
+    {
+        return;
+    }
+
+    switch (event.type)
+    {
+        case SDL_EVENT_FINGER_DOWN:
+        case SDL_EVENT_FINGER_MOTION:
+        case SDL_EVENT_FINGER_UP:
+        case SDL_EVENT_FINGER_CANCELED:
+            // Touch events are handled here so cancelled contacts and
+            // composite touch identities are handled consistently.
+            HandleTouchEvent(event);
+            return;
+
+        default:
+            // Keep the tested RmlUi SDL backend for mouse, keyboard,
+            // text input, wheel, display and window events.
+            RmlSDL::InputEventHandler(
+                g_context,
+                window,
+                event);
+            return;
+    }
+}
+
+// -------------------------------------------------------------
+// Android / SDL lifecycle events
+// -------------------------------------------------------------
+//
+// Process lifecycle events from the main event loop rather than an SDL
+// event filter. Touch cancellation touches RmlUi state, so it must happen
+// on the UI thread where the context is owned.
+// -------------------------------------------------------------
+
+void HandleApplicationEvent(const SDL_Event& event)
+{
+    switch (event.type)
     {
         case SDL_EVENT_WILL_ENTER_BACKGROUND:
         case SDL_EVENT_DID_ENTER_BACKGROUND:
         case SDL_EVENT_WILL_ENTER_FOREGROUND:
-            g_paused.store(true, std::memory_order_relaxed);
+        {
+            g_paused.store(
+                true,
+                std::memory_order_relaxed);
+
+            CancelAllActiveTouches();
             break;
+        }
 
         case SDL_EVENT_DID_ENTER_FOREGROUND:
-            g_paused.store(false, std::memory_order_relaxed);
+        {
+            g_paused.store(
+                false,
+                std::memory_order_relaxed);
             break;
+        }
+
+        case SDL_EVENT_WINDOW_FOCUS_LOST:
+        {
+            CancelAllActiveTouches();
+
+            if (g_context != nullptr)
+            {
+                g_context->ProcessMouseLeave();
+            }
+
+            break;
+        }
 
         case SDL_EVENT_LOW_MEMORY:
+        {
             SDL_Log(
                 "Ultron: Android low-memory notification received.");
             break;
+        }
 
         case SDL_EVENT_TERMINATING:
-            g_running.store(false, std::memory_order_relaxed);
+        {
+            CancelAllActiveTouches();
+
+            g_running.store(
+                false,
+                std::memory_order_relaxed);
             break;
+        }
 
         default:
             break;
     }
-
-    return true;
 }
 
 int Fail(
@@ -1272,6 +1614,9 @@ int main(int argc, char** argv)
     g_paused.store(false, std::memory_order_relaxed);
     g_accept_ui_tasks.store(false, std::memory_order_relaxed);
 
+    g_active_touches.clear();
+    g_next_rml_touch_id = 1;
+
     SDL_SetLogPriority(
         SDL_LOG_CATEGORY_APPLICATION,
         SDL_LOG_PRIORITY_INFO);
@@ -1287,7 +1632,6 @@ int main(int argc, char** argv)
             "SDL_Init failed");
     }
 
-    SDL_SetEventFilter(HandleAppEvents, nullptr);
     SDL_SetHint(SDL_HINT_IME_IMPLEMENTED_UI, "composition");
     SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
     SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
@@ -1361,7 +1705,7 @@ int main(int argc, char** argv)
         SDL_PROP_WINDOW_CREATE_HIGH_PIXEL_DENSITY_BOOLEAN,
         true);
 
-    // Try 4x MSAA, then 2x, then no window-framebuffer MSAA.
+    // MSAA remains unchanged: try 4x, then 2x, then no window MSAA.
     SDL_Window* window = nullptr;
     SDL_GLContext gl_context = nullptr;
 
@@ -1615,6 +1959,7 @@ int main(int argc, char** argv)
                 if (exit_code != 0)
                 {
                     StopAcceptingUITasks();
+                    CancelAllActiveTouches();
 
                     g_documents.clear();
                     g_document_history.clear();
@@ -1648,13 +1993,22 @@ int main(int argc, char** argv)
 
                         while (SDL_PollEvent(&event))
                         {
+                            // Lifecycle events and touch-state cleanup
+                            // execute on this UI thread.
+                            HandleApplicationEvent(event);
+
                             if (event.type == SDL_EVENT_QUIT)
                             {
                                 g_running.store(
                                     false,
                                     std::memory_order_relaxed);
 
-                                continue;
+                                break;
+                            }
+
+                            if (!g_running.load(std::memory_order_relaxed))
+                            {
+                                break;
                             }
 
                             // Toggle the Visual Debugger with F8.
@@ -1678,10 +2032,7 @@ int main(int argc, char** argv)
                                 continue;
                             }
 
-                            RmlSDL::InputEventHandler(
-                                g_context,
-                                window,
-                                event);
+                            HandleInputEvent(window, event);
                         }
 
                         if (!g_running.load(std::memory_order_relaxed))
@@ -1748,6 +2099,7 @@ int main(int argc, char** argv)
                     }
 
                     StopAcceptingUITasks();
+                    CancelAllActiveTouches();
 
                     g_documents.clear();
                     g_document_history.clear();
