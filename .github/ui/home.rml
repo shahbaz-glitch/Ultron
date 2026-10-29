@@ -29,17 +29,28 @@
 
             <defs>
                 <filter id="cyan-glow"
-                        x="-20%" y="-10%"
-                        width="140%" height="120%">
+                        x="-20%"
+                        y="-10%"
+                        width="140%"
+                        height="120%">
                     <feGaussianBlur stdDeviation="2.5"/>
                 </filter>
             </defs>
 
             <!-- Soft cyan glow -->
             <path
-                d="M16 54 L29 41 H151 L163 51 H257
-                   L269 41 H391 L404 54 V858
-                   L391 871 H29 L16 858 Z"
+                d="M5 83
+                   L19 69
+                   H151
+                   L163 79
+                   H257
+                   L269 69
+                   H401
+                   L415 83
+                   V885
+                   L402 898
+                   H18
+                   L5 885 Z"
                 fill="none"
                 stroke="#00DFFF"
                 stroke-width="6"
@@ -48,9 +59,18 @@
 
             <!-- Sharp neon outline -->
             <path
-                d="M16 54 L29 41 H151 L163 51 H257
-                   L269 41 H391 L404 54 V858
-                   L391 871 H29 L16 858 Z"
+                d="M5 83
+                   L19 69
+                   H151
+                   L163 79
+                   H257
+                   L269 69
+                   H401
+                   L415 83
+                   V885
+                   L402 898
+                   H18
+                   L5 885 Z"
                 fill="none"
                 stroke="#00DFFF"
                 stroke-width="2.6"
