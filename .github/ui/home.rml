@@ -12,19 +12,38 @@
             font-weight: 400;
         }
 
-        button {
-            margin-bottom: 20px;
+        #font-toggle {
+            display: block;
+            width: 200px;
             padding: 10px;
+            margin-bottom: 20px;
+            background-color: #202020;
+            color: #ffffff;
+            font-size: 18px;
+        }
+
+        #font-sample {
+            display: block;
+            visibility: visible;
+            opacity: 1;
+        }
+
+        #font-sample div {
+            display: block;
         }
     </style>
 </head>
 
-<body id="font-sample">
-    <button data-action="toggle_font">SWITCH FONT</button>
+<body>
+    <div id="font-toggle" data-action="toggle_font">
+        SWITCH FONT
+    </div>
 
-    <div>ROBOTO FLEX</div>
-    <div>Font Loading Test</div>
-    <div>ABCDEFGHIJKLMNOPQRSTUVWXYZ</div>
-    <div>0123456789</div>
+    <div id="font-sample">
+        <div>ROBOTO FLEX</div>
+        <div>Font Loading Test</div>
+        <div>ABCDEFGHIJKLMNOPQRSTUVWXYZ</div>
+        <div>0123456789</div>
+    </div>
 </body>
 </rml>
