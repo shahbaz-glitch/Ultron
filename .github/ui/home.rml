@@ -14,22 +14,24 @@
 
         #font-toggle {
             display: block;
-            width: 200px;
-            padding: 10px;
+            width: 250px;
+            height: 60px;
+            padding: 12px;
             margin-bottom: 20px;
-            background-color: #202020;
+            background-color: #ff0000;
             color: #ffffff;
-            font-size: 18px;
+            font-family: sans-serif;
+            font-size: 24px;
+            font-weight: 700;
+            text-align: left;
+            visibility: visible;
+            opacity: 1;
         }
 
         #font-sample {
             display: block;
             visibility: visible;
             opacity: 1;
-        }
-
-        #font-sample div {
-            display: block;
         }
     </style>
 </head>
