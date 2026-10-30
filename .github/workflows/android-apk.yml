@@ -1,4 +1,3 @@
-
 name: Build Ultron Android APK
 
 on:
@@ -138,7 +137,7 @@ jobs:
             "https://github.com/sammycage/lunasvg.git" \
             "${ANDROID_PROJECT}/app/jni/RmlUi/Dependencies/lunasvg"
 
-          # Remove downloaded Git metadata.
+          # Remove downloaded Git metadata
           rm -rf \
             "${ANDROID_PROJECT}/app/jni/SDL/.git" \
             "${ANDROID_PROJECT}/app/jni/freetype/.git" \
@@ -146,7 +145,7 @@ jobs:
             "${ANDROID_PROJECT}/app/jni/RmlUi/Dependencies/lunasvg/.git" \
             "${ANDROID_PROJECT}/app/jni/RmlUi/Dependencies/lunasvg/plutovg/.git"
 
-          # Make the project path available to later steps.
+          # Make the project path available to later steps
           echo "ANDROID_PROJECT=${ANDROID_PROJECT}" >> "${GITHUB_ENV}"
 
       # ============================================================
@@ -190,19 +189,8 @@ jobs:
           test -f "${LUNASVG_BUILD}/lunasvgTargets.cmake"
           test -f "${LUNASVG_BUILD}/plutovg/plutovgConfig.cmake"
 
-          LUNASVG_ARCHIVE="$(
-            find "${LUNASVG_BUILD}" \
-              -type f \
-              -name 'liblunasvg.a' \
-              -print -quit
-          )"
-
-          PLUTOVG_ARCHIVE="$(
-            find "${LUNASVG_BUILD}" \
-              -type f \
-              -name 'libplutovg.a' \
-              -print -quit
-          )"
+          LUNASVG_ARCHIVE="$(find "${LUNASVG_BUILD}" -type f -name 'liblunasvg.a' -print -quit)"
+          PLUTOVG_ARCHIVE="$(find "${LUNASVG_BUILD}" -type f -name 'libplutovg.a' -print -quit)"
 
           test -n "${LUNASVG_ARCHIVE}"
           test -n "${PLUTOVG_ARCHIVE}"
@@ -481,7 +469,8 @@ jobs:
           EOF
 
       # ============================================================
-      # INSTALL NATIVE SOURCES, ACTIONS, UI AND FONTS
+      # INSTALL CMAKE, C++ SOURCE, ACTIONS, UI AND FONTS
+      # ACTION, UI AND FONT FILES ARE OPTIONAL
       # ============================================================
 
       - name: Install native sources, actions, UI and fonts
@@ -491,9 +480,6 @@ jobs:
 
           SOURCE_CMAKE="${GITHUB_WORKSPACE}/.github/CMakeLists.txt"
           SOURCE_CPP="${GITHUB_WORKSPACE}/.github/main.cpp"
-
-          # Font diagnostics header is a required native source dependency.
-          SOURCE_FONT_DIAGNOSTICS="${GITHUB_WORKSPACE}/.github/FontDiagnostics.h"
 
           # Prefer root folders, but support the existing repository paths.
           SOURCE_ACTION=""
@@ -512,7 +498,8 @@ jobs:
 
           for candidate in \
             "${GITHUB_WORKSPACE}/ui" \
-            "${GITHUB_WORKSPACE}/.github/ui"; do
+            "${GITHUB_WORKSPACE}/.github/ui" \
+            "${GITHUB_WORKSPACE}/.github/ ui"; do
 
             if [[ -d "${candidate}" ]]; then
               SOURCE_UI="${candidate}"
@@ -523,10 +510,10 @@ jobs:
           # Font files are stored in .github/fonts.
           SOURCE_FONTS="${GITHUB_WORKSPACE}/.github/fonts"
 
-          # Core native source files are required.
+          # These two core files are required.
+          # Action, UI and font folders/files are optional.
           test -f "${SOURCE_CMAKE}"
           test -f "${SOURCE_CPP}"
-          test -f "${SOURCE_FONT_DIAGNOSTICS}"
 
           NATIVE_DIR="${ANDROID_PROJECT}/app/jni"
           ASSETS_UI="${ANDROID_PROJECT}/app/src/main/assets/ui"
@@ -542,11 +529,6 @@ jobs:
           cp \
             "${SOURCE_CPP}" \
             "${NATIVE_DIR}/main.cpp"
-
-          # Install the font diagnostics header beside main.cpp.
-          cp \
-            "${SOURCE_FONT_DIAGNOSTICS}" \
-            "${NATIVE_DIR}/FontDiagnostics.h"
 
           # Always create destination directories.
           mkdir -p \
@@ -643,16 +625,6 @@ jobs:
           echo "TTF/OTF font files: ${FONT_COUNT}"
 
           echo
-          echo "========================================"
-          echo "FONT DIAGNOSTICS HEADER"
-          echo "========================================"
-
-          test -f "${NATIVE_DIR}/FontDiagnostics.h"
-
-          echo "FontDiagnostics.h copied successfully."
-          echo "Native diagnostic header staging: PASSED"
-
-          echo
           echo "Native sources, UI and font resources staged successfully."
 
       # ============================================================
@@ -708,18 +680,14 @@ jobs:
           test -f "${ANDROID_PROJECT}/app/src/main/res/values/strings.xml"
           test -f "${ANDROID_PROJECT}/app/src/main/res/drawable-nodpi/ic_launcher_foreground.png"
           test -f "${ANDROID_PROJECT}/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml"
-
           test -f "${NATIVE_DIR}/CMakeLists.txt"
           test -f "${NATIVE_DIR}/main.cpp"
-          test -f "${NATIVE_DIR}/FontDiagnostics.h"
-
           test -d "${NATIVE_DIR}/action"
           test -d "${NATIVE_DIR}/ui"
           test -d "${ASSETS_UI}"
           test -d "${ASSETS_FONTS}"
 
           echo "Project files: PASSED"
-          echo "FontDiagnostics.h: PASSED"
 
           echo
           echo "========================================"
@@ -741,20 +709,8 @@ jobs:
           test -f "${LUNASVG_BUILD}/lunasvgConfig.cmake"
           test -f "${LUNASVG_BUILD}/lunasvgTargets.cmake"
           test -f "${LUNASVG_BUILD}/plutovg/plutovgConfig.cmake"
-
-          test -n "$(
-            find "${LUNASVG_BUILD}" \
-              -type f \
-              -name 'liblunasvg.a' \
-              -print -quit
-          )"
-
-          test -n "$(
-            find "${LUNASVG_BUILD}" \
-              -type f \
-              -name 'libplutovg.a' \
-              -print -quit
-          )"
+          test -n "$(find "${LUNASVG_BUILD}" -type f -name 'liblunasvg.a' -print -quit)"
+          test -n "$(find "${LUNASVG_BUILD}" -type f -name 'libplutovg.a' -print -quit)"
 
           echo "SDL/FreeType/RmlUi dependencies: PASSED"
           echo "SVG dependency (LunaSVG ${LUNASVG_VERSION} + PlutoVG): PASSED"
@@ -859,39 +815,6 @@ jobs:
 
           echo
           echo "========================================"
-          echo "FONT DIAGNOSTIC INTEGRATION"
-          echo "========================================"
-
-          test -f "${NATIVE_DIR}/FontDiagnostics.h"
-
-          grep -Fq \
-            '#include "FontDiagnostics.h"' \
-            "${NATIVE_DIR}/main.cpp"
-
-          grep -Fq \
-            'UltronFontDiagnostics::RunPreflight' \
-            "${NATIVE_DIR}/main.cpp"
-
-          grep -Fq \
-            'UltronFontDiagnostics::CreateRenderProbe' \
-            "${NATIVE_DIR}/main.cpp"
-
-          grep -Fq \
-            'UltronFontDiagnostics::CheckRenderedGlyphPixels' \
-            "${NATIVE_DIR}/main.cpp"
-
-          grep -Fq \
-            'UltronFontDiagnostics::PrintFinalReport' \
-            "${NATIVE_DIR}/main.cpp"
-
-          echo "Font diagnostic header: PASSED"
-          echo "Font diagnostic startup: PASSED"
-          echo "FreeType preflight integration: PASSED"
-          echo "RmlUi render probe integration: PASSED"
-          echo "OpenGL pixel test integration: PASSED"
-
-          echo
-          echo "========================================"
           echo "GRADLE / TOOLCHAIN"
           echo "========================================"
 
@@ -956,11 +879,6 @@ jobs:
 
           grep -q \
             '#include <GLES3/gl3.h>' \
-            "${NATIVE_DIR}/main.cpp"
-
-          # Verify diagnostics header is included by the native source.
-          grep -Fq \
-            '#include "FontDiagnostics.h"' \
             "${NATIVE_DIR}/main.cpp"
 
           # Updated checks for the main.cpp touch/lifecycle implementation.
@@ -1353,7 +1271,6 @@ jobs:
             echo "| Action sources | Automatically discovered; optional |"
             echo "| UI resources | Automatically packaged; optional |"
             echo "| Font resources | Automatically packaged from .github/fonts; optional |"
-            echo "| Font diagnostics | Header copied and integration verified |"
             echo "| Background | Pure Black fallback |"
             echo "| Icon | Adaptive Brain Icon |"
             echo
