@@ -1,3 +1,4 @@
+
 name: Build Ultron Android APK
 
 on:
@@ -469,11 +470,11 @@ jobs:
           EOF
 
       # ============================================================
-      # INSTALL CMAKE, C++ SOURCE, ACTIONS AND UI
-      # ACTION AND UI FILES ARE OPTIONAL
+      # INSTALL CMAKE, C++ SOURCE, ACTIONS, UI AND FONTS
+      # ACTION, UI AND FONT FILES ARE OPTIONAL
       # ============================================================
 
-      - name: Install native sources, actions and UI
+      - name: Install native sources, actions, UI and fonts
         shell: bash
         run: |
           set -euo pipefail
@@ -507,13 +508,17 @@ jobs:
             fi
           done
 
+          # Font files are stored in .github/fonts.
+          SOURCE_FONTS="${GITHUB_WORKSPACE}/.github/fonts"
+
           # These two core files are required.
-          # Action and UI folders/files are optional.
+          # Action, UI and font folders/files are optional.
           test -f "${SOURCE_CMAKE}"
           test -f "${SOURCE_CPP}"
 
           NATIVE_DIR="${ANDROID_PROJECT}/app/jni"
           ASSETS_UI="${ANDROID_PROJECT}/app/src/main/assets/ui"
+          ASSETS_FONTS="${ANDROID_PROJECT}/app/src/main/assets/fonts"
 
           test -d "${NATIVE_DIR}"
 
@@ -530,7 +535,8 @@ jobs:
           mkdir -p \
             "${NATIVE_DIR}/action" \
             "${NATIVE_DIR}/ui" \
-            "${ASSETS_UI}"
+            "${ASSETS_UI}" \
+            "${ASSETS_FONTS}"
 
           # Copy Actions only when the source folder exists.
           if [[ -n "${SOURCE_ACTION}" ]]; then
@@ -556,6 +562,17 @@ jobs:
               "${ASSETS_UI}/"
           else
             echo "No UI folder supplied. Continuing without external UI files."
+          fi
+
+          # Copy font resources into Android APK assets.
+          if [[ -d "${SOURCE_FONTS}" ]]; then
+            echo "Font source: ${SOURCE_FONTS}"
+
+            cp -a \
+              "${SOURCE_FONTS}/." \
+              "${ASSETS_FONTS}/"
+          else
+            echo "No fonts folder supplied. Continuing without external fonts."
           fi
 
           echo
@@ -593,8 +610,23 @@ jobs:
           echo "UI resource files: ${UI_COUNT}"
 
           echo
-          echo "Native sources staged successfully."
-          echo "Action sources and UI resources are optional."
+          echo "========================================"
+          echo "AVAILABLE FONT RESOURCES"
+          echo "========================================"
+
+          find "${ASSETS_FONTS}" -type f -print
+
+          FONT_COUNT="$(
+            find "${ASSETS_FONTS}" \
+              -type f \
+              \( -iname '*.ttf' -o -iname '*.otf' \) \
+              -print | wc -l
+          )"
+
+          echo "TTF/OTF font files: ${FONT_COUNT}"
+
+          echo
+          echo "Native sources, UI and font resources staged successfully."
 
       # ============================================================
       # VERIFY GENERATED PROJECT
@@ -607,6 +639,8 @@ jobs:
 
           NATIVE_DIR="${ANDROID_PROJECT}/app/jni"
           ASSETS_UI="${ANDROID_PROJECT}/app/src/main/assets/ui"
+          ASSETS_FONTS="${ANDROID_PROJECT}/app/src/main/assets/fonts"
+          SOURCE_FONTS="${GITHUB_WORKSPACE}/.github/fonts"
           LUNASVG_SOURCE="${NATIVE_DIR}/RmlUi/Dependencies/lunasvg"
           LUNASVG_BUILD="${LUNASVG_SOURCE}/build"
 
@@ -652,6 +686,7 @@ jobs:
           test -d "${NATIVE_DIR}/action"
           test -d "${NATIVE_DIR}/ui"
           test -d "${ASSETS_UI}"
+          test -d "${ASSETS_FONTS}"
 
           echo "Project files: PASSED"
 
@@ -746,6 +781,38 @@ jobs:
 
           echo "Total staged UI resources: ${UI_COUNT}"
           echo "UI staging verification: PASSED"
+
+          echo
+          echo "========================================"
+          echo "FONT SOURCE AND APK ASSET STAGING"
+          echo "========================================"
+
+          if [[ -d "${SOURCE_FONTS}" ]]; then
+            while IFS= read -r -d '' FONT_FILE; do
+              FONT_RELATIVE="${FONT_FILE#${SOURCE_FONTS}/}"
+
+              test -f "${ASSETS_FONTS}/${FONT_RELATIVE}"
+
+              echo "Font staged: ${FONT_RELATIVE}"
+
+            done < <(
+              find "${SOURCE_FONTS}" \
+                -type f \
+                -print0
+            )
+          else
+            echo "No font source folder supplied."
+          fi
+
+          FONT_COUNT="$(
+            find "${ASSETS_FONTS}" \
+              -type f \
+              \( -iname '*.ttf' -o -iname '*.otf' \) \
+              -print | wc -l
+          )"
+
+          echo "Staged TTF/OTF fonts: ${FONT_COUNT}"
+          echo "Font staging verification: PASSED"
 
           echo
           echo "========================================"
@@ -982,7 +1049,7 @@ jobs:
 
       # ============================================================
       # VALIDATE APK
-      # UI ASSETS ARE OPTIONAL
+      # UI AND FONT ASSETS ARE OPTIONAL
       # ============================================================
 
       - name: Validate APK
@@ -994,6 +1061,7 @@ jobs:
           BADGING="${RUNNER_TEMP}/apk-badging.txt"
           APK_CONTENTS="${RUNNER_TEMP}/apk-contents.txt"
           ASSETS_UI="${ANDROID_PROJECT}/app/src/main/assets/ui"
+          ASSETS_FONTS="${ANDROID_PROJECT}/app/src/main/assets/fonts"
 
           test -f "${APK}"
 
@@ -1106,6 +1174,39 @@ jobs:
 
           echo
           echo "========================================"
+          echo "FONT ASSETS INSIDE APK"
+          echo "========================================"
+
+          FONT_COUNT=0
+
+          # Validate every supplied font and license file.
+          # An empty font directory is allowed.
+          while IFS= read -r -d '' FONT_FILE; do
+            FONT_RELATIVE="${FONT_FILE#${ASSETS_FONTS}/}"
+            APK_ENTRY="assets/fonts/${FONT_RELATIVE}"
+
+            if ! grep -Fqx "${APK_ENTRY}" "${APK_CONTENTS}"; then
+              echo "::error::Font asset missing from APK: ${APK_ENTRY}"
+              exit 1
+            fi
+
+            echo "Packaged: ${APK_ENTRY}"
+            FONT_COUNT=$((FONT_COUNT + 1))
+
+          done < <(
+            find "${ASSETS_FONTS}" \
+              -type f \
+              -print0
+          )
+
+          if [[ "${FONT_COUNT}" -eq 0 ]]; then
+            echo "No external font assets supplied. This is allowed."
+          else
+            echo "Font assets packaged successfully: ${FONT_COUNT}"
+          fi
+
+          echo
+          echo "========================================"
           echo "ICON"
           echo "========================================"
 
@@ -1170,6 +1271,7 @@ jobs:
             echo "| Visual Debugger | CMake target linked; C++ initialization required |"
             echo "| Action sources | Automatically discovered; optional |"
             echo "| UI resources | Automatically packaged; optional |"
+            echo "| Font resources | Automatically packaged from .github/fonts; optional |"
             echo "| Background | Pure Black fallback |"
             echo "| Icon | Adaptive Brain Icon |"
             echo
