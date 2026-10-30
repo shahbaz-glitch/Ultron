@@ -108,16 +108,6 @@ std::thread::id g_ui_thread_id{};
 // -------------------------------------------------------------
 // Robust touch identity
 // -------------------------------------------------------------
-//
-// RmlUi's SDL3 backend currently derives Rml::TouchId from
-// SDL_FingerID alone.
-//
-// Here, the SDL touch-device ID and finger ID are tracked together.
-// RmlUi receives a unique, app-managed ID for each active contact.
-//
-// This keeps contacts from different SDL touch devices from
-// colliding merely because their finger IDs happen to match.
-// -------------------------------------------------------------
 
 struct SDLTouchKey
 {
@@ -145,14 +135,11 @@ struct SDLTouchKeyHash
     }
 };
 
-// Key: SDL touch-device ID + finger ID.
-// Value: the corresponding active RmlUi touch ID.
 std::unordered_map<
     SDLTouchKey,
     Rml::TouchId,
     SDLTouchKeyHash> g_active_touches;
 
-// Start at a non-zero ID. Zero is deliberately skipped.
 Rml::TouchId g_next_rml_touch_id{1};
 
 // -------------------------------------------------------------
@@ -210,7 +197,6 @@ void DispatchAction(const Rml::String& action_name)
         "Ultron: dispatching action '%s'.",
         action_name.c_str());
 
-    // Do not hold the registry mutex while running user code.
     callback();
 }
 
@@ -305,8 +291,6 @@ void StopAcceptingUITasks()
     UITaskQueue& queue = GetUITaskQueue();
     std::lock_guard lock(queue.mutex);
 
-    // Discard remaining tasks during shutdown.
-    // Ownership of each user_data pointer remains with its caller.
     std::queue<PendingUITask> empty;
     queue.tasks.swap(empty);
 }
@@ -434,7 +418,6 @@ public:
 
         Rml::Element* element = event.GetTargetElement();
 
-        // Support clicks on nested text, icons and child elements.
         while (element != nullptr && element != context_root_)
         {
             if (element->HasAttribute("data-action"))
@@ -503,8 +486,6 @@ std::string NormalizeSlashes(std::string path)
     return path;
 }
 
-// Convert a result returned by SDL_GlobDirectory into a path
-// that SDL/RmlUi can open.
 std::string GetRmlLoadPath(const char* discovered_path)
 {
     if (discovered_path == nullptr || discovered_path[0] == '\0')
@@ -519,14 +500,12 @@ std::string GetRmlLoadPath(const char* discovered_path)
         path.erase(0, 2);
     }
 
-    // Keep full paths and SDL asset paths as supplied.
     if (StartsWith(path, "assets://") ||
         (!path.empty() && path[0] == '/'))
     {
         return path;
     }
 
-    // Some directory enumerators include the directory in the result.
     if (StartsWith(path, "ui/"))
     {
         return path;
@@ -535,12 +514,154 @@ std::string GetRmlLoadPath(const char* discovered_path)
     return std::string(kUiDirectory) + "/" + path;
 }
 
-// Generate a navigation name from the RML path.
-//
-// Examples:
-//   ui/home.rml           -> home
-//   ui/settings.rml       -> settings
-//   ui/agent/profile.rml  -> agent/profile
+// -------------------------------------------------------------
+// NEW: Automatic TTF / OTF font loader
+// -------------------------------------------------------------
+
+bool EndsWithFontExtension(const std::string& path)
+{
+    const auto ends_with = [&path](const char* extension)
+    {
+        const size_t extension_length =
+            std::char_traits<char>::length(extension);
+
+        if (path.size() < extension_length)
+        {
+            return false;
+        }
+
+        const size_t offset =
+            path.size() - extension_length;
+
+        for (size_t i = 0; i < extension_length; ++i)
+        {
+            if (std::tolower(
+                    static_cast<unsigned char>(path[offset + i])) !=
+                std::tolower(
+                    static_cast<unsigned char>(extension[i])))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    };
+
+    return ends_with(".ttf") || ends_with(".otf");
+}
+
+void CollectFontFiles(
+    const char* pattern,
+    std::vector<std::string>& font_files)
+{
+    int file_count = 0;
+
+    char** discovered_files = SDL_GlobDirectory(
+        kUiDirectory,
+        pattern,
+        SDL_GLOB_CASEINSENSITIVE,
+        &file_count);
+
+    // Missing font files are completely normal.
+    // Do not stop startup when there are no matching files.
+    if (discovered_files == nullptr)
+    {
+        SDL_ClearError();
+        return;
+    }
+
+    for (int index = 0; index < file_count; ++index)
+    {
+        if (discovered_files[index] == nullptr)
+        {
+            continue;
+        }
+
+        std::string path =
+            GetRmlLoadPath(discovered_files[index]);
+
+        if (path.empty() || !EndsWithFontExtension(path))
+        {
+            continue;
+        }
+
+        font_files.push_back(std::move(path));
+    }
+
+    SDL_free(discovered_files);
+}
+
+size_t AutoLoadFontsFromUI()
+{
+    std::vector<std::string> font_files;
+
+    // Discover TTF files.
+    CollectFontFiles("*.ttf", font_files);
+
+    // Discover OTF files.
+    CollectFontFiles("*.otf", font_files);
+
+    // Keep loading order deterministic.
+    std::sort(
+        font_files.begin(),
+        font_files.end());
+
+    // Avoid accidentally loading the same path twice.
+    font_files.erase(
+        std::unique(
+            font_files.begin(),
+            font_files.end()),
+        font_files.end());
+
+    // No fonts is not a startup error.
+    if (font_files.empty())
+    {
+        SDL_LogInfo(
+            SDL_LOG_CATEGORY_APPLICATION,
+            "Ultron: no TTF/OTF fonts found in '%s'; continuing.",
+            kUiDirectory);
+
+        return 0;
+    }
+
+    size_t registered_count = 0;
+
+    for (const std::string& font_path : font_files)
+    {
+        // Family, style and weight are read from the font metadata.
+        if (Rml::LoadFontFace(font_path.c_str()))
+        {
+            ++registered_count;
+
+            SDL_LogInfo(
+                SDL_LOG_CATEGORY_APPLICATION,
+                "Ultron: registered font '%s'.",
+                font_path.c_str());
+        }
+        else
+        {
+            // A bad font must not prevent other fonts or RML
+            // documents from loading.
+            SDL_LogWarn(
+                SDL_LOG_CATEGORY_APPLICATION,
+                "Ultron: unable to register font '%s'; skipping.",
+                font_path.c_str());
+        }
+    }
+
+    SDL_LogInfo(
+        SDL_LOG_CATEGORY_APPLICATION,
+        "Ultron: automatically registered %zu of %zu font(s).",
+        registered_count,
+        font_files.size());
+
+    return registered_count;
+}
+
+// -------------------------------------------------------------
+// Generate document name from RML path
+// -------------------------------------------------------------
+
 std::string GetDocumentNameFromPath(const std::string& load_path)
 {
     std::string path = NormalizeSlashes(load_path);
@@ -561,7 +682,6 @@ std::string GetDocumentNameFromPath(const std::string& load_path)
     }
     else
     {
-        // Support an absolute path whose final directory is "ui".
         const size_t marker = path.find("/ui/");
 
         if (marker != std::string::npos)
@@ -584,10 +704,10 @@ struct DiscoveredDocument
     std::string path;
 };
 
-// Discover and load every RML file found inside ui/.
-//
-// The resulting document names are derived from the file paths.
-// No screen name is hardcoded as the default.
+// -------------------------------------------------------------
+// Existing automatic RML loader
+// -------------------------------------------------------------
+
 size_t AutoLoadDocumentsFromUI(std::string& first_document_name)
 {
     first_document_name.clear();
@@ -613,6 +733,7 @@ size_t AutoLoadDocumentsFromUI(std::string& first_document_name)
     }
 
     std::vector<DiscoveredDocument> candidates;
+
     candidates.reserve(
         file_count > 0 ? static_cast<size_t>(file_count) : 0);
 
@@ -631,7 +752,8 @@ size_t AutoLoadDocumentsFromUI(std::string& first_document_name)
             continue;
         }
 
-        std::string name = GetDocumentNameFromPath(path);
+        std::string name =
+            GetDocumentNameFromPath(path);
 
         if (name.empty())
         {
@@ -642,7 +764,6 @@ size_t AutoLoadDocumentsFromUI(std::string& first_document_name)
             continue;
         }
 
-        // Keep the fallback name reserved for the internal document.
         if (name == kFallbackDocumentName)
         {
             SDL_LogWarn(
@@ -654,10 +775,12 @@ size_t AutoLoadDocumentsFromUI(std::string& first_document_name)
         }
 
         candidates.push_back(
-            DiscoveredDocument{std::move(name), std::move(path)});
+            DiscoveredDocument{
+                std::move(name),
+                std::move(path)
+            });
     }
 
-    // Make startup deterministic across runs and devices.
     std::sort(
         candidates.begin(),
         candidates.end(),
@@ -696,7 +819,6 @@ size_t AutoLoadDocumentsFromUI(std::string& first_document_name)
             continue;
         }
 
-        // Loaded screens are registered but not all shown at once.
         document->Hide();
 
         g_documents.emplace(candidate.name, document);
@@ -812,8 +934,6 @@ bool ShowDocumentInternal(
 
     if (g_documents.find(name) == g_documents.end())
     {
-        // Runtime loading remains available for screens not discovered
-        // during startup. The automatic loader itself does not need it.
         if (rml_path == nullptr || rml_path[0] == '\0')
         {
             SDL_LogWarn(
@@ -877,7 +997,7 @@ Rml::String EscapeRmlText(std::string_view text)
 }
 
 // -------------------------------------------------------------
-// Embedded black fallback
+// Existing embedded black fallback
 // -------------------------------------------------------------
 
 bool ShowBlackFallback()
@@ -939,8 +1059,6 @@ bool ShowBlackFallback()
 
 Rml::TouchId AllocateRmlTouchId()
 {
-    // Active contacts are finite in number. Skip zero and every ID
-    // currently assigned to an active contact, including after wraparound.
     for (;;)
     {
         const Rml::TouchId candidate = g_next_rml_touch_id++;
@@ -972,10 +1090,9 @@ Rml::Touch MakeRmlTouch(
     const SDL_Event& event,
     Rml::TouchId identifier)
 {
-    const Rml::Vector2i dimensions = g_context->GetDimensions();
+    const Rml::Vector2i dimensions =
+        g_context->GetDimensions();
 
-    // Match the coordinate conversion used by the RmlUi SDL3 backend.
-    // SDL finger coordinates are normalized to the window.
     const Rml::Vector2f position{
         event.tfinger.x * static_cast<float>(dimensions.x),
         event.tfinger.y * static_cast<float>(dimensions.y)
@@ -991,13 +1108,6 @@ void CancelRmlTouchStates(const Rml::TouchList& touches)
         return;
     }
 
-    // RmlUi's ProcessTouchCancel currently releases the primary mouse
-    // button internally. Move the pointer outside the UI first so a
-    // cancelled press does not accidentally become a click on the
-    // element where the finger was originally pressed.
-    //
-    // The touch cancellation still goes through RmlUi's public API,
-    // which clears the corresponding internal touch states.
     g_context->ProcessMouseMove(
         -1,
         -1,
@@ -1018,6 +1128,7 @@ void CancelTouchForKey(const SDLTouchKey& key)
     if (g_context != nullptr)
     {
         Rml::TouchList touches;
+
         touches.push_back(
             Rml::Touch{
                 found->second,
@@ -1069,8 +1180,6 @@ void HandleTouchEvent(const SDL_Event& event)
         event.tfinger.fingerID
     };
 
-    // Do not start or move touches while the app is paused. Any existing
-    // mapping for this contact is cancelled instead.
     if (g_paused.load(std::memory_order_relaxed))
     {
         CancelTouchForKey(key);
@@ -1085,9 +1194,6 @@ void HandleTouchEvent(const SDL_Event& event)
 
             if (existing != g_active_touches.end())
             {
-                // A second DOWN for the same device/finger pair arrived
-                // before the prior contact was closed. Recover the state
-                // rather than sending a duplicate start to RmlUi.
                 SDL_LogWarn(
                     SDL_LOG_CATEGORY_APPLICATION,
                     "Ultron: duplicate finger-down detected; "
@@ -1096,7 +1202,8 @@ void HandleTouchEvent(const SDL_Event& event)
                 CancelTouchForKey(key);
             }
 
-            const Rml::TouchId identifier = AllocateRmlTouchId();
+            const Rml::TouchId identifier =
+                AllocateRmlTouchId();
 
             g_active_touches.emplace(key, identifier);
 
@@ -1114,8 +1221,6 @@ void HandleTouchEvent(const SDL_Event& event)
         {
             const auto found = g_active_touches.find(key);
 
-            // Ignore an orphan motion event. It must not create a new
-            // contact or resurrect a touch that has already ended.
             if (found == g_active_touches.end())
             {
                 return;
@@ -1135,8 +1240,6 @@ void HandleTouchEvent(const SDL_Event& event)
         {
             const auto found = g_active_touches.find(key);
 
-            // An unmatched UP is harmless; there is no active contact
-            // to release in RmlUi.
             if (found == g_active_touches.end())
             {
                 return;
@@ -1156,8 +1259,6 @@ void HandleTouchEvent(const SDL_Event& event)
 
         case SDL_EVENT_FINGER_CANCELED:
         {
-            // Cancellation is not a normal finger-up. Clear the tracked
-            // RmlUi touch state without treating it as a successful tap.
             CancelTouchForKey(key);
             return;
         }
@@ -1182,14 +1283,10 @@ void HandleInputEvent(
         case SDL_EVENT_FINGER_MOTION:
         case SDL_EVENT_FINGER_UP:
         case SDL_EVENT_FINGER_CANCELED:
-            // Touch events are handled here so cancelled contacts and
-            // composite touch identities are handled consistently.
             HandleTouchEvent(event);
             return;
 
         default:
-            // Keep the tested RmlUi SDL backend for mouse, keyboard,
-            // text input, wheel, display and window events.
             RmlSDL::InputEventHandler(
                 g_context,
                 window,
@@ -1200,11 +1297,6 @@ void HandleInputEvent(
 
 // -------------------------------------------------------------
 // Android / SDL lifecycle events
-// -------------------------------------------------------------
-//
-// Process lifecycle events from the main event loop rather than an SDL
-// event filter. Touch cancellation touches RmlUi state, so it must happen
-// on the UI thread where the context is owned.
 // -------------------------------------------------------------
 
 void HandleApplicationEvent(const SDL_Event& event)
@@ -1310,7 +1402,8 @@ bool CreateWindowAndContext(
     SDL_Window*& window,
     SDL_GLContext& gl_context)
 {
-    const int buffer_count = requested_samples > 0 ? 1 : 0;
+    const int buffer_count =
+        requested_samples > 0 ? 1 : 0;
 
     if (!SDL_GL_SetAttribute(
             SDL_GL_MULTISAMPLEBUFFERS,
@@ -1465,7 +1558,8 @@ extern "C" bool Ultron_SetElementClass(
         return false;
     }
 
-    Rml::Element* element = FindActiveElement(element_id);
+    Rml::Element* element =
+        FindActiveElement(element_id);
 
     if (element == nullptr)
     {
@@ -1486,14 +1580,14 @@ extern "C" bool Ultron_SetElementText(
         return false;
     }
 
-    Rml::Element* element = FindActiveElement(element_id);
+    Rml::Element* element =
+        FindActiveElement(element_id);
 
     if (element == nullptr)
     {
         return false;
     }
 
-    // SetInnerRML interprets markup, so escape ordinary text.
     element->SetInnerRML(EscapeRmlText(text));
 
     return true;
@@ -1512,7 +1606,8 @@ extern "C" bool Ultron_SetElementProperty(
         return false;
     }
 
-    Rml::Element* element = FindActiveElement(element_id);
+    Rml::Element* element =
+        FindActiveElement(element_id);
 
     return element != nullptr &&
            element->SetProperty(property_name, value);
@@ -1531,7 +1626,8 @@ extern "C" bool Ultron_SetElementAttribute(
         return false;
     }
 
-    Rml::Element* element = FindActiveElement(element_id);
+    Rml::Element* element =
+        FindActiveElement(element_id);
 
     if (element == nullptr)
     {
@@ -1556,7 +1652,8 @@ extern "C" bool Ultron_RemoveElementAttribute(
         return false;
     }
 
-    Rml::Element* element = FindActiveElement(element_id);
+    Rml::Element* element =
+        FindActiveElement(element_id);
 
     if (element == nullptr)
     {
@@ -1585,7 +1682,6 @@ extern "C" bool Ultron_PostToUI(
     UITaskQueue& queue = GetUITaskQueue();
     std::lock_guard lock(queue.mutex);
 
-    // Recheck under lock to avoid accepting tasks during shutdown.
     if (!g_accept_ui_tasks.load(std::memory_order_relaxed))
     {
         return false;
@@ -1705,7 +1801,7 @@ int main(int argc, char** argv)
         SDL_PROP_WINDOW_CREATE_HIGH_PIXEL_DENSITY_BOOLEAN,
         true);
 
-    // MSAA remains unchanged: try 4x, then 2x, then no window MSAA.
+    // MSAA: try 4x, then 2x, then no window MSAA.
     SDL_Window* window = nullptr;
     SDL_GLContext gl_context = nullptr;
 
@@ -1868,15 +1964,6 @@ int main(int argc, char** argv)
                 // -------------------------------------------------
                 // Visual Debugger initialization
                 // -------------------------------------------------
-                //
-                // Requires the RmlUi debugger target to be linked
-                // in CMakeLists.txt.
-                //
-                // The debugger starts hidden. Press F8 on a keyboard
-                // to show or hide it.
-                //
-                // If initialization fails, the regular UI continues.
-                // -------------------------------------------------
 
                 const bool debugger_initialized =
                     Rml::Debugger::Initialise(g_context);
@@ -1905,7 +1992,6 @@ int main(int argc, char** argv)
                         window_scale);
                 }
 
-                // A single click listener services all screens.
                 ClickActionListener click_listener(g_context_root);
 
                 if (g_context_root != nullptr)
@@ -1919,18 +2005,17 @@ int main(int argc, char** argv)
                 // -------------------------------------------------
                 // Automatic loader startup
                 // -------------------------------------------------
-                //
-                // There is no mandatory home.rml.
-                // Every valid .rml found inside ui/ is registered.
-                // The first valid screen after sorting its path is
-                // opened, regardless of its filename.
-                //
-                // If no valid RML document can be loaded, the
-                // embedded black fallback is opened instead.
-                // -------------------------------------------------
 
                 std::string startup_document_name;
 
+                // NEW: Automatically discover and register all
+                // TTF/OTF files before loading RML documents.
+                //
+                // No font files is a normal condition.
+                // The existing RML loader still runs afterwards.
+                AutoLoadFontsFromUI();
+
+                // EXISTING RML LOADER — unchanged.
                 AutoLoadDocumentsFromUI(startup_document_name);
 
                 bool startup_ready = false;
@@ -1942,6 +2027,7 @@ int main(int argc, char** argv)
                         false);
                 }
 
+                // EXISTING BLACK FALLBACK — unchanged.
                 if (!startup_ready)
                 {
                     startup_ready = ShowBlackFallback();
@@ -1970,8 +2056,6 @@ int main(int argc, char** argv)
                     g_context_root = nullptr;
                     g_context = nullptr;
 
-                    // Rml::Shutdown() automatically shuts down the
-                    // debugger plugin if it was initialized.
                     Rml::RemoveContext("main");
                     Rml::Shutdown();
                 }
@@ -1985,6 +2069,9 @@ int main(int argc, char** argv)
                         "Ultron: automatic RML loader initialized.");
 
                     SDL_Log(
+                        "Ultron: automatic TTF/OTF font loader initialized.");
+
+                    SDL_Log(
                         "Ultron: shared click connector initialized.");
 
                     while (g_running.load(std::memory_order_relaxed))
@@ -1993,8 +2080,6 @@ int main(int argc, char** argv)
 
                         while (SDL_PollEvent(&event))
                         {
-                            // Lifecycle events and touch-state cleanup
-                            // execute on this UI thread.
                             HandleApplicationEvent(event);
 
                             if (event.type == SDL_EVENT_QUIT)
@@ -2011,9 +2096,6 @@ int main(int argc, char** argv)
                                 break;
                             }
 
-                            // Toggle the Visual Debugger with F8.
-                            // Consume this key event so the regular UI
-                            // does not also process it.
                             if (debugger_initialized &&
                                 event.type == SDL_EVENT_KEY_DOWN &&
                                 event.key.key == SDLK_F8 &&
@@ -2048,8 +2130,6 @@ int main(int argc, char** argv)
                             continue;
                         }
 
-                        // Keep the pixel viewport and RmlUi dimensions
-                        // synchronized after a window-size change.
                         int new_width = 0;
                         int new_height = 0;
 
@@ -2110,9 +2190,6 @@ int main(int argc, char** argv)
                     g_context_root = nullptr;
                     g_context = nullptr;
 
-                    // The click listener is still alive at this point.
-                    // Rml::Shutdown() automatically releases the
-                    // Visual Debugger plugin.
                     Rml::RemoveContext("main");
                     Rml::Shutdown();
                 }
