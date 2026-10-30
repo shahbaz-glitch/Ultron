@@ -11,17 +11,20 @@
             font-size: 28px;
             font-weight: 400;
         }
+
+        button {
+            margin-bottom: 20px;
+            padding: 10px;
+        }
     </style>
 </head>
 
-<body>
+<body id="font-sample">
     <button data-action="toggle_font">SWITCH FONT</button>
 
-    <div id="font-sample">
-        <div>ROBOTO FLEX</div>
-        <div>Font Loading Test</div>
-        <div>ABCDEFGHIJKLMNOPQRSTUVWXYZ</div>
-        <div>0123456789</div>
-    </div>
+    <div>ROBOTO FLEX</div>
+    <div>Font Loading Test</div>
+    <div>ABCDEFGHIJKLMNOPQRSTUVWXYZ</div>
+    <div>0123456789</div>
 </body>
 </rml>
