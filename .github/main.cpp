@@ -1,4 +1,3 @@
-
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #include <SDL3/SDL_filesystem.h>
@@ -16,7 +15,6 @@
 
 #include "RmlUi_Platform_SDL.h"
 #include "RmlUi_Renderer_GL3.h"
-#include "FontDiagnostics.h"
 
 #include <algorithm>
 #include <atomic>
@@ -33,10 +31,7 @@
 #include <utility>
 #include <vector>
 
-// -------------------------------------------------------------
-// Correct C++ function-pointer aliases
-// -------------------------------------------------------------
-
+// Correct C++ function-pointer aliases.
 using UltronActionCallback = void (*)();
 using UltronUITaskCallback = void (*)(void* user_data);
 
@@ -95,7 +90,7 @@ constexpr const char* kUiDirectory = "ui";
 constexpr const char* kFontsDirectory = "fonts";
 
 constexpr const char* kFallbackDocumentName =
-    "ultron_internal_black_fallback";
+    "__ultron_internal_black_fallback__";
 
 std::atomic_bool g_running{true};
 std::atomic_bool g_paused{false};
@@ -110,16 +105,6 @@ std::unordered_map<std::string, Rml::ElementDocument*> g_documents;
 std::string g_active_document_name;
 std::vector<std::string> g_document_history;
 std::thread::id g_ui_thread_id{};
-
-// -------------------------------------------------------------
-// Font diagnostic state
-// -------------------------------------------------------------
-
-Rml::ElementDocument* g_font_probe_document = nullptr;
-
-bool g_font_probe_pending = false;
-bool g_font_preflight_ok = false;
-bool g_roboto_font_registered = false;
 
 // -------------------------------------------------------------
 // Robust touch identity
@@ -326,16 +311,14 @@ private:
 public:
     Rml::FileHandle Open(const Rml::String& path) override
     {
-        SDL_IOStream* stream =
-            SDL_IOFromFile(path.c_str(), "rb");
+        SDL_IOStream* stream = SDL_IOFromFile(path.c_str(), "rb");
 
         if (stream == nullptr)
         {
             SDL_LogWarn(
                 SDL_LOG_CATEGORY_APPLICATION,
-                "Ultron: unable to open UI resource '%s'. SDL: %s",
-                path.c_str(),
-                SDL_GetError());
+                "Ultron: unable to open UI resource '%s'.",
+                path.c_str());
 
             return 0;
         }
@@ -407,8 +390,7 @@ public:
             return 0;
         }
 
-        const Sint64 position =
-            SDL_TellIO(ToStream(file));
+        const Sint64 position = SDL_TellIO(ToStream(file));
 
         return position >= 0
             ? static_cast<size_t>(position)
@@ -609,6 +591,8 @@ void CollectFontFiles(
         SDL_GLOB_CASEINSENSITIVE,
         &file_count);
 
+    // Missing font files are completely normal.
+    // Do not stop startup when there are no matching files.
     if (discovered_files == nullptr)
     {
         SDL_ClearError();
@@ -640,39 +624,31 @@ size_t AutoLoadFontsFromFonts()
 {
     std::vector<std::string> font_files;
 
-    // Discover TTF files.
+    // Discover TTF files inside the root fonts/ directory.
     CollectFontFiles("*.ttf", font_files);
 
-    // Discover OTF files.
+    // Discover OTF files inside the root fonts/ directory.
     CollectFontFiles("*.otf", font_files);
 
-    // ---------------------------------------------------------
-    // Explicit Roboto Flex diagnostic registration.
-    //
-    // This ensures the test does not depend exclusively on
-    // SDL_GlobDirectory discovering the file.
-    // ---------------------------------------------------------
-
-    font_files.emplace_back(
-        UltronFontDiagnostics::FontPath);
-
-    // Deterministic loading order.
+    // Keep loading order deterministic.
     std::sort(
         font_files.begin(),
         font_files.end());
 
-    // Remove duplicate paths.
+    // Avoid accidentally loading the same path twice.
     font_files.erase(
         std::unique(
             font_files.begin(),
             font_files.end()),
         font_files.end());
 
+    // No fonts is not a startup error.
     if (font_files.empty())
     {
         SDL_LogInfo(
             SDL_LOG_CATEGORY_APPLICATION,
-            "Ultron: no TTF/OTF fonts found; continuing.");
+            "Ultron: no TTF/OTF fonts found in '%s'; continuing.",
+            kFontsDirectory);
 
         return 0;
     }
@@ -681,14 +657,8 @@ size_t AutoLoadFontsFromFonts()
 
     for (const std::string& font_path : font_files)
     {
-        const bool is_roboto_flex =
-            font_path == UltronFontDiagnostics::FontPath;
-
-        // Family, style and weight are read from font metadata.
-        const bool registered =
-            Rml::LoadFontFace(font_path.c_str());
-
-        if (registered)
+        // Family, style and weight are read from the font metadata.
+        if (Rml::LoadFontFace(font_path.c_str()))
         {
             ++registered_count;
 
@@ -696,32 +666,15 @@ size_t AutoLoadFontsFromFonts()
                 SDL_LOG_CATEGORY_APPLICATION,
                 "Ultron: registered font '%s'.",
                 font_path.c_str());
-
-            if (is_roboto_flex)
-            {
-                g_roboto_font_registered = true;
-
-                SDL_Log(
-                    "[FONT TEST][PASS] "
-                    "Rml::LoadFontFace registered Roboto Flex.");
-            }
         }
         else
         {
+            // A bad font must not prevent other fonts or RML
+            // documents from loading.
             SDL_LogWarn(
                 SDL_LOG_CATEGORY_APPLICATION,
                 "Ultron: unable to register font '%s'; skipping.",
                 font_path.c_str());
-
-            if (is_roboto_flex)
-            {
-                g_roboto_font_registered = false;
-
-                SDL_LogError(
-                    SDL_LOG_CATEGORY_APPLICATION,
-                    "[FONT TEST][FAIL] "
-                    "Rml::LoadFontFace could not register Roboto Flex.");
-            }
         }
     }
 
@@ -731,10 +684,6 @@ size_t AutoLoadFontsFromFonts()
         registered_count,
         font_files.size());
 
-    SDL_Log(
-        "[FONT TEST] Roboto Flex registration: %s",
-        g_roboto_font_registered ? "PASS" : "FAIL");
-
     return registered_count;
 }
 
@@ -742,8 +691,7 @@ size_t AutoLoadFontsFromFonts()
 // Generate document name from RML path
 // -------------------------------------------------------------
 
-std::string GetDocumentNameFromPath(
-    const std::string& load_path)
+std::string GetDocumentNameFromPath(const std::string& load_path)
 {
     std::string path = NormalizeSlashes(load_path);
 
@@ -789,8 +737,7 @@ struct DiscoveredDocument
 // Existing automatic RML loader
 // -------------------------------------------------------------
 
-size_t AutoLoadDocumentsFromUI(
-    std::string& first_document_name)
+size_t AutoLoadDocumentsFromUI(std::string& first_document_name)
 {
     first_document_name.clear();
 
@@ -817,9 +764,7 @@ size_t AutoLoadDocumentsFromUI(
     std::vector<DiscoveredDocument> candidates;
 
     candidates.reserve(
-        file_count > 0
-            ? static_cast<size_t>(file_count)
-            : 0);
+        file_count > 0 ? static_cast<size_t>(file_count) : 0);
 
     for (int index = 0; index < file_count; ++index)
     {
@@ -935,8 +880,7 @@ size_t AutoLoadDocumentsFromUI(
 // Multiple-document navigation
 // -------------------------------------------------------------
 
-Rml::ElementDocument* FindDocument(
-    const char* document_name)
+Rml::ElementDocument* FindDocument(const char* document_name)
 {
     if (document_name == nullptr || document_name[0] == '\0')
     {
@@ -1005,8 +949,7 @@ bool ShowDocumentInternal(
     const char* rml_path,
     bool remember_current)
 {
-    if (!RequireUIThread("Ultron_ShowDocument") ||
-        g_context == nullptr)
+    if (!RequireUIThread("Ultron_ShowDocument") || g_context == nullptr)
     {
         return false;
     }
@@ -1377,7 +1320,6 @@ void HandleInputEvent(
                 g_context,
                 window,
                 event);
-
             return;
     }
 }
@@ -1407,7 +1349,6 @@ void HandleApplicationEvent(const SDL_Event& event)
             g_paused.store(
                 false,
                 std::memory_order_relaxed);
-
             break;
         }
 
@@ -1427,7 +1368,6 @@ void HandleApplicationEvent(const SDL_Event& event)
         {
             SDL_Log(
                 "Ultron: Android low-memory notification received.");
-
             break;
         }
 
@@ -1438,7 +1378,6 @@ void HandleApplicationEvent(const SDL_Event& event)
             g_running.store(
                 false,
                 std::memory_order_relaxed);
-
             break;
         }
 
@@ -1446,10 +1385,6 @@ void HandleApplicationEvent(const SDL_Event& event)
             break;
     }
 }
-
-// -------------------------------------------------------------
-// Startup failure helper
-// -------------------------------------------------------------
 
 int Fail(
     SDL_Window* window,
@@ -1577,9 +1512,7 @@ extern "C" bool Ultron_RegisterAction(
     const char* name,
     UltronActionCallback callback)
 {
-    if (name == nullptr ||
-        name[0] == '\0' ||
-        callback == nullptr)
+    if (name == nullptr || name[0] == '\0' || callback == nullptr)
     {
         return false;
     }
@@ -1605,8 +1538,7 @@ extern "C" bool Ultron_ShowDocument(
 
 extern "C" bool Ultron_GoBack()
 {
-    if (!RequireUIThread("Ultron_GoBack") ||
-        g_context == nullptr)
+    if (!RequireUIThread("Ultron_GoBack") || g_context == nullptr)
     {
         return false;
     }
@@ -1672,8 +1604,7 @@ extern "C" bool Ultron_SetElementText(
     const char* element_id,
     const char* text)
 {
-    if (!RequireUIThread("Ultron_SetElementText") ||
-        text == nullptr)
+    if (!RequireUIThread("Ultron_SetElementText") || text == nullptr)
     {
         return false;
     }
@@ -1785,8 +1716,7 @@ extern "C" bool Ultron_PostToUI(
         return false;
     }
 
-    queue.tasks.push(
-        PendingUITask{callback, user_data});
+    queue.tasks.push(PendingUITask{callback, user_data});
 
     return true;
 }
@@ -1811,11 +1741,6 @@ int main(int argc, char** argv)
 
     g_active_touches.clear();
     g_next_rml_touch_id = 1;
-
-    g_font_probe_document = nullptr;
-    g_font_probe_pending = false;
-    g_font_preflight_ok = false;
-    g_roboto_font_registered = false;
 
     SDL_SetLogPriority(
         SDL_LOG_CATEGORY_APPLICATION,
@@ -1905,15 +1830,11 @@ int main(int argc, char** argv)
         SDL_PROP_WINDOW_CREATE_HIGH_PIXEL_DENSITY_BOOLEAN,
         true);
 
-    // ---------------------------------------------------------
-    // MSAA fallback: 4x, then 2x, then no MSAA.
-    // ---------------------------------------------------------
-
+    // MSAA: try 4x, then 2x, then no window MSAA.
     SDL_Window* window = nullptr;
     SDL_GLContext gl_context = nullptr;
 
     constexpr int msaa_attempts[] = {4, 2, 0};
-
     bool gl_ready = false;
 
     for (const int samples : msaa_attempts)
@@ -1967,9 +1888,7 @@ int main(int argc, char** argv)
         SDL_LOG_CATEGORY_APPLICATION,
         "Ultron: window framebuffer MSAA: %s",
         have_msaa_info
-            ? (actual_msaa_samples > 0
-                ? "enabled"
-                : "not available")
+            ? (actual_msaa_samples > 0 ? "enabled" : "not available")
             : "query unavailable");
 
     if (have_msaa_info)
@@ -1981,11 +1900,8 @@ int main(int argc, char** argv)
             actual_msaa_samples);
     }
 
-    const GLubyte* gl_version =
-        glGetString(GL_VERSION);
-
-    const GLubyte* gl_renderer =
-        glGetString(GL_RENDERER);
+    const GLubyte* gl_version = glGetString(GL_VERSION);
+    const GLubyte* gl_renderer = glGetString(GL_RENDERER);
 
     SDL_LogInfo(
         SDL_LOG_CATEGORY_APPLICATION,
@@ -2004,7 +1920,6 @@ int main(int argc, char** argv)
     glDisable(GL_SCISSOR_TEST);
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
-
     SDL_GL_SwapWindow(window);
 
     SDL_Log("Ultron: OpenGL ES context created.");
@@ -2046,8 +1961,7 @@ int main(int argc, char** argv)
         Rml::SetRenderInterface(&render_interface);
         Rml::SetFileInterface(&file_interface);
 
-        const bool rml_initialized =
-            Rml::Initialise();
+        const bool rml_initialized = Rml::Initialise();
 
         if (!rml_initialized)
         {
@@ -2123,31 +2037,14 @@ int main(int argc, char** argv)
 
                 std::string startup_document_name;
 
-                // -------------------------------------------------
-                // FONT DIAGNOSTIC TEST 1:
-                // Asset access, file integrity and FreeType.
-                // -------------------------------------------------
-
-                SDL_Log(
-                    "[FONT TEST] Starting Roboto Flex preflight.");
-
-                g_font_preflight_ok =
-                    UltronFontDiagnostics::RunPreflight();
-
-                SDL_Log(
-                    "[FONT TEST] File/FreeType preflight: %s",
-                    g_font_preflight_ok ? "PASS" : "FAIL");
-
-                // -------------------------------------------------
-                // EXISTING FONT LOADER + DIRECT ROBOTO REGISTRATION
-                // -------------------------------------------------
-
+                // Automatically discover and register all
+                // TTF/OTF files from the root fonts/ directory.
+                //
+                // No font files is a normal condition.
+                // The existing RML loader still runs afterwards.
                 AutoLoadFontsFromFonts();
 
-                // -------------------------------------------------
                 // EXISTING RML LOADER — unchanged.
-                // -------------------------------------------------
-
                 AutoLoadDocumentsFromUI(startup_document_name);
 
                 bool startup_ready = false;
@@ -2159,10 +2056,7 @@ int main(int argc, char** argv)
                         false);
                 }
 
-                // -------------------------------------------------
                 // EXISTING BLACK FALLBACK — unchanged.
-                // -------------------------------------------------
-
                 if (!startup_ready)
                 {
                     startup_ready = ShowBlackFallback();
@@ -2177,44 +2071,10 @@ int main(int argc, char** argv)
                     exit_code = 9;
                 }
 
-                // -------------------------------------------------
-                // FONT DIAGNOSTIC TEST 2:
-                // Create a temporary RmlUi text probe.
-                // -------------------------------------------------
-
-                if (startup_ready)
-                {
-                    g_font_probe_document =
-                        UltronFontDiagnostics::CreateRenderProbe(
-                            g_context);
-
-                    g_font_probe_pending =
-                        g_font_probe_document != nullptr;
-
-                    if (!g_font_probe_pending)
-                    {
-                        SDL_LogError(
-                            SDL_LOG_CATEGORY_APPLICATION,
-                            "[FONT TEST] Unable to create rendering probe.");
-                    }
-                }
-
-                // -------------------------------------------------
-                // Startup failure cleanup
-                // -------------------------------------------------
-
                 if (exit_code != 0)
                 {
                     StopAcceptingUITasks();
                     CancelAllActiveTouches();
-
-                    if (g_font_probe_document != nullptr)
-                    {
-                        g_font_probe_document->Hide();
-                        g_font_probe_document = nullptr;
-                    }
-
-                    g_font_probe_pending = false;
 
                     g_documents.clear();
                     g_document_history.clear();
@@ -2242,13 +2102,6 @@ int main(int argc, char** argv)
 
                     SDL_Log(
                         "Ultron: shared click connector initialized.");
-
-                    SDL_Log(
-                        "[FONT TEST] Waiting for first rendered probe frame.");
-
-                    // -------------------------------------------------
-                    // Main event and rendering loop
-                    // -------------------------------------------------
 
                     while (g_running.load(std::memory_order_relaxed))
                     {
@@ -2351,93 +2204,11 @@ int main(int argc, char** argv)
                         g_context->Render();
                         render_interface.EndFrame();
 
-                        // -------------------------------------------------
-                        // FONT DIAGNOSTIC TEST 3:
-                        // Verify actual OpenGL framebuffer pixels.
-                        //
-                        // This runs once, after the probe has rendered.
-                        // -------------------------------------------------
-
-                        if (g_font_probe_pending &&
-                            g_font_probe_document != nullptr)
-                        {
-                            SDL_Log(
-                                "[FONT TEST] Checking rendered glyph pixels.");
-
-                            const bool pixel_test_ok =
-                                UltronFontDiagnostics::CheckRenderedGlyphPixels(
-                                    width,
-                                    height,
-                                    window_scale);
-
-                            SDL_Log(
-                                "[FONT TEST] Framebuffer pixel test: %s",
-                                pixel_test_ok ? "PASS" : "FAIL");
-
-                            SDL_Log(
-                                "[FONT TEST] RmlUi registration: %s",
-                                g_roboto_font_registered
-                                    ? "PASS"
-                                    : "FAIL");
-
-                            SDL_Log(
-                                "[FONT TEST] Independent preflight: %s",
-                                g_font_preflight_ok
-                                    ? "PASS"
-                                    : "FAIL");
-
-                            if (pixel_test_ok &&
-                                g_roboto_font_registered &&
-                                g_font_preflight_ok)
-                            {
-                                SDL_Log(
-                                    "[FONT RESULT] All major font "
-                                    "diagnostic stages passed.");
-                            }
-                            else if (pixel_test_ok &&
-                                     !g_roboto_font_registered)
-                            {
-                                SDL_LogWarn(
-                                    SDL_LOG_CATEGORY_APPLICATION,
-                                    "[FONT RESULT] Text pixels were rendered, "
-                                    "but Roboto Flex registration failed. "
-                                    "A fallback font may have been used.");
-                            }
-                            else
-                            {
-                                SDL_LogError(
-                                    SDL_LOG_CATEGORY_APPLICATION,
-                                    "[FONT RESULT] One or more font "
-                                    "diagnostic stages failed.");
-                            }
-
-                            // Hide temporary test UI.
-                            g_font_probe_document->Hide();
-
-                            g_font_probe_document = nullptr;
-                            g_font_probe_pending = false;
-
-                            // Print the complete diagnostic report.
-                            UltronFontDiagnostics::PrintFinalReport();
-                        }
-
                         SDL_GL_SwapWindow(window);
                     }
 
-                    // -------------------------------------------------
-                    // Application shutdown
-                    // -------------------------------------------------
-
                     StopAcceptingUITasks();
                     CancelAllActiveTouches();
-
-                    if (g_font_probe_document != nullptr)
-                    {
-                        g_font_probe_document->Hide();
-                        g_font_probe_document = nullptr;
-                    }
-
-                    g_font_probe_pending = false;
 
                     g_documents.clear();
                     g_document_history.clear();
