@@ -87,6 +87,7 @@ namespace
 // -------------------------------------------------------------
 
 constexpr const char* kUiDirectory = "ui";
+constexpr const char* kFontsDirectory = "fonts";
 
 constexpr const char* kFallbackDocumentName =
     "__ultron_internal_black_fallback__";
@@ -515,7 +516,7 @@ std::string GetRmlLoadPath(const char* discovered_path)
 }
 
 // -------------------------------------------------------------
-// NEW: Automatic TTF / OTF font loader
+// Automatic TTF / OTF font loader
 // -------------------------------------------------------------
 
 bool EndsWithFontExtension(const std::string& path)
@@ -550,6 +551,34 @@ bool EndsWithFontExtension(const std::string& path)
     return ends_with(".ttf") || ends_with(".otf");
 }
 
+std::string GetFontLoadPath(const char* discovered_path)
+{
+    if (discovered_path == nullptr || discovered_path[0] == '\0')
+    {
+        return {};
+    }
+
+    std::string path = NormalizeSlashes(discovered_path);
+
+    while (StartsWith(path, "./"))
+    {
+        path.erase(0, 2);
+    }
+
+    if (StartsWith(path, "assets://") ||
+        (!path.empty() && path[0] == '/'))
+    {
+        return path;
+    }
+
+    if (StartsWith(path, "fonts/"))
+    {
+        return path;
+    }
+
+    return std::string(kFontsDirectory) + "/" + path;
+}
+
 void CollectFontFiles(
     const char* pattern,
     std::vector<std::string>& font_files)
@@ -557,7 +586,7 @@ void CollectFontFiles(
     int file_count = 0;
 
     char** discovered_files = SDL_GlobDirectory(
-        kUiDirectory,
+        kFontsDirectory,
         pattern,
         SDL_GLOB_CASEINSENSITIVE,
         &file_count);
@@ -578,7 +607,7 @@ void CollectFontFiles(
         }
 
         std::string path =
-            GetRmlLoadPath(discovered_files[index]);
+            GetFontLoadPath(discovered_files[index]);
 
         if (path.empty() || !EndsWithFontExtension(path))
         {
@@ -591,14 +620,14 @@ void CollectFontFiles(
     SDL_free(discovered_files);
 }
 
-size_t AutoLoadFontsFromUI()
+size_t AutoLoadFontsFromFonts()
 {
     std::vector<std::string> font_files;
 
-    // Discover TTF files.
+    // Discover TTF files inside the root fonts/ directory.
     CollectFontFiles("*.ttf", font_files);
 
-    // Discover OTF files.
+    // Discover OTF files inside the root fonts/ directory.
     CollectFontFiles("*.otf", font_files);
 
     // Keep loading order deterministic.
@@ -619,7 +648,7 @@ size_t AutoLoadFontsFromUI()
         SDL_LogInfo(
             SDL_LOG_CATEGORY_APPLICATION,
             "Ultron: no TTF/OTF fonts found in '%s'; continuing.",
-            kUiDirectory);
+            kFontsDirectory);
 
         return 0;
     }
@@ -2008,12 +2037,12 @@ int main(int argc, char** argv)
 
                 std::string startup_document_name;
 
-                // NEW: Automatically discover and register all
-                // TTF/OTF files before loading RML documents.
+                // Automatically discover and register all
+                // TTF/OTF files from the root fonts/ directory.
                 //
                 // No font files is a normal condition.
                 // The existing RML loader still runs afterwards.
-                AutoLoadFontsFromUI();
+                AutoLoadFontsFromFonts();
 
                 // EXISTING RML LOADER — unchanged.
                 AutoLoadDocumentsFromUI(startup_document_name);
