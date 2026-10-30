@@ -15,9 +15,13 @@
 </head>
 
 <body>
-    <div>ROBOTO FLEX</div>
-    <div>Font Loading Test</div>
-    <div>ABCDEFGHIJKLMNOPQRSTUVWXYZ</div>
-    <div>0123456789</div>
+    <button data-action="toggle_font">SWITCH FONT</button>
+
+    <div id="font-sample">
+        <div>ROBOTO FLEX</div>
+        <div>Font Loading Test</div>
+        <div>ABCDEFGHIJKLMNOPQRSTUVWXYZ</div>
+        <div>0123456789</div>
+    </div>
 </body>
 </rml>
