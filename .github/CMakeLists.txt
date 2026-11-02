@@ -179,6 +179,7 @@ if(NOT EXISTS "${ULTRON_PLUTOVG_BUILD_DIR}/plutovgConfig.cmake")
 endif()
 
 # Tell CMake where the generated build-tree packages live.
+
 set(
     plutovg_DIR
     "${ULTRON_PLUTOVG_BUILD_DIR}"
@@ -192,6 +193,7 @@ set(
 )
 
 # PlutoVG first because LunaSVG's config imports its dependency.
+
 find_package(plutovg CONFIG REQUIRED)
 find_package(lunasvg CONFIG REQUIRED)
 
@@ -246,10 +248,14 @@ if(ULTRON_ACTION_SOURCES)
     )
 endif()
 
+# Include directories required by the native application
+# and all automatically discovered action source files.
+
 target_include_directories(
     main
     PRIVATE
 
+    "${CMAKE_CURRENT_LIST_DIR}"
     "${CMAKE_CURRENT_LIST_DIR}/RmlUi/Backends"
 )
 
