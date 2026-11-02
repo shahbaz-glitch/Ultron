@@ -5,12 +5,13 @@
 
 namespace
 {
-    constexpr float BUTTON_LEFT   = 0.20f;
-    constexpr float BUTTON_RIGHT  = 0.80f;
-    constexpr float BUTTON_TOP    = 0.82f;
-    constexpr float BUTTON_BOTTOM = 0.91f;
+    // Generous touch area around the visible button.
+    constexpr float BUTTON_LEFT   = 0.10f;
+    constexpr float BUTTON_RIGHT  = 0.90f;
+    constexpr float BUTTON_TOP    = 0.65f;
+    constexpr float BUTTON_BOTTOM = 0.98f;
 
-    constexpr Uint64 DOUBLE_TAP_MS = 450;
+    constexpr Uint64 DOUBLE_TAP_MS = 700;
 
     bool g_circle_visible = false;
     Uint64 g_last_tap = 0;
@@ -26,58 +27,52 @@ namespace
     }
 
 
-    bool SetCircleVisible(bool visible)
-    {
-        const bool updated = Ultron_SetElementProperty(
-            "red-circle",
-            "display",
-            visible ? "block" : "none"
-        );
-
-        if (updated)
-        {
-            g_circle_visible = visible;
-        }
-        else
-        {
-            SDL_LogWarn(
-                SDL_LOG_CATEGORY_APPLICATION,
-                "Ultron: unable to update red-circle."
-            );
-        }
-
-        return updated;
-    }
-
-
     void HandleButtonTap(float x, float y)
     {
         if (!IsButtonArea(x, y))
-        {
             return;
-        }
 
         const Uint64 now = SDL_GetTicks();
 
-        // A single tap hides an already visible circle.
+        // Circle is visible: one tap hides it.
         if (g_circle_visible)
         {
-            SetCircleVisible(false);
+            if (Ultron_SetElementProperty(
+                    "red-circle", "display", "none"))
+            {
+                g_circle_visible = false;
+
+                Ultron_SetElementText(
+                    "toggle-button", "DOUBLE TAP");
+            }
+
             g_last_tap = 0;
             return;
         }
 
-        // A second tap within the time limit shows the circle.
+        // Second tap within 700 ms: show the circle.
         if (g_last_tap != 0 &&
             now - g_last_tap <= DOUBLE_TAP_MS)
         {
             g_last_tap = 0;
-            SetCircleVisible(true);
+
+            if (Ultron_SetElementProperty(
+                    "red-circle", "display", "block"))
+            {
+                g_circle_visible = true;
+
+                Ultron_SetElementText(
+                    "toggle-button", "HIDE CIRCLE");
+            }
+
             return;
         }
 
-        // Remember the first tap.
+        // First tap: wait for the second tap.
         g_last_tap = now;
+
+        Ultron_SetElementText(
+            "toggle-button", "TAP AGAIN");
     }
 
 
@@ -87,7 +82,7 @@ namespace
     {
         (void)user_data;
 
-        if (event == nullptr ||
+        if (!event ||
             event->type != SDL_EVENT_FINGER_DOWN)
         {
             return false;
@@ -95,10 +90,8 @@ namespace
 
         HandleButtonTap(
             event->tfinger.x,
-            event->tfinger.y
-        );
+            event->tfinger.y);
 
-        // Allow normal RmlUi touch processing too.
         return false;
     }
 
@@ -109,7 +102,7 @@ namespace
     {
         (void)user_data;
 
-        if (event == nullptr ||
+        if (!event ||
             event->type != SDL_EVENT_MOUSE_BUTTON_DOWN ||
             event->button.button != SDL_BUTTON_LEFT)
         {
@@ -119,10 +112,8 @@ namespace
         SDL_Window* window =
             SDL_GetWindowFromID(event->button.windowID);
 
-        if (window == nullptr)
-        {
+        if (!window)
             return false;
-        }
 
         int width = 0;
         int height = 0;
@@ -135,31 +126,24 @@ namespace
 
         HandleButtonTap(
             event->button.x / static_cast<float>(width),
-            event->button.y / static_cast<float>(height)
-        );
+            event->button.y / static_cast<float>(height));
 
         return false;
     }
 
 
-    // Register handlers before the Ultron UI starts.
     [[maybe_unused]] const bool registered = []
     {
-        const bool touch_registered =
-            Ultron_RegisterEventHandler(
-                "home-circle",
-                SDL_EVENT_FINGER_DOWN,
-                &OnFingerDown
-            );
+        const bool touch = Ultron_RegisterEventHandler(
+            "home-circle",
+            SDL_EVENT_FINGER_DOWN,
+            &OnFingerDown);
 
-        const bool mouse_registered =
-            Ultron_RegisterEventHandler(
-                "home-circle",
-                SDL_EVENT_MOUSE_BUTTON_DOWN,
-                &OnMouseButtonDown
-            );
+        const bool mouse = Ultron_RegisterEventHandler(
+            "home-circle",
+            SDL_EVENT_MOUSE_BUTTON_DOWN,
+            &OnMouseButtonDown);
 
-        return touch_registered && mouse_registered;
+        return touch && mouse;
     }();
-
 }
