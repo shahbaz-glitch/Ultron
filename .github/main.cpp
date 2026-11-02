@@ -15,6 +15,7 @@
 
 #include "RmlUi_Platform_SDL.h"
 #include "RmlUi_Renderer_GL3.h"
+#include "ultron_api.h"
 
 #include <algorithm>
 #include <atomic>
@@ -22,6 +23,7 @@
 #include <cstdio>
 #include <exception>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <queue>
 #include <string>
@@ -30,54 +32,6 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
-
-// Correct C++ function-pointer aliases.
-using UltronActionCallback = void (*)();
-using UltronUITaskCallback = void (*)(void* user_data);
-
-// -------------------------------------------------------------
-// Public native APIs
-// -------------------------------------------------------------
-
-extern "C" bool Ultron_RegisterAction(
-    const char* name,
-    UltronActionCallback callback);
-
-extern "C" bool Ultron_ShowDocument(
-    const char* document_name,
-    const char* rml_path);
-
-extern "C" bool Ultron_GoBack();
-
-extern "C" bool Ultron_IsDocumentLoaded(
-    const char* document_name);
-
-extern "C" bool Ultron_SetElementClass(
-    const char* element_id,
-    const char* class_name,
-    bool enabled);
-
-extern "C" bool Ultron_SetElementText(
-    const char* element_id,
-    const char* text);
-
-extern "C" bool Ultron_SetElementProperty(
-    const char* element_id,
-    const char* property_name,
-    const char* value);
-
-extern "C" bool Ultron_SetElementAttribute(
-    const char* element_id,
-    const char* attribute_name,
-    const char* value);
-
-extern "C" bool Ultron_RemoveElementAttribute(
-    const char* element_id,
-    const char* attribute_name);
-
-extern "C" bool Ultron_PostToUI(
-    UltronUITaskCallback callback,
-    void* user_data);
 
 namespace
 {
@@ -95,6 +49,8 @@ constexpr const char* kFallbackDocumentName =
 std::atomic_bool g_running{true};
 std::atomic_bool g_paused{false};
 std::atomic_bool g_accept_ui_tasks{false};
+std::atomic_bool g_sdl_initialized{false};
+std::atomic_bool g_rml_context_ready{false};
 
 // UI objects are accessed only from the main/UI thread.
 Rml::Context* g_context = nullptr;
@@ -144,7 +100,7 @@ std::unordered_map<
 Rml::TouchId g_next_rml_touch_id{1};
 
 // -------------------------------------------------------------
-// Native action registry
+// Action registry (existing API, preserved)
 // -------------------------------------------------------------
 
 using ActionRegistry =
@@ -189,20 +145,347 @@ void DispatchAction(const Rml::String& action_name)
             SDL_LOG_CATEGORY_APPLICATION,
             "Ultron: no native action registered for '%s'.",
             action_name.c_str());
-
         return;
     }
 
-    SDL_LogInfo(
-        SDL_LOG_CATEGORY_APPLICATION,
-        "Ultron: dispatching action '%s'.",
-        action_name.c_str());
-
-    callback();
+    try
+    {
+        callback();
+    }
+    catch (const std::exception& exception)
+    {
+        SDL_LogError(
+            SDL_LOG_CATEGORY_APPLICATION,
+            "Ultron: action '%s' threw an exception: %s",
+            action_name.c_str(),
+            exception.what());
+    }
+    catch (...)
+    {
+        SDL_LogError(
+            SDL_LOG_CATEGORY_APPLICATION,
+            "Ultron: action '%s' threw an unknown exception.",
+            action_name.c_str());
+    }
 }
 
 // -------------------------------------------------------------
-// UI-thread task queue
+// Universal SDL event registry
+// -------------------------------------------------------------
+
+struct SDLEventHandler
+{
+    std::string name;
+    Uint32 event_type = ULTRON_EVENT_ANY;
+    UltronEventCallback callback = nullptr;
+    void* user_data = nullptr;
+    int priority = 0;
+};
+
+using SDLEventRegistry = std::vector<SDLEventHandler>;
+
+SDLEventRegistry& GetSDLEventRegistry()
+{
+    static SDLEventRegistry registry;
+    return registry;
+}
+
+std::mutex& GetSDLEventRegistryMutex()
+{
+    static std::mutex mutex;
+    return mutex;
+}
+
+bool RegisterSDLEventHandlerInternal(
+    const char* name,
+    Uint32 event_type,
+    UltronEventCallback callback,
+    void* user_data,
+    int priority)
+{
+    if (name == nullptr || name[0] == '\0' || callback == nullptr)
+    {
+        return false;
+    }
+
+    std::lock_guard lock(GetSDLEventRegistryMutex());
+    SDLEventRegistry& registry = GetSDLEventRegistry();
+
+    const auto duplicate = std::find_if(
+        registry.begin(),
+        registry.end(),
+        [name, event_type](const SDLEventHandler& handler)
+        {
+            return handler.name == name &&
+                   handler.event_type == event_type;
+        });
+
+    if (duplicate != registry.end())
+    {
+        return false;
+    }
+
+    registry.push_back(SDLEventHandler{
+        name,
+        event_type,
+        callback,
+        user_data,
+        priority
+    });
+
+    return true;
+}
+
+bool DispatchRegisteredSDLEvent(const SDL_Event& event)
+{
+    std::vector<SDLEventHandler> handlers;
+
+    {
+        std::lock_guard lock(GetSDLEventRegistryMutex());
+        const SDLEventRegistry& registry = GetSDLEventRegistry();
+
+        handlers.reserve(registry.size());
+
+        for (const SDLEventHandler& handler : registry)
+        {
+            if (handler.event_type == ULTRON_EVENT_ANY ||
+                handler.event_type == event.type)
+            {
+                handlers.push_back(handler);
+            }
+        }
+    }
+
+    // Higher priority runs first. Equal priorities preserve registration order.
+    std::stable_sort(
+        handlers.begin(),
+        handlers.end(),
+        [](const SDLEventHandler& left,
+           const SDLEventHandler& right)
+        {
+            return left.priority > right.priority;
+        });
+
+    for (const SDLEventHandler& handler : handlers)
+    {
+        try
+        {
+            if (handler.callback(&event, handler.user_data))
+            {
+                return true;
+            }
+        }
+        catch (const std::exception& exception)
+        {
+            SDL_LogError(
+                SDL_LOG_CATEGORY_APPLICATION,
+                "Ultron: SDL event handler '%s' threw: %s",
+                handler.name.c_str(),
+                exception.what());
+        }
+        catch (...)
+        {
+            SDL_LogError(
+                SDL_LOG_CATEGORY_APPLICATION,
+                "Ultron: SDL event handler '%s' threw an unknown exception.",
+                handler.name.c_str());
+        }
+    }
+
+    return false;
+}
+
+// -------------------------------------------------------------
+// Universal RmlUi element/document event registry
+// -------------------------------------------------------------
+
+struct RmlEventHandler
+{
+    std::string name;
+    std::string event_name;
+    UltronRmlEventCallback callback = nullptr;
+    void* user_data = nullptr;
+    int priority = 0;
+};
+
+using RmlEventRegistry = std::vector<RmlEventHandler>;
+
+RmlEventRegistry& GetRmlEventRegistry()
+{
+    static RmlEventRegistry registry;
+    return registry;
+}
+
+std::mutex& GetRmlEventRegistryMutex()
+{
+    static std::mutex mutex;
+    return mutex;
+}
+
+class RmlEventBridgeListener final : public Rml::EventListener
+{
+public:
+    RmlEventBridgeListener(
+        Rml::Element* context_root,
+        std::string event_name)
+        : context_root_(context_root),
+          event_name_(std::move(event_name))
+    {
+    }
+
+    void ProcessEvent(Rml::Event& event) override;
+
+    const std::string& GetEventName() const noexcept
+    {
+        return event_name_;
+    }
+
+private:
+    Rml::Element* context_root_ = nullptr;
+    std::string event_name_;
+};
+
+// Listener objects must outlive the RmlUi context they are attached to.
+// This vector is only modified on the UI thread.
+std::vector<std::unique_ptr<RmlEventBridgeListener>>
+    g_rml_event_listeners;
+
+bool IsUIThread();
+bool RequireUIThread(const char* function_name);
+bool AttachRmlEventListener(const std::string& event_name);
+bool DispatchRegisteredRmlEvent(Rml::Event& event);
+
+bool RegisterRmlEventHandlerInternal(
+    const char* name,
+    const char* event_name,
+    UltronRmlEventCallback callback,
+    void* user_data,
+    int priority)
+{
+    if (name == nullptr || name[0] == '\0' ||
+        event_name == nullptr || event_name[0] == '\0' ||
+        callback == nullptr)
+    {
+        return false;
+    }
+
+    const std::string module_name(name);
+    const std::string registered_event_name(event_name);
+
+    {
+        std::lock_guard lock(GetRmlEventRegistryMutex());
+        RmlEventRegistry& registry = GetRmlEventRegistry();
+
+        const auto duplicate = std::find_if(
+            registry.begin(),
+            registry.end(),
+            [&module_name, &registered_event_name](
+                const RmlEventHandler& handler)
+            {
+                return handler.name == module_name &&
+                       handler.event_name == registered_event_name;
+            });
+
+        if (duplicate != registry.end())
+        {
+            return false;
+        }
+
+        registry.push_back(RmlEventHandler{
+            module_name,
+            registered_event_name,
+            callback,
+            user_data,
+            priority
+        });
+    }
+
+    // Feature modules normally register during static initialization, before
+    // main() creates RmlUi. Runtime registration is also supported on the UI thread.
+    if (g_rml_context_ready.load(std::memory_order_acquire))
+    {
+        if (!RequireUIThread("Ultron_RegisterRmlEventHandler") ||
+            !AttachRmlEventListener(registered_event_name))
+        {
+            std::lock_guard lock(GetRmlEventRegistryMutex());
+            auto& registry = GetRmlEventRegistry();
+            std::erase_if(
+                registry,
+                [&module_name, &registered_event_name](
+                    const RmlEventHandler& handler)
+                {
+                    return handler.name == module_name &&
+                           handler.event_name == registered_event_name;
+                });
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool DispatchRegisteredRmlEvent(Rml::Event& event)
+{
+    std::vector<RmlEventHandler> handlers;
+    const std::string event_name(event.GetType().c_str());
+
+    {
+        std::lock_guard lock(GetRmlEventRegistryMutex());
+        const RmlEventRegistry& registry = GetRmlEventRegistry();
+
+        handlers.reserve(registry.size());
+
+        for (const RmlEventHandler& handler : registry)
+        {
+            if (handler.event_name == event_name)
+            {
+                handlers.push_back(handler);
+            }
+        }
+    }
+
+    std::stable_sort(
+        handlers.begin(),
+        handlers.end(),
+        [](const RmlEventHandler& left,
+           const RmlEventHandler& right)
+        {
+            return left.priority > right.priority;
+        });
+
+    for (const RmlEventHandler& handler : handlers)
+    {
+        try
+        {
+            if (handler.callback(&event, handler.user_data))
+            {
+                return true;
+            }
+        }
+        catch (const std::exception& exception)
+        {
+            SDL_LogError(
+                SDL_LOG_CATEGORY_APPLICATION,
+                "Ultron: RmlUi event handler '%s' (%s) threw: %s",
+                handler.name.c_str(),
+                handler.event_name.c_str(),
+                exception.what());
+        }
+        catch (...)
+        {
+            SDL_LogError(
+                SDL_LOG_CATEGORY_APPLICATION,
+                "Ultron: RmlUi event handler '%s' (%s) threw an unknown exception.",
+                handler.name.c_str(),
+                handler.event_name.c_str());
+        }
+    }
+
+    return false;
+}
+
+// -------------------------------------------------------------
+// UI-thread task queue (existing API, preserved)
 // -------------------------------------------------------------
 
 struct PendingUITask
@@ -243,6 +526,75 @@ bool RequireUIThread(const char* function_name)
         function_name != nullptr ? function_name : "GUI API");
 
     return false;
+}
+
+bool AttachRmlEventListener(const std::string& event_name)
+{
+    if (!RequireUIThread("RmlUi event listener attachment") ||
+        g_context_root == nullptr || event_name.empty())
+    {
+        return false;
+    }
+
+    const auto existing = std::find_if(
+        g_rml_event_listeners.begin(),
+        g_rml_event_listeners.end(),
+        [&event_name](const auto& listener)
+        {
+            return listener != nullptr &&
+                   listener->GetEventName() == event_name;
+        });
+
+    if (existing != g_rml_event_listeners.end())
+    {
+        return true;
+    }
+
+    auto listener = std::make_unique<RmlEventBridgeListener>(
+        g_context_root,
+        event_name);
+
+    g_context_root->AddEventListener(
+        event_name.c_str(),
+        listener.get(),
+        true);
+
+    g_rml_event_listeners.push_back(std::move(listener));
+    return true;
+}
+
+void AttachRegisteredRmlEventListeners()
+{
+    if (!RequireUIThread("AttachRegisteredRmlEventListeners") ||
+        g_context_root == nullptr)
+    {
+        return;
+    }
+
+    std::vector<std::string> event_names;
+    event_names.emplace_back("click"); // Preserve data-action click support.
+
+    {
+        std::lock_guard lock(GetRmlEventRegistryMutex());
+        const RmlEventRegistry& registry = GetRmlEventRegistry();
+
+        event_names.reserve(registry.size() + 1);
+
+        for (const RmlEventHandler& handler : registry)
+        {
+            event_names.push_back(handler.event_name);
+        }
+    }
+
+    std::sort(event_names.begin(), event_names.end());
+    event_names.erase(
+        std::unique(event_names.begin(), event_names.end()),
+        event_names.end());
+
+    for (const std::string& event_name : event_names)
+    {
+        AttachRmlEventListener(event_name);
+    }
 }
 
 void ProcessPendingUITasks()
@@ -319,7 +671,6 @@ public:
                 SDL_LOG_CATEGORY_APPLICATION,
                 "Ultron: unable to open UI resource '%s'.",
                 path.c_str());
-
             return 0;
         }
 
@@ -399,49 +750,54 @@ public:
 };
 
 // -------------------------------------------------------------
-// Shared click connector
+// RmlUi event bridge: generic events + existing data-action clicks
 // -------------------------------------------------------------
 
-class ClickActionListener final : public Rml::EventListener
+void DispatchActionFromRmlEvent(
+    Rml::Event& event,
+    Rml::Element* context_root)
 {
-public:
-    explicit ClickActionListener(Rml::Element* context_root)
-        : context_root_(context_root)
+    if (context_root == nullptr)
     {
+        return;
     }
 
-    void ProcessEvent(Rml::Event& event) override
+    Rml::Element* element = event.GetTargetElement();
+
+    while (element != nullptr && element != context_root)
     {
-        if (context_root_ == nullptr)
+        if (element->HasAttribute("data-action"))
         {
-            return;
-        }
+            const Rml::String action_name =
+                element->GetAttribute<Rml::String>(
+                    "data-action",
+                    Rml::String{});
 
-        Rml::Element* element = event.GetTargetElement();
-
-        while (element != nullptr && element != context_root_)
-        {
-            if (element->HasAttribute("data-action"))
+            if (!action_name.empty())
             {
-                const Rml::String action_name =
-                    element->GetAttribute<Rml::String>(
-                        "data-action",
-                        Rml::String{});
-
-                if (!action_name.empty())
-                {
-                    DispatchAction(action_name);
-                    return;
-                }
+                DispatchAction(action_name);
+                return;
             }
-
-            element = element->GetParentNode();
         }
+
+        element = element->GetParentNode();
+    }
+}
+
+void RmlEventBridgeListener::ProcessEvent(Rml::Event& event)
+{
+    if (DispatchRegisteredRmlEvent(event))
+    {
+        event.StopPropagation();
+        return;
     }
 
-private:
-    Rml::Element* context_root_ = nullptr;
-};
+    // Existing RML data-action behaviour remains unchanged.
+    if (event.GetType() == "click")
+    {
+        DispatchActionFromRmlEvent(event, context_root_);
+    }
+}
 
 // -------------------------------------------------------------
 // Automatic RML loader helpers
@@ -531,8 +887,7 @@ bool EndsWithFontExtension(const std::string& path)
             return false;
         }
 
-        const size_t offset =
-            path.size() - extension_length;
+        const size_t offset = path.size() - extension_length;
 
         for (size_t i = 0; i < extension_length; ++i)
         {
@@ -592,7 +947,6 @@ void CollectFontFiles(
         &file_count);
 
     // Missing font files are completely normal.
-    // Do not stop startup when there are no matching files.
     if (discovered_files == nullptr)
     {
         SDL_ClearError();
@@ -624,32 +978,20 @@ size_t AutoLoadFontsFromFonts()
 {
     std::vector<std::string> font_files;
 
-    // Discover TTF files inside the root fonts/ directory.
     CollectFontFiles("*.ttf", font_files);
-
-    // Discover OTF files inside the root fonts/ directory.
     CollectFontFiles("*.otf", font_files);
 
-    // Keep loading order deterministic.
-    std::sort(
-        font_files.begin(),
-        font_files.end());
-
-    // Avoid accidentally loading the same path twice.
+    std::sort(font_files.begin(), font_files.end());
     font_files.erase(
-        std::unique(
-            font_files.begin(),
-            font_files.end()),
+        std::unique(font_files.begin(), font_files.end()),
         font_files.end());
 
-    // No fonts is not a startup error.
     if (font_files.empty())
     {
         SDL_LogInfo(
             SDL_LOG_CATEGORY_APPLICATION,
             "Ultron: no TTF/OTF fonts found in '%s'; continuing.",
             kFontsDirectory);
-
         return 0;
     }
 
@@ -657,11 +999,9 @@ size_t AutoLoadFontsFromFonts()
 
     for (const std::string& font_path : font_files)
     {
-        // Family, style and weight are read from the font metadata.
         if (Rml::LoadFontFace(font_path.c_str()))
         {
             ++registered_count;
-
             SDL_LogInfo(
                 SDL_LOG_CATEGORY_APPLICATION,
                 "Ultron: registered font '%s'.",
@@ -669,8 +1009,6 @@ size_t AutoLoadFontsFromFonts()
         }
         else
         {
-            // A bad font must not prevent other fonts or RML
-            // documents from loading.
             SDL_LogWarn(
                 SDL_LOG_CATEGORY_APPLICATION,
                 "Ultron: unable to register font '%s'; skipping.",
@@ -756,13 +1094,11 @@ size_t AutoLoadDocumentsFromUI(std::string& first_document_name)
             "Ultron: unable to scan '%s' for RML files: %s",
             kUiDirectory,
             SDL_GetError());
-
         SDL_ClearError();
         return 0;
     }
 
     std::vector<DiscoveredDocument> candidates;
-
     candidates.reserve(
         file_count > 0 ? static_cast<size_t>(file_count) : 0);
 
@@ -781,15 +1117,13 @@ size_t AutoLoadDocumentsFromUI(std::string& first_document_name)
             continue;
         }
 
-        std::string name =
-            GetDocumentNameFromPath(path);
+        std::string name = GetDocumentNameFromPath(path);
 
         if (name.empty())
         {
             SDL_LogWarn(
                 SDL_LOG_CATEGORY_APPLICATION,
                 "Ultron: skipped RML file with an empty document name.");
-
             continue;
         }
 
@@ -799,15 +1133,13 @@ size_t AutoLoadDocumentsFromUI(std::string& first_document_name)
                 SDL_LOG_CATEGORY_APPLICATION,
                 "Ultron: skipped reserved document name '%s'.",
                 name.c_str());
-
             continue;
         }
 
-        candidates.push_back(
-            DiscoveredDocument{
-                std::move(name),
-                std::move(path)
-            });
+        candidates.push_back(DiscoveredDocument{
+            std::move(name),
+            std::move(path)
+        });
     }
 
     std::sort(
@@ -830,7 +1162,6 @@ size_t AutoLoadDocumentsFromUI(std::string& first_document_name)
                 "Ultron: duplicate screen name '%s'; skipped '%s'.",
                 candidate.name.c_str(),
                 candidate.path.c_str());
-
             continue;
         }
 
@@ -844,12 +1175,10 @@ size_t AutoLoadDocumentsFromUI(std::string& first_document_name)
                 "Ultron: failed to load screen '%s' from '%s'.",
                 candidate.name.c_str(),
                 candidate.path.c_str());
-
             continue;
         }
 
         document->Hide();
-
         g_documents.emplace(candidate.name, document);
 
         if (first_document_name.empty())
@@ -906,7 +1235,6 @@ bool SwitchToLoadedDocument(
             SDL_LOG_CATEGORY_APPLICATION,
             "Ultron: document '%s' is not loaded.",
             document_name.c_str());
-
         return false;
     }
 
@@ -969,7 +1297,6 @@ bool ShowDocumentInternal(
                 SDL_LOG_CATEGORY_APPLICATION,
                 "Ultron: screen '%s' is not loaded and no RML path was supplied.",
                 document_name);
-
             return false;
         }
 
@@ -983,7 +1310,6 @@ bool ShowDocumentInternal(
                 "Ultron: failed to load screen '%s' from '%s'.",
                 document_name,
                 rml_path);
-
             return false;
         }
 
@@ -1063,7 +1389,6 @@ bool ShowBlackFallback()
         SDL_LogError(
             SDL_LOG_CATEGORY_APPLICATION,
             "Ultron: unable to create embedded black fallback.");
-
         return false;
     }
 
@@ -1157,12 +1482,10 @@ void CancelTouchForKey(const SDLTouchKey& key)
     if (g_context != nullptr)
     {
         Rml::TouchList touches;
-
-        touches.push_back(
-            Rml::Touch{
-                found->second,
-                Rml::Vector2f{0.0f, 0.0f}
-            });
+        touches.push_back(Rml::Touch{
+            found->second,
+            Rml::Vector2f{0.0f, 0.0f}
+        });
 
         CancelRmlTouchStates(touches);
     }
@@ -1184,11 +1507,10 @@ void CancelAllActiveTouches()
 
         for (const auto& entry : g_active_touches)
         {
-            touches.push_back(
-                Rml::Touch{
-                    entry.second,
-                    Rml::Vector2f{0.0f, 0.0f}
-                });
+            touches.push_back(Rml::Touch{
+                entry.second,
+                Rml::Vector2f{0.0f, 0.0f}
+            });
         }
 
         CancelRmlTouchStates(touches);
@@ -1227,13 +1549,10 @@ void HandleTouchEvent(const SDL_Event& event)
                     SDL_LOG_CATEGORY_APPLICATION,
                     "Ultron: duplicate finger-down detected; "
                     "cancelling stale touch before restarting it.");
-
                 CancelTouchForKey(key);
             }
 
-            const Rml::TouchId identifier =
-                AllocateRmlTouchId();
-
+            const Rml::TouchId identifier = AllocateRmlTouchId();
             g_active_touches.emplace(key, identifier);
 
             const Rml::Touch touch =
@@ -1242,7 +1561,6 @@ void HandleTouchEvent(const SDL_Event& event)
             g_context->ProcessTouchStart(
                 Rml::TouchList{touch},
                 RmlSDL::GetKeyModifierState());
-
             return;
         }
 
@@ -1261,7 +1579,6 @@ void HandleTouchEvent(const SDL_Event& event)
             g_context->ProcessTouchMove(
                 Rml::TouchList{touch},
                 RmlSDL::GetKeyModifierState());
-
             return;
         }
 
@@ -1282,7 +1599,6 @@ void HandleTouchEvent(const SDL_Event& event)
                 RmlSDL::GetKeyModifierState());
 
             g_active_touches.erase(found);
-
             return;
         }
 
@@ -1336,19 +1652,14 @@ void HandleApplicationEvent(const SDL_Event& event)
         case SDL_EVENT_DID_ENTER_BACKGROUND:
         case SDL_EVENT_WILL_ENTER_FOREGROUND:
         {
-            g_paused.store(
-                true,
-                std::memory_order_relaxed);
-
+            g_paused.store(true, std::memory_order_relaxed);
             CancelAllActiveTouches();
             break;
         }
 
         case SDL_EVENT_DID_ENTER_FOREGROUND:
         {
-            g_paused.store(
-                false,
-                std::memory_order_relaxed);
+            g_paused.store(false, std::memory_order_relaxed);
             break;
         }
 
@@ -1360,24 +1671,19 @@ void HandleApplicationEvent(const SDL_Event& event)
             {
                 g_context->ProcessMouseLeave();
             }
-
             break;
         }
 
         case SDL_EVENT_LOW_MEMORY:
         {
-            SDL_Log(
-                "Ultron: Android low-memory notification received.");
+            SDL_Log("Ultron: Android low-memory notification received.");
             break;
         }
 
         case SDL_EVENT_TERMINATING:
         {
             CancelAllActiveTouches();
-
-            g_running.store(
-                false,
-                std::memory_order_relaxed);
+            g_running.store(false, std::memory_order_relaxed);
             break;
         }
 
@@ -1457,7 +1763,6 @@ bool CreateWindowAndContext(
             "Ultron: window creation failed with %d MSAA samples: %s",
             requested_samples,
             SDL_GetError());
-
         return false;
     }
 
@@ -1473,7 +1778,6 @@ bool CreateWindowAndContext(
 
         SDL_DestroyWindow(window);
         window = nullptr;
-
         return false;
     }
 
@@ -1487,10 +1791,8 @@ bool CreateWindowAndContext(
 
         SDL_GL_DestroyContext(gl_context);
         SDL_DestroyWindow(window);
-
         gl_context = nullptr;
         window = nullptr;
-
         return false;
     }
 
@@ -1505,7 +1807,7 @@ bool CreateWindowAndContext(
 } // namespace
 
 // -------------------------------------------------------------
-// Native action registration API
+// Public action / event registration APIs
 // -------------------------------------------------------------
 
 extern "C" bool Ultron_RegisterAction(
@@ -1518,8 +1820,111 @@ extern "C" bool Ultron_RegisterAction(
     }
 
     std::lock_guard lock(GetActionRegistryMutex());
-
     return GetActionRegistry().emplace(name, callback).second;
+}
+
+extern "C" bool Ultron_UnregisterAction(const char* name)
+{
+    if (name == nullptr || name[0] == '\0')
+    {
+        return false;
+    }
+
+    std::lock_guard lock(GetActionRegistryMutex());
+    return GetActionRegistry().erase(name) != 0;
+}
+
+extern "C" bool Ultron_RegisterEventHandler(
+    const char* name,
+    Uint32 event_type,
+    UltronEventCallback callback,
+    void* user_data,
+    int priority)
+{
+    return RegisterSDLEventHandlerInternal(
+        name,
+        event_type,
+        callback,
+        user_data,
+        priority);
+}
+
+extern "C" bool Ultron_RegisterRmlEventHandler(
+    const char* name,
+    const char* event_name,
+    UltronRmlEventCallback callback,
+    void* user_data,
+    int priority)
+{
+    return RegisterRmlEventHandlerInternal(
+        name,
+        event_name,
+        callback,
+        user_data,
+        priority);
+}
+
+extern "C" bool Ultron_UnregisterEventHandlers(const char* name)
+{
+    if (name == nullptr || name[0] == '\0')
+    {
+        return false;
+    }
+
+    const std::string module_name(name);
+    size_t removed_count = 0;
+
+    {
+        std::lock_guard lock(GetSDLEventRegistryMutex());
+        auto& registry = GetSDLEventRegistry();
+        const size_t old_size = registry.size();
+
+        std::erase_if(
+            registry,
+            [&module_name](const SDLEventHandler& handler)
+            {
+                return handler.name == module_name;
+            });
+
+        removed_count += old_size - registry.size();
+    }
+
+    {
+        std::lock_guard lock(GetRmlEventRegistryMutex());
+        auto& registry = GetRmlEventRegistry();
+        const size_t old_size = registry.size();
+
+        std::erase_if(
+            registry,
+            [&module_name](const RmlEventHandler& handler)
+            {
+                return handler.name == module_name;
+            });
+
+        removed_count += old_size - registry.size();
+    }
+
+    return removed_count != 0;
+}
+
+extern "C" Uint32 Ultron_RegisterCustomEventType()
+{
+    if (!g_sdl_initialized.load(std::memory_order_acquire))
+    {
+        return 0;
+    }
+
+    const Uint32 event_type = SDL_RegisterEvents(1);
+
+    if (event_type == 0)
+    {
+        SDL_LogError(
+            SDL_LOG_CATEGORY_APPLICATION,
+            "Ultron: SDL_RegisterEvents failed: %s",
+            SDL_GetError());
+    }
+
+    return event_type;
 }
 
 // -------------------------------------------------------------
@@ -1587,8 +1992,7 @@ extern "C" bool Ultron_SetElementClass(
         return false;
     }
 
-    Rml::Element* element =
-        FindActiveElement(element_id);
+    Rml::Element* element = FindActiveElement(element_id);
 
     if (element == nullptr)
     {
@@ -1596,7 +2000,6 @@ extern "C" bool Ultron_SetElementClass(
     }
 
     element->SetClass(class_name, enabled);
-
     return true;
 }
 
@@ -1609,8 +2012,7 @@ extern "C" bool Ultron_SetElementText(
         return false;
     }
 
-    Rml::Element* element =
-        FindActiveElement(element_id);
+    Rml::Element* element = FindActiveElement(element_id);
 
     if (element == nullptr)
     {
@@ -1618,7 +2020,6 @@ extern "C" bool Ultron_SetElementText(
     }
 
     element->SetInnerRML(EscapeRmlText(text));
-
     return true;
 }
 
@@ -1635,8 +2036,7 @@ extern "C" bool Ultron_SetElementProperty(
         return false;
     }
 
-    Rml::Element* element =
-        FindActiveElement(element_id);
+    Rml::Element* element = FindActiveElement(element_id);
 
     return element != nullptr &&
            element->SetProperty(property_name, value);
@@ -1655,8 +2055,7 @@ extern "C" bool Ultron_SetElementAttribute(
         return false;
     }
 
-    Rml::Element* element =
-        FindActiveElement(element_id);
+    Rml::Element* element = FindActiveElement(element_id);
 
     if (element == nullptr)
     {
@@ -1681,8 +2080,7 @@ extern "C" bool Ultron_RemoveElementAttribute(
         return false;
     }
 
-    Rml::Element* element =
-        FindActiveElement(element_id);
+    Rml::Element* element = FindActiveElement(element_id);
 
     if (element == nullptr)
     {
@@ -1690,7 +2088,6 @@ extern "C" bool Ultron_RemoveElementAttribute(
     }
 
     element->RemoveAttribute(attribute_name);
-
     return true;
 }
 
@@ -1717,7 +2114,6 @@ extern "C" bool Ultron_PostToUI(
     }
 
     queue.tasks.push(PendingUITask{callback, user_data});
-
     return true;
 }
 
@@ -1738,6 +2134,8 @@ int main(int argc, char** argv)
     g_running.store(true, std::memory_order_relaxed);
     g_paused.store(false, std::memory_order_relaxed);
     g_accept_ui_tasks.store(false, std::memory_order_relaxed);
+    g_sdl_initialized.store(false, std::memory_order_relaxed);
+    g_rml_context_ready.store(false, std::memory_order_relaxed);
 
     g_active_touches.clear();
     g_next_rml_touch_id = 1;
@@ -1757,6 +2155,8 @@ int main(int argc, char** argv)
             "SDL_Init failed");
     }
 
+    g_sdl_initialized.store(true, std::memory_order_release);
+
     SDL_SetHint(SDL_HINT_IME_IMPLEMENTED_UI, "composition");
     SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
     SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
@@ -1766,11 +2166,9 @@ int main(int argc, char** argv)
     // ---------------------------------------------------------
 
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, 0);
-
     SDL_GL_SetAttribute(
         SDL_GL_CONTEXT_PROFILE_MASK,
         SDL_GL_CONTEXT_PROFILE_ES);
-
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
@@ -1783,6 +2181,7 @@ int main(int argc, char** argv)
 
     if (properties == 0)
     {
+        g_sdl_initialized.store(false, std::memory_order_release);
         return Fail(
             nullptr,
             nullptr,
@@ -1794,37 +2193,30 @@ int main(int argc, char** argv)
         properties,
         SDL_PROP_WINDOW_CREATE_TITLE_STRING,
         "Ultron");
-
     SDL_SetNumberProperty(
         properties,
         SDL_PROP_WINDOW_CREATE_X_NUMBER,
         SDL_WINDOWPOS_CENTERED);
-
     SDL_SetNumberProperty(
         properties,
         SDL_PROP_WINDOW_CREATE_Y_NUMBER,
         SDL_WINDOWPOS_CENTERED);
-
     SDL_SetNumberProperty(
         properties,
         SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER,
         initial_width);
-
     SDL_SetNumberProperty(
         properties,
         SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER,
         initial_height);
-
     SDL_SetBooleanProperty(
         properties,
         SDL_PROP_WINDOW_CREATE_OPENGL_BOOLEAN,
         true);
-
     SDL_SetBooleanProperty(
         properties,
         SDL_PROP_WINDOW_CREATE_RESIZABLE_BOOLEAN,
         true);
-
     SDL_SetBooleanProperty(
         properties,
         SDL_PROP_WINDOW_CREATE_HIGH_PIXEL_DENSITY_BOOLEAN,
@@ -1856,6 +2248,7 @@ int main(int argc, char** argv)
 
     if (!gl_ready)
     {
+        g_sdl_initialized.store(false, std::memory_order_release);
         return Fail(
             nullptr,
             nullptr,
@@ -1869,7 +2262,6 @@ int main(int argc, char** argv)
             SDL_LOG_CATEGORY_APPLICATION,
             "Ultron: VSync could not be enabled: %s",
             SDL_GetError());
-
         SDL_ClearError();
     }
 
@@ -1930,6 +2322,7 @@ int main(int argc, char** argv)
 
     if (!RmlGL3::Initialize())
     {
+        g_sdl_initialized.store(false, std::memory_order_release);
         return Fail(
             window,
             gl_context,
@@ -1948,8 +2341,7 @@ int main(int argc, char** argv)
         int height = 0;
 
         if (!SDL_GetWindowSizeInPixels(window, &width, &height) ||
-            width < 1 ||
-            height < 1)
+            width < 1 || height < 1)
         {
             width = initial_width;
             height = initial_height;
@@ -1968,7 +2360,6 @@ int main(int argc, char** argv)
             SDL_LogError(
                 SDL_LOG_CATEGORY_APPLICATION,
                 "Ultron startup failure: Rml::Initialise failed.");
-
             exit_code = 7;
         }
         else
@@ -1982,13 +2373,13 @@ int main(int argc, char** argv)
                 SDL_LogError(
                     SDL_LOG_CATEGORY_APPLICATION,
                     "Ultron startup failure: Rml::CreateContext failed.");
-
                 Rml::Shutdown();
                 exit_code = 8;
             }
             else
             {
                 g_context_root = g_context->GetRootElement();
+                g_rml_context_ready.store(true, std::memory_order_release);
 
                 // -------------------------------------------------
                 // Visual Debugger initialization
@@ -2001,35 +2392,25 @@ int main(int argc, char** argv)
                 {
                     SDL_LogInfo(
                         SDL_LOG_CATEGORY_APPLICATION,
-                        "Ultron: Visual Debugger initialized. "
-                        "Press F8 to toggle visibility.");
+                        "Ultron: Visual Debugger initialized. Press F8 to toggle visibility.");
                 }
                 else
                 {
                     SDL_LogWarn(
                         SDL_LOG_CATEGORY_APPLICATION,
-                        "Ultron: Visual Debugger initialization failed; "
-                        "continuing without the debugger.");
+                        "Ultron: Visual Debugger initialization failed; continuing without the debugger.");
                 }
 
-                float window_scale =
-                    SDL_GetWindowDisplayScale(window);
+                float window_scale = SDL_GetWindowDisplayScale(window);
 
                 if (window_scale > 0.0f)
                 {
-                    g_context->SetDensityIndependentPixelRatio(
-                        window_scale);
+                    g_context->SetDensityIndependentPixelRatio(window_scale);
                 }
 
-                ClickActionListener click_listener(g_context_root);
-
-                if (g_context_root != nullptr)
-                {
-                    g_context_root->AddEventListener(
-                        "click",
-                        &click_listener,
-                        true);
-                }
+                // Attach all module-declared RmlUi events to the context root.
+                // The click listener is included automatically to preserve data-action.
+                AttachRegisteredRmlEventListeners();
 
                 // -------------------------------------------------
                 // Automatic loader startup
@@ -2037,14 +2418,7 @@ int main(int argc, char** argv)
 
                 std::string startup_document_name;
 
-                // Automatically discover and register all
-                // TTF/OTF files from the root fonts/ directory.
-                //
-                // No font files is a normal condition.
-                // The existing RML loader still runs afterwards.
                 AutoLoadFontsFromFonts();
-
-                // EXISTING RML LOADER — unchanged.
                 AutoLoadDocumentsFromUI(startup_document_name);
 
                 bool startup_ready = false;
@@ -2056,7 +2430,6 @@ int main(int argc, char** argv)
                         false);
                 }
 
-                // EXISTING BLACK FALLBACK — unchanged.
                 if (!startup_ready)
                 {
                     startup_ready = ShowBlackFallback();
@@ -2067,7 +2440,6 @@ int main(int argc, char** argv)
                     SDL_LogError(
                         SDL_LOG_CATEGORY_APPLICATION,
                         "Ultron startup failure: unable to show any screen or the black fallback.");
-
                     exit_code = 9;
                 }
 
@@ -2078,30 +2450,25 @@ int main(int argc, char** argv)
 
                     g_documents.clear();
                     g_document_history.clear();
-
                     g_active_document = nullptr;
                     g_active_document_name.clear();
 
+                    g_rml_context_ready.store(false, std::memory_order_release);
                     g_context_root = nullptr;
                     g_context = nullptr;
 
                     Rml::RemoveContext("main");
                     Rml::Shutdown();
+                    g_rml_event_listeners.clear();
                 }
                 else
                 {
-                    g_accept_ui_tasks.store(
-                        true,
-                        std::memory_order_release);
+                    g_accept_ui_tasks.store(true, std::memory_order_release);
 
-                    SDL_Log(
-                        "Ultron: automatic RML loader initialized.");
-
-                    SDL_Log(
-                        "Ultron: automatic TTF/OTF font loader initialized.");
-
-                    SDL_Log(
-                        "Ultron: shared click connector initialized.");
+                    SDL_Log("Ultron: automatic RML loader initialized.");
+                    SDL_Log("Ultron: automatic TTF/OTF font loader initialized.");
+                    SDL_Log("Ultron: shared RML event bridge initialized.");
+                    SDL_Log("Ultron: universal SDL event dispatcher initialized.");
 
                     while (g_running.load(std::memory_order_relaxed))
                     {
@@ -2109,14 +2476,19 @@ int main(int argc, char** argv)
 
                         while (SDL_PollEvent(&event))
                         {
+                            // Keep core lifecycle handling authoritative.
                             HandleApplicationEvent(event);
+
+                            // External modules see raw SDL events before RmlUi.
+                            // Returning true consumes the event for the RmlUi input layer.
+                            const bool event_consumed =
+                                DispatchRegisteredSDLEvent(event);
 
                             if (event.type == SDL_EVENT_QUIT)
                             {
                                 g_running.store(
                                     false,
                                     std::memory_order_relaxed);
-
                                 break;
                             }
 
@@ -2125,7 +2497,8 @@ int main(int argc, char** argv)
                                 break;
                             }
 
-                            if (debugger_initialized &&
+                            if (!event_consumed &&
+                                debugger_initialized &&
                                 event.type == SDL_EVENT_KEY_DOWN &&
                                 event.key.key == SDLK_F8 &&
                                 !event.key.repeat)
@@ -2143,7 +2516,10 @@ int main(int argc, char** argv)
                                 continue;
                             }
 
-                            HandleInputEvent(window, event);
+                            if (!event_consumed)
+                            {
+                                HandleInputEvent(window, event);
+                            }
                         }
 
                         if (!g_running.load(std::memory_order_relaxed))
@@ -2168,8 +2544,7 @@ int main(int argc, char** argv)
                                 &new_height) &&
                             new_width > 0 &&
                             new_height > 0 &&
-                            (new_width != width ||
-                             new_height != height))
+                            (new_width != width || new_height != height))
                         {
                             width = new_width;
                             height = new_height;
@@ -2177,21 +2552,16 @@ int main(int argc, char** argv)
                             g_context->SetDimensions(
                                 Rml::Vector2i(width, height));
 
-                            render_interface.SetViewport(
-                                width,
-                                height);
+                            render_interface.SetViewport(width, height);
                         }
 
                         const float new_scale =
                             SDL_GetWindowDisplayScale(window);
 
-                        if (new_scale > 0.0f &&
-                            new_scale != window_scale)
+                        if (new_scale > 0.0f && new_scale != window_scale)
                         {
                             window_scale = new_scale;
-
-                            g_context->SetDensityIndependentPixelRatio(
-                                window_scale);
+                            g_context->SetDensityIndependentPixelRatio(window_scale);
                         }
 
                         glDisable(GL_SCISSOR_TEST);
@@ -2212,15 +2582,17 @@ int main(int argc, char** argv)
 
                     g_documents.clear();
                     g_document_history.clear();
-
                     g_active_document = nullptr;
                     g_active_document_name.clear();
 
+                    // Listener objects remain alive until after Rml::Shutdown().
+                    g_rml_context_ready.store(false, std::memory_order_release);
                     g_context_root = nullptr;
                     g_context = nullptr;
 
                     Rml::RemoveContext("main");
                     Rml::Shutdown();
+                    g_rml_event_listeners.clear();
                 }
             }
         }
@@ -2232,11 +2604,11 @@ int main(int argc, char** argv)
     SDL_GL_DestroyContext(gl_context);
     SDL_DestroyWindow(window);
 
+    g_sdl_initialized.store(false, std::memory_order_release);
     SDL_Quit();
 
     g_ui_thread_id = std::thread::id{};
 
     SDL_Log("Ultron shutdown cleanly.");
-
     return exit_code;
 }
