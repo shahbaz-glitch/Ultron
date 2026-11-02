@@ -1,6 +1,12 @@
 <rml>
     <head>
         <style>
+            body {
+                width: 100%;
+                height: 100%;
+                margin: 0dp;
+            }
+
             #root {
                 width: 100%;
                 height: 100%;
@@ -13,9 +19,14 @@
             #show-circle {
                 width: 200dp;
                 height: 50dp;
+                display: block;
                 border: 1dp #287F9F;
                 border-radius: 10dp;
                 background-color: #0D2431;
+            }
+
+            #show-circle:hover {
+                background-color: #16445A;
             }
 
             #red-circle {
@@ -35,8 +46,9 @@
 
     <body>
         <div id="root">
-            <button id="show-circle"
-                    data-action="show-red-circle">
+            <button
+                id="show-circle"
+                data-action="show-red-circle">
             </button>
 
             <div id="red-circle"></div>
