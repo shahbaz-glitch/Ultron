@@ -124,7 +124,9 @@ jobs:
             "https://github.com/mikke89/RmlUi.git" \
             "${ANDROID_PROJECT}/app/jni/RmlUi"
 
-          # Latest stable LunaSVG, including PlutoVG.
+          # Latest stable LunaSVG, including its PlutoVG source dependency.
+          # This dependency is built separately below with the Android NDK,
+          # then discovered by app/jni/CMakeLists.txt through lunasvg_ROOT.
           mkdir -p \
             "${ANDROID_PROJECT}/app/jni/RmlUi/Dependencies"
 
@@ -135,7 +137,7 @@ jobs:
             "https://github.com/sammycage/lunasvg.git" \
             "${ANDROID_PROJECT}/app/jni/RmlUi/Dependencies/lunasvg"
 
-          # Remove downloaded Git metadata.
+          # Remove downloaded Git metadata
           rm -rf \
             "${ANDROID_PROJECT}/app/jni/SDL/.git" \
             "${ANDROID_PROJECT}/app/jni/freetype/.git" \
@@ -143,6 +145,7 @@ jobs:
             "${ANDROID_PROJECT}/app/jni/RmlUi/Dependencies/lunasvg/.git" \
             "${ANDROID_PROJECT}/app/jni/RmlUi/Dependencies/lunasvg/plutovg/.git"
 
+          # Make the project path available to later steps
           echo "ANDROID_PROJECT=${ANDROID_PROJECT}" >> "${GITHUB_ENV}"
 
       # ============================================================
@@ -181,6 +184,7 @@ jobs:
             --target lunasvg \
             --parallel 2
 
+          # The generated package files are consumed by RmlUi's find_package calls.
           test -f "${LUNASVG_BUILD}/lunasvgConfig.cmake"
           test -f "${LUNASVG_BUILD}/lunasvgTargets.cmake"
           test -f "${LUNASVG_BUILD}/plutovg/plutovgConfig.cmake"
@@ -465,6 +469,7 @@ jobs:
 
       # ============================================================
       # INSTALL CMAKE, C++ SOURCE, ACTIONS, UI AND FONTS
+      # ACTION, UI AND FONT FILES ARE OPTIONAL
       # ============================================================
 
       - name: Install native sources, actions, UI and fonts
@@ -476,23 +481,7 @@ jobs:
           SOURCE_CPP="${GITHUB_WORKSPACE}/.github/main.cpp"
           SOURCE_API="${GITHUB_WORKSPACE}/.github/ultron_api.h"
 
-          # Locate the home feature module.
-          # Preferred location is .github/home.cpp.
-          SOURCE_HOME=""
-
-          for candidate in \
-            "${GITHUB_WORKSPACE}/.github/home.cpp" \
-            "${GITHUB_WORKSPACE}/home.cpp" \
-            "${GITHUB_WORKSPACE}/action/home.cpp" \
-            "${GITHUB_WORKSPACE}/.github/action/home.cpp"; do
-
-            if [[ -f "${candidate}" ]]; then
-              SOURCE_HOME="${candidate}"
-              break
-            fi
-          done
-
-          # Prefer root folders, but support existing repository paths.
+          # Prefer root folders, but support the existing repository paths.
           SOURCE_ACTION=""
 
           for candidate in \
@@ -509,7 +498,8 @@ jobs:
 
           for candidate in \
             "${GITHUB_WORKSPACE}/ui" \
-            "${GITHUB_WORKSPACE}/.github/ui"; do
+            "${GITHUB_WORKSPACE}/.github/ui" \
+            "${GITHUB_WORKSPACE}/.github/ ui"; do
 
             if [[ -d "${candidate}" ]]; then
               SOURCE_UI="${candidate}"
@@ -517,9 +507,11 @@ jobs:
             fi
           done
 
+          # Font files are stored in .github/fonts.
           SOURCE_FONTS="${GITHUB_WORKSPACE}/.github/fonts"
 
-          # Required core files.
+          # These three core files are required.
+          # Action, UI and font folders/files are optional.
           test -f "${SOURCE_CMAKE}"
           test -f "${SOURCE_CPP}"
           test -f "${SOURCE_API}"
@@ -530,12 +522,6 @@ jobs:
 
           test -d "${NATIVE_DIR}"
 
-          mkdir -p \
-            "${NATIVE_DIR}/action" \
-            "${NATIVE_DIR}/ui" \
-            "${ASSETS_UI}" \
-            "${ASSETS_FONTS}"
-
           # Install native build files.
           cp \
             "${SOURCE_CMAKE}" \
@@ -545,12 +531,20 @@ jobs:
             "${SOURCE_CPP}" \
             "${NATIVE_DIR}/main.cpp"
 
-          # Install Ultron API header beside main.cpp.
+          # Install Ultron native API header.
+          # It is kept beside main.cpp for quoted header inclusion.
           cp \
             "${SOURCE_API}" \
             "${NATIVE_DIR}/ultron_api.h"
 
-          # Copy the optional action source folder.
+          # Always create destination directories.
+          mkdir -p \
+            "${NATIVE_DIR}/action" \
+            "${NATIVE_DIR}/ui" \
+            "${ASSETS_UI}" \
+            "${ASSETS_FONTS}"
+
+          # Copy Actions only when the source folder exists.
           if [[ -n "${SOURCE_ACTION}" ]]; then
             echo "Action source: ${SOURCE_ACTION}"
 
@@ -558,40 +552,10 @@ jobs:
               "${SOURCE_ACTION}/." \
               "${NATIVE_DIR}/action/"
           else
-            echo "No action folder supplied."
+            echo "No action folder supplied. Continuing without custom Actions."
           fi
 
-          # ========================================================
-          # HOME FEATURE MODULE
-          # ========================================================
-
-          # CMake discovers feature modules through action GLOB_RECURSE.
-          # Therefore home.cpp must be inside NATIVE_DIR/action,
-          # not beside main.cpp in NATIVE_DIR.
-
-          if [[ -n "${SOURCE_HOME}" ]]; then
-            echo "Home source: ${SOURCE_HOME}"
-
-            cp \
-              "${SOURCE_HOME}" \
-              "${NATIVE_DIR}/action/home.cpp"
-
-          elif [[ ! -f "${NATIVE_DIR}/action/home.cpp" ]]; then
-            echo "::error::home.cpp was not found."
-            echo "::error::Place it in .github/home.cpp or action/home.cpp."
-            exit 1
-          fi
-
-          # Make the shared API header directly available to home.cpp.
-          cp \
-            "${SOURCE_API}" \
-            "${NATIVE_DIR}/action/ultron_api.h"
-
-          # Verify staged feature module and its local API header.
-          test -f "${NATIVE_DIR}/action/home.cpp"
-          test -f "${NATIVE_DIR}/action/ultron_api.h"
-
-          # Copy UI resources.
+          # Copy UI resources only when the source folder exists.
           if [[ -n "${SOURCE_UI}" ]]; then
             echo "UI source: ${SOURCE_UI}"
 
@@ -603,10 +567,10 @@ jobs:
               "${SOURCE_UI}/." \
               "${ASSETS_UI}/"
           else
-            echo "No UI folder supplied."
+            echo "No UI folder supplied. Continuing without external UI files."
           fi
 
-          # Copy font resources.
+          # Copy font resources into Android APK assets.
           if [[ -d "${SOURCE_FONTS}" ]]; then
             echo "Font source: ${SOURCE_FONTS}"
 
@@ -614,7 +578,7 @@ jobs:
               "${SOURCE_FONTS}/." \
               "${ASSETS_FONTS}/"
           else
-            echo "No fonts folder supplied."
+            echo "No fonts folder supplied. Continuing without external fonts."
           fi
 
           echo
@@ -635,19 +599,6 @@ jobs:
           )"
 
           echo "Action .cpp files: ${ACTION_COUNT}"
-
-          echo
-          echo "========================================"
-          echo "HOME FEATURE MODULE"
-          echo "========================================"
-
-          echo "Native source:"
-          echo "${NATIVE_DIR}/action/home.cpp"
-
-          echo "API header:"
-          echo "${NATIVE_DIR}/action/ultron_api.h"
-
-          echo "Home feature staging: PASSED"
 
           echo
           echo "========================================"
@@ -681,7 +632,7 @@ jobs:
           echo "TTF/OTF font files: ${FONT_COUNT}"
 
           echo
-          echo "Native sources, API headers, UI and font resources staged successfully."
+          echo "Native sources, API header, UI and font resources staged successfully."
 
       # ============================================================
       # VERIFY GENERATED PROJECT
@@ -739,8 +690,6 @@ jobs:
           test -f "${NATIVE_DIR}/CMakeLists.txt"
           test -f "${NATIVE_DIR}/main.cpp"
           test -f "${NATIVE_DIR}/ultron_api.h"
-          test -f "${NATIVE_DIR}/action/home.cpp"
-          test -f "${NATIVE_DIR}/action/ultron_api.h"
           test -d "${NATIVE_DIR}/action"
           test -d "${NATIVE_DIR}/ui"
           test -d "${ASSETS_UI}"
@@ -763,6 +712,7 @@ jobs:
           test -f "${NATIVE_DIR}/RmlUi/Include/RmlUi/Core/ElementDocument.h"
           test -f "${NATIVE_DIR}/freetype/CMakeLists.txt"
 
+          # Verify the pinned SVG source and its Android build-tree packages.
           test -f "${LUNASVG_SOURCE}/CMakeLists.txt"
           test -f "${LUNASVG_SOURCE}/plutovg/CMakeLists.txt"
           test -f "${LUNASVG_BUILD}/lunasvgConfig.cmake"
@@ -772,7 +722,7 @@ jobs:
           test -n "$(find "${LUNASVG_BUILD}" -type f -name 'libplutovg.a' -print -quit)"
 
           echo "SDL/FreeType/RmlUi dependencies: PASSED"
-          echo "SVG dependency: PASSED"
+          echo "SVG dependency (LunaSVG ${LUNASVG_VERSION} + PlutoVG): PASSED"
 
           echo
           echo "========================================"
@@ -798,36 +748,6 @@ jobs:
           echo "CMake action discovery: PASSED"
           echo "Discovered Action .cpp files: ${ACTION_COUNT}"
 
-          echo
-          echo "========================================"
-          echo "HOME FEATURE SOURCE VALIDATION"
-          echo "========================================"
-
-          HOME_SOURCE="${NATIVE_DIR}/action/home.cpp"
-
-          test -f "${HOME_SOURCE}"
-          test -f "${NATIVE_DIR}/action/ultron_api.h"
-
-          grep -q '#include "ultron_api.h"' \
-            "${HOME_SOURCE}"
-
-          grep -q 'Ultron_RegisterEventHandler' \
-            "${HOME_SOURCE}"
-
-          grep -q 'SDL_EVENT_FINGER_DOWN' \
-            "${HOME_SOURCE}"
-
-          grep -q 'Ultron_SetElementProperty' \
-            "${HOME_SOURCE}"
-
-          grep -q 'red-circle' \
-            "${HOME_SOURCE}"
-
-          echo "home.cpp staged in CMake action source directory: PASSED"
-          echo "home.cpp API include: PASSED"
-          echo "Touch event registration: PASSED"
-          echo "Red circle UI update: PASSED"
-
           if [[ -f "${NATIVE_DIR}/action/DotAction.cpp" ]]; then
             echo "Test Action detected."
 
@@ -839,7 +759,7 @@ jobs:
 
             echo "Test Action checks: PASSED"
           else
-            echo "DotAction.cpp not supplied."
+            echo "DotAction.cpp not supplied. Continuing normally."
           fi
 
           echo
@@ -851,14 +771,14 @@ jobs:
             test -f "${ASSETS_UI}/home.rml"
             echo "home.rml: supplied and staged"
           else
-            echo "home.rml: not supplied."
+            echo "home.rml: not supplied; external home document is optional"
           fi
 
           if [[ -f "${NATIVE_DIR}/ui/home.rcss" ]]; then
             test -f "${ASSETS_UI}/home.rcss"
             echo "home.rcss: supplied and staged"
           else
-            echo "home.rcss: not supplied."
+            echo "home.rcss: not supplied; stylesheet is optional"
           fi
 
           UI_COUNT="$(
@@ -970,6 +890,8 @@ jobs:
             '#include <GLES3/gl3.h>' \
             "${NATIVE_DIR}/main.cpp"
 
+          # Updated checks for the main.cpp touch/lifecycle implementation.
+          # SDL_SetEventFilter is no longer required by the current design.
           grep -q \
             'HandleApplicationEvent' \
             "${NATIVE_DIR}/main.cpp"
@@ -1086,36 +1008,6 @@ jobs:
             2>&1 | tee "${RUNNER_TEMP}/gradle-build.log"
 
       # ============================================================
-      # VERIFY NATIVE FEATURE WAS COMPILED
-      # ============================================================
-
-      - name: Verify home.cpp native compilation
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          NATIVE_DIR="${ANDROID_PROJECT}/app/jni"
-          BUILD_LOG="${RUNNER_TEMP}/gradle-build.log"
-
-          test -f "${NATIVE_DIR}/action/home.cpp"
-          test -f "${BUILD_LOG}"
-
-          echo "========================================"
-          echo "HOME FEATURE BUILD CHECK"
-          echo "========================================"
-
-          echo "Checking native build output for home.cpp..."
-
-          if ! grep -Fq "home.cpp" "${BUILD_LOG}"; then
-            echo "::error::home.cpp was staged but no home.cpp compilation appears in the Gradle build log."
-            echo "::error::Check that CMake includes ULTRON_ACTION_SOURCES in the native target."
-            exit 1
-          fi
-
-          echo "home.cpp compilation entry detected."
-          echo "Home feature compilation check: PASSED"
-
-      # ============================================================
       # VERIFY APK OUTPUT
       # ============================================================
 
@@ -1165,6 +1057,7 @@ jobs:
 
       # ============================================================
       # VALIDATE APK
+      # UI AND FONT ASSETS ARE OPTIONAL
       # ============================================================
 
       - name: Validate APK
@@ -1256,10 +1149,13 @@ jobs:
 
           unzip -l "${APK}"
 
+          # Record APK entry names for exact file checks.
           unzip -Z1 "${APK}" > "${APK_CONTENTS}"
 
           UI_COUNT=0
 
+          # Validate every UI file that was actually supplied.
+          # An empty UI directory is allowed.
           while IFS= read -r -d '' UI_FILE; do
             UI_RELATIVE="${UI_FILE#${ASSETS_UI}/}"
             APK_ENTRY="assets/ui/${UI_RELATIVE}"
@@ -1279,7 +1175,7 @@ jobs:
           )
 
           if [[ "${UI_COUNT}" -eq 0 ]]; then
-            echo "No external UI assets supplied."
+            echo "No external UI assets supplied. This is allowed."
           else
             echo "UI assets packaged successfully: ${UI_COUNT}"
           fi
@@ -1291,6 +1187,8 @@ jobs:
 
           FONT_COUNT=0
 
+          # Validate every supplied font and license file.
+          # An empty font directory is allowed.
           while IFS= read -r -d '' FONT_FILE; do
             FONT_RELATIVE="${FONT_FILE#${ASSETS_FONTS}/}"
             APK_ENTRY="assets/fonts/${FONT_RELATIVE}"
@@ -1310,7 +1208,7 @@ jobs:
           )
 
           if [[ "${FONT_COUNT}" -eq 0 ]]; then
-            echo "No external font assets supplied."
+            echo "No external font assets supplied. This is allowed."
           else
             echo "Font assets packaged successfully: ${FONT_COUNT}"
           fi
@@ -1377,12 +1275,11 @@ jobs:
             echo "| ABI | ${ANDROID_ABI} |"
             echo "| C++ | 20 |"
             echo "| Renderer | OpenGL ES 3.2 |"
-            echo "| SVG | LunaSVG ${LUNASVG_VERSION} + PlutoVG |"
+            echo "| SVG | LunaSVG ${LUNASVG_VERSION} + PlutoVG, built for Android |"
             echo "| Visual Debugger | CMake target linked; C++ initialization required |"
-            echo "| Action sources | GLOB_RECURSE; optional modules |"
-            echo "| Home feature | Staged into action/home.cpp |"
-            echo "| UI resources | Automatically packaged |"
-            echo "| Font resources | Automatically packaged from .github/fonts |"
+            echo "| Action sources | Automatically discovered; optional |"
+            echo "| UI resources | Automatically packaged; optional |"
+            echo "| Font resources | Automatically packaged from .github/fonts; optional |"
             echo "| Background | Pure Black fallback |"
             echo "| Icon | Adaptive Brain Icon |"
             echo
