@@ -11,6 +11,7 @@
 
             #root {
                 position: absolute;
+
                 left: 0dp;
                 top: 0dp;
 
@@ -21,7 +22,9 @@
                 clip: always;
             }
 
-            /* Side drawer */
+            /* ----------------------------------------
+               Blue side drawer
+            ---------------------------------------- */
 
             #drawer {
                 position: absolute;
@@ -30,27 +33,24 @@
                 top: 0dp;
 
                 width: 84%;
-                max-width: 360dp;
                 height: 100%;
 
                 box-sizing: border-box;
 
-                background-color:
-                    rgba(11, 19, 28, 0.97);
+                background-color: #087BDF;
 
-                border-right-width: 1dp;
-                border-right-color:
-                    rgba(55, 178, 215, 0.28);
-
-                border-radius: 0dp 20dp 20dp 0dp;
+                border-top-right-radius: 18dp;
+                border-bottom-right-radius: 18dp;
 
                 transform: translateX(-100%);
 
                 transition:
-                    transform 0.28s cubic-out;
+                    transform 0.30s cubic-out;
             }
 
-            /* Open drawer */
+            /* ----------------------------------------
+               Drawer open
+            ---------------------------------------- */
 
             #drawer.open {
                 transform: translateX(0%);
