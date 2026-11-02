@@ -4,7 +4,7 @@ namespace
 {
     void ShowRedCircle() noexcept
     {
-        (void)Ultron_SetElementClass(
+        Ultron_SetElementClass(
             "red-circle",
             "visible",
             true);
