@@ -286,11 +286,10 @@ jobs:
                   release {
                       minifyEnabled false
 
-                      proguardFiles \
-                          getDefaultProguardFile(
-                              'proguard-android-optimize.txt'
-                          ),
+                      proguardFiles(
+                          getDefaultProguardFile('proguard-android-optimize.txt'),
                           'proguard-rules.pro'
+                      )
                   }
               }
 
@@ -480,6 +479,7 @@ jobs:
 
           SOURCE_CMAKE="${GITHUB_WORKSPACE}/.github/CMakeLists.txt"
           SOURCE_CPP="${GITHUB_WORKSPACE}/.github/main.cpp"
+          SOURCE_API="${GITHUB_WORKSPACE}/.github/ultron_api.h"
 
           # Prefer root folders, but support the existing repository paths.
           SOURCE_ACTION=""
@@ -510,10 +510,11 @@ jobs:
           # Font files are stored in .github/fonts.
           SOURCE_FONTS="${GITHUB_WORKSPACE}/.github/fonts"
 
-          # These two core files are required.
+          # These three core files are required.
           # Action, UI and font folders/files are optional.
           test -f "${SOURCE_CMAKE}"
           test -f "${SOURCE_CPP}"
+          test -f "${SOURCE_API}"
 
           NATIVE_DIR="${ANDROID_PROJECT}/app/jni"
           ASSETS_UI="${ANDROID_PROJECT}/app/src/main/assets/ui"
@@ -529,6 +530,12 @@ jobs:
           cp \
             "${SOURCE_CPP}" \
             "${NATIVE_DIR}/main.cpp"
+
+          # Install Ultron native API header.
+          # It is kept beside main.cpp for quoted header inclusion.
+          cp \
+            "${SOURCE_API}" \
+            "${NATIVE_DIR}/ultron_api.h"
 
           # Always create destination directories.
           mkdir -p \
@@ -625,7 +632,7 @@ jobs:
           echo "TTF/OTF font files: ${FONT_COUNT}"
 
           echo
-          echo "Native sources, UI and font resources staged successfully."
+          echo "Native sources, API header, UI and font resources staged successfully."
 
       # ============================================================
       # VERIFY GENERATED PROJECT
@@ -682,12 +689,14 @@ jobs:
           test -f "${ANDROID_PROJECT}/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml"
           test -f "${NATIVE_DIR}/CMakeLists.txt"
           test -f "${NATIVE_DIR}/main.cpp"
+          test -f "${NATIVE_DIR}/ultron_api.h"
           test -d "${NATIVE_DIR}/action"
           test -d "${NATIVE_DIR}/ui"
           test -d "${ASSETS_UI}"
           test -d "${ASSETS_FONTS}"
 
           echo "Project files: PASSED"
+          echo "Ultron API header: PASSED"
 
           echo
           echo "========================================"
