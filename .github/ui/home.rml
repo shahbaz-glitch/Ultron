@@ -5,53 +5,108 @@
                 width: 100%;
                 height: 100%;
                 margin: 0dp;
+                background-color: transparent;
             }
 
             #root {
+                position: absolute;
+                left: 0dp;
+                top: 0dp;
                 width: 100%;
                 height: 100%;
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                justify-content: center;
+                overflow: hidden;
+                clip: always;
             }
 
-            #show-circle {
-                width: 200dp;
-                height: 50dp;
+            /* ----------------------------------------
+               Side drawer
+            ---------------------------------------- */
+
+            #drawer {
+                position: absolute;
+                left: 0dp;
+                top: 0dp;
+
+                width: 84%;
+                max-width: 360dp;
+                height: 100%;
+
+                box-sizing: border-box;
+
+                padding: 28dp 24dp;
+
+                background-color: rgba(11, 19, 28, 0.97);
+
+                border-right: 1dp solid
+                    rgba(55, 178, 215, 0.32);
+
+                border-radius:
+                    0dp 22dp 22dp 0dp;
+
+                transform: translateX(-100%);
+
+                transition:
+                    transform 0.28s ease-out;
+            }
+
+            #drawer.open {
+                transform: translateX(0%);
+            }
+
+            /* ----------------------------------------
+               Drawer header
+            ---------------------------------------- */
+
+            #drawer-brand {
                 display: block;
-                border: 1dp #287F9F;
-                border-radius: 10dp;
-                background-color: #0D2431;
+
+                color: #E6F7FC;
+
+                font-size: 19dp;
+                font-weight: 600;
+                letter-spacing: 2dp;
             }
 
-            #show-circle:hover {
-                background-color: #16445A;
-            }
-
-            #red-circle {
-                display: none;
-                width: 72dp;
-                height: 72dp;
-                margin-top: 18dp;
-                border-radius: 36dp;
-                background-color: #FF304F;
-            }
-
-            #red-circle.visible {
+            #drawer-caption {
                 display: block;
+
+                margin-top: 7dp;
+
+                color: #7895A4;
+                font-size: 10dp;
+                letter-spacing: 1dp;
+            }
+
+            #drawer-accent {
+                width: 34dp;
+                height: 2dp;
+
+                margin-top: 22dp;
+
+                background-color: #21BDEB;
+
+                border-radius: 2dp;
             }
         </style>
     </head>
 
     <body>
         <div id="root">
-            <button
-                id="show-circle"
-                data-action="show-red-circle">
-            </button>
 
-            <div id="red-circle"></div>
+            <div id="drawer">
+
+                <div id="drawer-brand">
+                    ULTRON
+                </div>
+
+                <div id="drawer-caption">
+                    CONTROL SPACE
+                </div>
+
+                <div id="drawer-accent"></div>
+
+            </div>
+
         </div>
     </body>
 </rml>
