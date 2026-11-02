@@ -1,70 +1,66 @@
-
 <rml>
-<head>
-    <title>Ultron Home</title>
+    <head>
+        <title>Ultron Home</title>
 
-    <style>
-        body {
-            width: 100%;
-            height: 100%;
-            margin: 0;
+        <style>
+            body {
+                width: 100%;
+                height: 100%;
+                margin: 0dp;
+            }
 
-            font-family: "Roboto Flex";
-        }
+            #root {
+                width: 100%;
+                height: 100%;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                gap: 18dp;
+            }
 
-        #toggle-button {
-            position: absolute;
+            #show-circle {
+                display: block;
+                width: 200dp;
+                height: 50dp;
+                border: 1dp #287F9F;
+                border-radius: 10dp;
+                background-color: #0D2431;
+                color: #D6F7FF;
+                font-size: 14dp;
+                font-weight: 700;
+                text-align: center;
+            }
 
-            left: 20%;
-            top: 82%;
+            #show-circle:hover {
+                background-color: #16445A;
+            }
 
-            width: 60%;
-            height: 9%;
+            #red-circle {
+                display: none;
+                width: 72dp;
+                height: 72dp;
+                border-radius: 36dp;
+                background-color: #FF304F;
+            }
 
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            #red-circle.visible {
+                display: block;
+            }
+        </style>
+    </head>
 
-            background-color: #102C3A;
+    <body>
+        <div id="root">
 
-            border-width: 1px;
-            border-color: #28BDE8;
-            border-radius: 10px;
+            <button
+                id="show-circle"
+                data-action="show-red-circle">
+                SHOW RED CIRCLE
+            </button>
 
-            color: #E5F9FF;
-            font-size: 14px;
-            font-weight: 700;
-            text-align: center;
-        }
+            <div id="red-circle"></div>
 
-        #red-circle {
-            position: absolute;
-
-            left: 50%;
-            top: 50%;
-
-            width: 120px;
-            height: 120px;
-
-            margin-left: -60px;
-            margin-top: -60px;
-
-            background-color: #FF2020;
-
-            border-radius: 60px;
-
-            display: none;
-        }
-    </style>
-</head>
-
-<body>
-
-    <button id="toggle-button">
-        DOUBLE TAP
-    </button>
-
-    <div id="red-circle"></div>
-
-</body>
+        </div>
+    </body>
 </rml>
