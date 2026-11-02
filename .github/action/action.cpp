@@ -5,27 +5,25 @@
 namespace
 {
 
-// -------------------------------------------------------------
+// =============================================================
 // Gesture configuration
-// -------------------------------------------------------------
+// =============================================================
 
-constexpr float kEdgeStartRatio = 0.055f;
+constexpr float kEdgeStartRatio = 0.10f;
+constexpr float kDrawerWidthRatio = 0.84f;
 
-constexpr float kDrawerSwipeRegion = 0.84f;
+constexpr float kSwipeThreshold = 0.035f;
+constexpr float kVerticalCancelThreshold = 0.045f;
 
-constexpr float kSwipeThreshold = 0.105f;
-
-constexpr float kVerticalCancelThreshold = 0.08f;
-
-// -------------------------------------------------------------
+// =============================================================
 // Drawer state
-// -------------------------------------------------------------
+// =============================================================
 
 bool g_drawer_open = false;
 
-// -------------------------------------------------------------
-// Touch gesture state
-// -------------------------------------------------------------
+// =============================================================
+// Active touch gesture
+// =============================================================
 
 struct SwipeGesture
 {
@@ -42,9 +40,9 @@ struct SwipeGesture
 
 SwipeGesture g_gesture;
 
-// -------------------------------------------------------------
-// Drawer control
-// -------------------------------------------------------------
+// =============================================================
+// Drawer visibility
+// =============================================================
 
 void SetDrawerOpen(bool open) noexcept
 {
@@ -61,18 +59,18 @@ void SetDrawerOpen(bool open) noexcept
         open);
 }
 
-// -------------------------------------------------------------
+// =============================================================
 // Gesture reset
-// -------------------------------------------------------------
+// =============================================================
 
 void ResetGesture() noexcept
 {
     g_gesture = {};
 }
 
-// -------------------------------------------------------------
-// Gesture processing
-// -------------------------------------------------------------
+// =============================================================
+// Gesture recognition
+// =============================================================
 
 void UpdateGesture(
     float x,
@@ -93,28 +91,32 @@ void UpdateGesture(
     const float abs_x = std::fabs(delta_x);
     const float abs_y = std::fabs(delta_y);
 
-    // Ignore predominantly vertical gestures.
+    // Cancel predominantly vertical movement.
 
     if (abs_y > kVerticalCancelThreshold &&
-        abs_y > abs_x * 1.25f)
+        abs_y > abs_x * 1.2f)
     {
         g_gesture.committed = true;
         return;
     }
+
+    // Wait for sufficient horizontal movement.
 
     if (abs_x < kSwipeThreshold)
     {
         return;
     }
 
-    // Closed drawer: swipe right to open.
+    // Closed: swipe from left to right.
+
     if (!g_gesture.drawer_was_open &&
         delta_x > 0.0f)
     {
         SetDrawerOpen(true);
     }
 
-    // Open drawer: swipe left to close.
+    // Open: swipe from right to left.
+
     else if (g_gesture.drawer_was_open &&
              delta_x < 0.0f)
     {
@@ -124,9 +126,9 @@ void UpdateGesture(
     g_gesture.committed = true;
 }
 
-// -------------------------------------------------------------
+// =============================================================
 // SDL3 event handler
-// -------------------------------------------------------------
+// =============================================================
 
 bool HandleDrawerGesture(
     const SDL_Event* event,
@@ -157,7 +159,7 @@ bool HandleDrawerGesture(
 
             const bool valid_start =
                 g_drawer_open
-                    ? x <= kDrawerSwipeRegion
+                    ? x <= kDrawerWidthRatio
                     : x <= kEdgeStartRatio;
 
             if (!valid_start)
@@ -220,6 +222,9 @@ bool HandleDrawerGesture(
                 event->tfinger.fingerID ==
                     g_gesture.finger_id)
             {
+                // Final position check in case the last motion
+                // event was not delivered separately.
+
                 UpdateGesture(
                     event->tfinger.x,
                     event->tfinger.y);
@@ -255,6 +260,7 @@ bool HandleDrawerGesture(
         case SDL_EVENT_WILL_ENTER_BACKGROUND:
         case SDL_EVENT_DID_ENTER_BACKGROUND:
         case SDL_EVENT_WINDOW_FOCUS_LOST:
+        case SDL_EVENT_TERMINATING:
         {
             ResetGesture();
             break;
@@ -266,15 +272,14 @@ bool HandleDrawerGesture(
         }
     }
 
-    // Do not consume events.
-    // RmlUi's existing input handling remains active.
+    // Preserve normal SDL and RmlUi event handling.
 
     return false;
 }
 
-// -------------------------------------------------------------
+// =============================================================
 // Automatic registration
-// -------------------------------------------------------------
+// =============================================================
 
 [[maybe_unused]]
 const bool registered =
