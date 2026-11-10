@@ -1,520 +1,528 @@
-<rml>  
-<head>  
-    <title>Obsidian Wing Chat</title>  <style>  
-    body {  
-        width: 100%;  
-        height: 100%;  
-        margin: 0px;  
-        padding: 0px;  
-        overflow: hidden;  
-    }  
-
-    /* CHAT AREA */  
-
-    #chat-area {  
-        position: absolute;  
-        left: 6%;  
-        right: 6%;  
-        bottom: 105px;  
-        height: 75%;  
-        display: block;  
-        overflow-y: auto;  
-        padding: 8px 0px;  
-    }  
-
-    /* CHAT BUBBLE */  
-
-    .chat-message {  
-        display: block;  
-        width: auto;  
-        max-width: 88%;  
-        margin-left: auto;  
-        margin-bottom: 10px;  
-        padding: 12px 16px;  
-
-        border: 1px solid #65dfff77;  
-        border-radius: 31px 12px 31px 12px;  
-
-        decorator: linear-gradient(  
-            125deg,  
-            #a9f2ff08 0%,  
-            #0878b51c 27%,  
-            #061a2b88 52%,  
-            #5bdcff08 100%  
-        ) border-box;  
-
-        box-shadow:  
-            #d6faff44 1px 1px 2px 0px inset,  
-            #25aaff33 -1px -1px 3px 0px inset;  
-
-        color: #dffaff;  
-        font-size: 16px;  
-        line-height: 1.45;  
-        white-space: pre-wrap;  
-    }  
-
-    /* INPUT BAR */  
 
-    #input-bar {  
-        position: absolute;  
-        display: block;  
+<rml>
+<head>
+    <title>Obsidian Wing Chat</title>
+
+    <style>
+        body {
+            width: 100%;
+            height: 100%;
+            margin: 0px;
+            padding: 0px;
+            overflow: hidden;
+            font-family: Arial;
+        }
+
+        /* CHAT AREA */
+
+        #chat-area {
+            position: absolute;
+            left: 6%;
+            right: 6%;
+            bottom: 105px;
+            height: 75%;
+            display: block;
+            overflow-y: auto;
+            padding: 8px 0px;
+        }
+
+        /* CHAT BUBBLE */
+
+        .chat-message {
+            display: block;
+            width: auto;
+            max-width: 88%;
+            margin-left: auto;
+            margin-bottom: 10px;
+            padding: 12px 16px;
+
+            border: 1px #65dfff77;
+            border-radius: 31px 12px 31px 12px;
+
+            decorator: linear-gradient(
+                125deg,
+                #a9f2ff08 0%,
+                #0878b51c 27%,
+                #061a2b88 52%,
+                #5bdcff08 100%
+            ) border-box;
+
+            box-shadow:
+                #d6faff44 1px 1px 2px 0px inset,
+                #25aaff33 -1px -1px 3px 0px inset;
+
+            color: #dffaff;
+            font-size: 16px;
+            line-height: 1.45;
+            white-space: pre-wrap;
+        }
 
-        left: 6%;  
-        bottom: 30px;  
+        /* INPUT BAR */
 
-        width: 58px;  
-        height: 58px;  
+        #input-bar {
+            position: absolute;
+            display: block;
 
-        border: 1px solid #65dfff77;  
-        border-radius: 31px 12px 31px 12px;  
+            left: 6%;
+            bottom: 30px;
 
-        overflow: hidden;  
+            width: 58px;
+            height: 58px;
 
-        decorator: linear-gradient(  
-            125deg,  
-            #a9f2ff08 0%,  
-            #0878b51c 27%,  
-            #061a2b88 52%,  
-            #5bdcff08 100%  
-        ) border-box;  
+            border: 1px #65dfff77;
+            border-radius: 31px 12px 31px 12px;
 
-        box-shadow:  
-            #d6faff44 1px 1px 2px 0px inset,  
-            #25aaff33 -1px -1px 3px 0px inset;  
+            overflow: hidden;
 
-        transition:  
-            width 0.8s cubic-bezier(.16,1,.3,1),  
-            height 0.22s ease,  
-            border-radius 0.7s ease;  
-    }  
+            decorator: linear-gradient(
+                125deg,
+                #a9f2ff08 0%,
+                #0878b51c 27%,
+                #061a2b88 52%,
+                #5bdcff08 100%
+            ) border-box;
 
-    #input-bar.expanded {  
-        width: 88%;  
-    }  
+            box-shadow:
+                #d6faff44 1px 1px 2px 0px inset,
+                #25aaff33 -1px -1px 3px 0px inset;
 
-    /* WING HIT AREA */  
+            transition:
+                width 0.8s cubic-out,
+                height 0.22s linear-in-out,
+                border-radius 0.7s linear-in-out;
+        }
 
-    #wing-hit {  
-        position: absolute;  
-        left: 0px;  
-        bottom: 0px;  
+        #input-bar.expanded {
+            width: 88%;
+        }
 
-        width: 58px;  
-        height: 58px;  
+        /* WING HIT AREA */
 
-        z-index: 2;  
-    }  
+        #wing-hit {
+            position: absolute;
+            left: 0px;
+            bottom: 0px;
 
-    /* WING DESIGN */  
+            width: 58px;
+            height: 58px;
 
-    #wing-button {  
-        position: absolute;  
-        left: 5px;  
-        bottom: 7px;  
+            z-index: 2;
+        }
 
-        width: 48px;  
-        height: 42px;  
+        /* WING DESIGN */
 
-        pointer-events: none;  
+        #wing-button {
+            position: absolute;
+            left: 5px;
+            bottom: 7px;
 
-        transition: left 0.8s cubic-bezier(.16,1,.3,1);  
-    }  
+            width: 48px;
+            height: 42px;
 
-    #input-bar.expanded #wing-button {  
-        left: 4.2%;  
-    }  
+            pointer-events: none;
 
-    /* MESSAGE INPUT */  
+            transition: left 0.8s cubic-out;
+        }
 
-    #message-input {  
-        position: absolute;  
+        #input-bar.expanded #wing-button {
+            left: 4.2%;
+        }
 
-        left: 76px;  
-        right: 53px;  
-        top: 50%;  
+        /* MESSAGE INPUT */
 
-        width: auto;  
-        height: 30px;  
-        max-height: 118px;  
+        #message-input {
+            position: absolute;
 
-        margin-top: -15px;  
-        padding: 3px 0px 2px 0px;  
+            left: 76px;
+            right: 53px;
+            top: 50%;
 
-        font-family: Arial;  
-        font-size: 17px;  
-        line-height: 24px;  
+            width: auto;
+            height: 30px;
+            max-height: 118px;
 
-        color: #dffaff;  
-        background-color: transparent;  
+            margin-top: -15px;
+            padding: 3px 0px 2px 0px;
 
-        border: none;  
+            font-family: Arial;
+            font-size: 17px;
+            line-height: 24px;
 
-        overflow-y: auto;  
+            color: #dffaff;
+            background-color: transparent;
 
-        caret-color: #65dfff;  
+            border-width: 0px;
+            border-color: transparent;
 
-        opacity: 0;  
+            overflow-y: auto;
 
-        transition: opacity 0.25s ease;  
-    }  
+            caret-color: #65dfff;
 
-    #input-bar.expanded #message-input {  
-        opacity: 1;  
-    }  
+            opacity: 0;
 
-    /* SEND BUTTON */  
+            transition: opacity 0.25s linear-in-out;
+        }
 
-    #send-button {  
-        position: absolute;  
+        #input-bar.expanded #message-input {
+            opacity: 1;
+        }
 
-        right: 10px;  
-        bottom: 14.5px;  
+        /* SEND BUTTON */
 
-        width: 29px;  
-        height: 29px;  
+        #send-button {
+            position: absolute;
 
-        opacity: 0;  
-    }  
+            right: 10px;
+            bottom: 14.5px;
 
-    #input-bar.expanded #send-button {  
-        opacity: 1;  
-    }  
+            width: 29px;
+            height: 29px;
 
-    /* PULSE AND ARROW */  
+            opacity: 0;
+        }
 
-    .pulse-icon {  
-        opacity: 1;  
-    }  
+        #input-bar.expanded #send-button {
+            opacity: 1;
+        }
 
-    .arrow-icon {  
-        opacity: 0;  
-    }  
+        /* PULSE AND ARROW */
 
-    #input-bar.has-text .pulse-icon {  
-        opacity: 0;  
-    }  
+        .pulse-icon {
+            opacity: 1;
+        }
 
-    #input-bar.has-text .arrow-icon {  
-        opacity: 1;  
-    }  
+        .arrow-icon {
+            opacity: 0;
+        }
 
-</style>
+        #input-bar.has-text .pulse-icon {
+            opacity: 0;
+        }
 
-</head>  <body>  <!-- CHAT AREA -->  
+        #input-bar.has-text .arrow-icon {
+            opacity: 1;
+        }
 
-<div id="chat-area"></div>  
+    </style>
+</head>
 
-<!-- INPUT BAR -->  
+<body>
 
-<div id="input-bar">  
+    <!-- CHAT AREA -->
 
-    <!-- WING HIT AREA -->  
+    <div id="chat-area"></div>
 
-    <div id="wing-hit"></div>  
+    <!-- INPUT BAR -->
 
-    <!-- WING SVG -->  
+    <div id="input-bar">
 
-    <svg id="wing-button"  
-         viewBox="0 0 54 44"  
-         xmlns="http://www.w3.org/2000/svg">  
+        <!-- WING HIT AREA -->
 
-        <path  
-            d="M3 22L14 5H39L51 15L42 39H15L3 22Z"  
-            fill="#07131E"  
-            stroke="#5EDFF1"  
-            stroke-width="1.2"  
-            stroke-linejoin="round"/>  
+        <div id="wing-hit"></div>
 
-        <path  
-            d="M10 22L18 10H36L44 16L37 34H18L10 22Z"  
-            fill="none"  
-            stroke="#6ADCF0"  
-            stroke-opacity=".55"  
-            stroke-width=".8"/>  
+        <!-- WING SVG -->
 
-        <path  
-            d="M18 30L31 11L35 15L23 33Z"  
-            fill="#8BF1FF"  
-            fill-opacity=".16"  
-            stroke="#A4F6FF"  
-            stroke-width="1.1"/>  
+        <svg id="wing-button"
+             viewBox="0 0 54 44"
+             xmlns="http://www.w3.org/2000/svg">
 
-        <path  
-            d="M23 29L32 15"  
-            fill="none"  
-            stroke="#C0FCFF"  
-            stroke-width="2"  
-            stroke-linecap="round"/>  
+            <path
+                d="M3 22L14 5H39L51 15L42 39H15L3 22Z"
+                fill="#07131E"
+                stroke="#5EDFF1"
+                stroke-width="1.2"
+                stroke-linejoin="round"/>
 
-        <path  
-            d="M7 22H14M40 22H47"  
-            fill="none"  
-            stroke="#78E8F8"  
-            stroke-width="1"  
-            stroke-linecap="round"/>  
+            <path
+                d="M10 22L18 10H36L44 16L37 34H18L10 22Z"
+                fill="none"
+                stroke="#6ADCF0"
+                stroke-opacity=".55"
+                stroke-width=".8"/>
 
-    </svg>  
+            <path
+                d="M18 30L31 11L35 15L23 33Z"
+                fill="#8BF1FF"
+                fill-opacity=".16"
+                stroke="#A4F6FF"
+                stroke-width="1.1"/>
 
-    <!-- TEXT INPUT -->  
+            <path
+                d="M23 29L32 15"
+                fill="none"
+                stroke="#C0FCFF"
+                stroke-width="2"
+                stroke-linecap="round"/>
 
-    <textarea id="message-input" rows="1"></textarea>  
+            <path
+                d="M7 22H14M40 22H47"
+                fill="none"
+                stroke="#78E8F8"
+                stroke-width="1"
+                stroke-linecap="round"/>
 
-    <!-- SEND SVG -->  
+        </svg>
 
-    <svg id="send-button"  
-         viewBox="0 0 38 38"  
-         xmlns="http://www.w3.org/2000/svg">  
+        <!-- TEXT INPUT -->
 
-        <g class="pulse-icon">  
+        <textarea id="message-input" rows="1"></textarea>
 
-            <path  
-                d="M9 12L13 9V31L9 28Z"  
-                fill="#16495C"  
-                stroke="#65DFF2"  
-                stroke-width=".8"  
-                stroke-linejoin="round"/>  
+        <!-- SEND SVG -->
 
-            <path  
-                d="M18 6L22 4V36L18 34Z"  
-                fill="#247B96"  
-                stroke="#9CEFFF"  
-                stroke-width=".9"  
-                stroke-linejoin="round"/>  
+        <svg id="send-button"
+             viewBox="0 0 38 38"
+             xmlns="http://www.w3.org/2000/svg">
 
-            <path  
-                d="M27 12L31 9V31L27 28Z"  
-                fill="#16495C"  
-                stroke="#65DFF2"  
-                stroke-width=".8"  
-                stroke-linejoin="round"/>  
+            <g class="pulse-icon">
 
-            <path  
-                d="M13 10L13 30M22 5V35M31 10V30"  
-                stroke="#D0FAFF"  
-                stroke-opacity=".4"  
-                stroke-width=".7"/>  
+                <path
+                    d="M9 12L13 9V31L9 28Z"
+                    fill="#16495C"
+                    stroke="#65DFF2"
+                    stroke-width=".8"
+                    stroke-linejoin="round"/>
 
-        </g>  
+                <path
+                    d="M18 6L22 4V36L18 34Z"
+                    fill="#247B96"
+                    stroke="#9CEFFF"
+                    stroke-width=".9"
+                    stroke-linejoin="round"/>
 
-        <g class="arrow-icon">  
+                <path
+                    d="M27 12L31 9V31L27 28Z"
+                    fill="#16495C"
+                    stroke="#65DFF2"
+                    stroke-width=".8"
+                    stroke-linejoin="round"/>
 
-            <path  
-                d="M6 19.5L33 6L24.5 34L18.5 23L6 19.5Z"  
-                fill="#16495C"  
-                stroke="#83EDFF"  
-                stroke-width="1.5"  
-                stroke-linejoin="round"/>  
+                <path
+                    d="M13 10L13 30M22 5V35M31 10V30"
+                    stroke="#D0FAFF"
+                    stroke-opacity=".4"
+                    stroke-width=".7"/>
 
-            <path  
-                d="M18.5 23L33 6"  
-                stroke="#D0FAFF"  
-                stroke-width="1.3"  
-                stroke-linecap="round"/>  
+            </g>
 
-        </g>  
+            <g class="arrow-icon">
 
-    </svg>  
+                <path
+                    d="M6 19.5L33 6L24.5 34L18.5 23L6 19.5Z"
+                    fill="#16495C"
+                    stroke="#83EDFF"
+                    stroke-width="1.5"
+                    stroke-linejoin="round"/>
 
-</div>  
+                <path
+                    d="M18.5 23L33 6"
+                    stroke="#D0FAFF"
+                    stroke-width="1.3"
+                    stroke-linecap="round"/>
 
-<!-- ORIGINAL JAVASCRIPT -->  
+            </g>
 
-<script>  
+        </svg>
 
-    var inputBar = document.GetElementById("input-bar");  
-    var wingHit = document.GetElementById("wing-hit");  
-    var messageInput = document.GetElementById("message-input");  
-    var sendButton = document.GetElementById("send-button");  
-    var chatArea = document.GetElementById("chat-area");  
+    </div>
 
-    var editingBubble = null;  
+    <!-- ORIGINAL JAVASCRIPT -->
 
-    /* OPEN / CLOSE INPUT BAR */  
+    <script>
 
-    wingHit.AddEventListener("click", function() {  
+        var inputBar = document.GetElementById("input-bar");
+        var wingHit = document.GetElementById("wing-hit");
+        var messageInput = document.GetElementById("message-input");
+        var sendButton = document.GetElementById("send-button");
+        var chatArea = document.GetElementById("chat-area");
 
-        if (inputBar.GetClassList().Contains("expanded")) {  
-            inputBar.GetClassList().Remove("expanded");  
-        } else {  
-            inputBar.GetClassList().Add("expanded");  
-        }  
+        var editingBubble = null;
 
-    });  
+        /* OPEN / CLOSE INPUT BAR */
 
-    /* INPUT HEIGHT AND CHAT POSITION */  
+        wingHit.AddEventListener("click", function() {
 
-    function UpdateInput() {  
+            if (inputBar.GetClassList().Contains("expanded")) {
+                inputBar.GetClassList().Remove("expanded");
+            } else {
+                inputBar.GetClassList().Add("expanded");
+            }
 
-        messageInput.style.height = "30px";  
+        });
 
-        var newHeight = Math.min(  
-            messageInput.scrollHeight,  
-            118  
-        );  
+        /* INPUT HEIGHT AND CHAT POSITION */
 
-        messageInput.style.height = newHeight + "px";  
+        function UpdateInput() {
 
-        messageInput.style.marginTop =  
-            (-newHeight / 2) + "px";  
+            messageInput.style.height = "30px";
 
-        var barHeight = Math.max(58, newHeight + 34);  
+            var newHeight = Math.min(
+                messageInput.scrollHeight,
+                118
+            );
 
-        inputBar.style.height = barHeight + "px";  
+            messageInput.style.height = newHeight + "px";
 
-        chatArea.style.bottom =  
-            (barHeight + 47) + "px";  
+            messageInput.style.marginTop =
+                (-newHeight / 2) + "px";
 
-        if (messageInput.value.trim().length > 0) {  
-            inputBar.GetClassList().Add("has-text");  
-        } else {  
-            inputBar.GetClassList().Remove("has-text");  
-        }  
+            var barHeight = Math.max(58, newHeight + 34);
 
-    }  
+            inputBar.style.height = barHeight + "px";
 
-    messageInput.AddEventListener("input", function() {  
-        UpdateInput();  
-    });  
+            chatArea.style.bottom =
+                (barHeight + 47) + "px";
 
-    /* LONG PRESS EDIT */  
+            if (messageInput.value.trim().length > 0) {
+                inputBar.GetClassList().Add("has-text");
+            } else {
+                inputBar.GetClassList().Remove("has-text");
+            }
 
-    function StartEdit(bubble) {  
+        }
 
-        if (!bubble || !bubble.parentNode) {  
-            return;  
-        }  
+        messageInput.AddEventListener("input", function() {
+            UpdateInput();
+        });
 
-        var next = bubble.nextElementSibling;  
+        /* LONG PRESS EDIT */
 
-        while (next) {  
+        function StartEdit(bubble) {
 
-            var following = next.nextElementSibling;  
+            if (!bubble || !bubble.parentNode) {
+                return;
+            }
 
-            next.remove();  
+            var next = bubble.nextElementSibling;
 
-            next = following;  
-        }  
+            while (next) {
 
-        editingBubble = bubble;  
+                var following = next.nextElementSibling;
 
-        messageInput.value = bubble.textContent;  
+                next.remove();
 
-        bubble.remove();  
+                next = following;
+            }
 
-        inputBar.GetClassList().Add("expanded");  
+            editingBubble = bubble;
 
-        UpdateInput();  
+            messageInput.value = bubble.textContent;
 
-    }  
+            bubble.remove();
 
-    /* LONG PRESS DETECTION */  
+            inputBar.GetClassList().Add("expanded");
 
-    function AttachLongPress(bubble) {  
+            UpdateInput();
 
-        var pressTimer = null;  
+        }
 
-        bubble.AddEventListener("pointerdown", function(event) {  
+        /* LONG PRESS DETECTION */
 
-            if (event.pointerType == "mouse" && event.button != 0) {  
-                return;  
-            }  
+        function AttachLongPress(bubble) {
 
-            if (pressTimer != null) {  
-                clearTimeout(pressTimer);  
-            }  
+            var pressTimer = null;
 
-            pressTimer = setTimeout(function() {  
+            bubble.AddEventListener("pointerdown", function(event) {
 
-                StartEdit(bubble);  
+                if (event.pointerType == "mouse" && event.button != 0) {
+                    return;
+                }
 
-                pressTimer = null;  
+                if (pressTimer != null) {
+                    clearTimeout(pressTimer);
+                }
 
-            }, 550);  
+                pressTimer = setTimeout(function() {
 
-        });  
+                    StartEdit(bubble);
 
-        function CancelPress() {  
+                    pressTimer = null;
 
-            if (pressTimer != null) {  
-                clearTimeout(pressTimer);  
-                pressTimer = null;  
-            }  
+                }, 550);
 
-        }  
+            });
 
-        bubble.AddEventListener("pointerup", CancelPress);  
-        bubble.AddEventListener("pointercancel", CancelPress);  
-        bubble.AddEventListener("pointerleave", CancelPress);  
+            function CancelPress() {
 
-        bubble.AddEventListener("contextmenu", function(event) {  
-            event.preventDefault();  
-        });  
+                if (pressTimer != null) {
+                    clearTimeout(pressTimer);
+                    pressTimer = null;
+                }
 
-    }  
+            }
 
-    /* SEND MESSAGE */  
+            bubble.AddEventListener("pointerup", CancelPress);
+            bubble.AddEventListener("pointercancel", CancelPress);
+            bubble.AddEventListener("pointerleave", CancelPress);
 
-    function SendMessage() {  
+            bubble.AddEventListener("contextmenu", function(event) {
+                event.preventDefault();
+            });
 
-        var message = messageInput.value.trim();  
+        }
 
-        if (message.length == 0) {  
-            return;  
-        }  
+        /* SEND MESSAGE */
 
-        if (editingBubble != null) {  
+        function SendMessage() {
 
-            editingBubble.textContent = message;  
+            var message = messageInput.value.trim();
 
-            chatArea.AppendChild(editingBubble);  
+            if (message.length == 0) {
+                return;
+            }
 
-            editingBubble = null;  
+            if (editingBubble != null) {
 
-        } else {  
+                editingBubble.textContent = message;
 
-            var bubble = document.CreateElement("div");  
+                chatArea.AppendChild(editingBubble);
 
-            bubble.SetClass("chat-message");  
+                editingBubble = null;
 
-            bubble.textContent = message;  
+            } else {
 
-            AttachLongPress(bubble);  
+                var bubble = document.CreateElement("div");
 
-            chatArea.AppendChild(bubble);  
+                bubble.SetClass("chat-message");
 
-        }  
+                bubble.textContent = message;
 
-        chatArea.scrollTop = chatArea.scrollHeight;  
+                AttachLongPress(bubble);
 
-        messageInput.value = "";  
+                chatArea.AppendChild(bubble);
 
-        UpdateInput();  
+            }
 
-    }  
+            chatArea.scrollTop = chatArea.scrollHeight;
 
-    sendButton.AddEventListener("click", function() {  
-        SendMessage();  
-    });  
+            messageInput.value = "";
 
-    /* ENTER TO SEND */  
+            UpdateInput();
 
-    messageInput.AddEventListener("keydown", function(event) {  
+        }
 
-        if (event.key == "Enter" && !event.shiftKey) {  
+        sendButton.AddEventListener("click", function() {
+            SendMessage();
+        });
 
-            event.preventDefault();  
+        /* ENTER TO SEND */
 
-            SendMessage();  
+        messageInput.AddEventListener("keydown", function(event) {
 
-        }  
+            if (event.key == "Enter" && !event.shiftKey) {
 
-    });  
+                event.preventDefault();
 
-    /* INITIAL CHAT POSITION */  
+                SendMessage();
 
-    UpdateInput();  
+            }
 
-</script>
+        });
 
-</body>  
-</rml>  
+        /* INITIAL CHAT POSITION */
+
+        UpdateInput();
+
+    </script>
+
+</body>
+</rml>
