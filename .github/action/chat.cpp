@@ -552,8 +552,6 @@ void QueueAction(
 
     if (!Ultron_PostToUI(&ProcessPendingActions, nullptr))
     {
-        // During normal interaction the UI task queue is active.
-        // A failed post must not leave a permanently pending action.
         g_state.action_task_pending = false;
         g_state.pending_actions.clear();
     }
@@ -882,7 +880,7 @@ void CompleteLongPress()
     }
 
     const Uint64 elapsed =
-        SDL_GetTicks64() - g_state.press_started_at;
+        SDL_GetTicks() - g_state.press_started_at;
 
     if (elapsed < kLongPressDuration)
     {
@@ -953,7 +951,7 @@ void BeginLongPress(
 
     g_state.press_source = source;
 
-    g_state.press_started_at = SDL_GetTicks64();
+    g_state.press_started_at = SDL_GetTicks();
 
     g_state.press_active = true;
 
@@ -1066,7 +1064,7 @@ void HandleMouseUp(Rml::Event& event)
             : nullptr;
 
     const Uint64 elapsed =
-        SDL_GetTicks64() - g_state.press_started_at;
+        SDL_GetTicks() - g_state.press_started_at;
 
     if (elapsed >= kLongPressDuration &&
         bubble != nullptr &&
@@ -1514,7 +1512,7 @@ bool HandleSDLTouchEvent(
 
             if (g_state.press_source == PressSource::Touch &&
                 g_state.press_active &&
-                SDL_GetTicks64() - g_state.press_started_at >=
+                SDL_GetTicks() - g_state.press_started_at >=
                     kLongPressDuration)
             {
                 Rml::Element* bubble =
