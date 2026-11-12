@@ -103,7 +103,7 @@
             left: 0px;
             bottom: 0px;
 
-            width: 82px;
+            width: 100px;
             height: 64px;
 
             z-index: 2;
