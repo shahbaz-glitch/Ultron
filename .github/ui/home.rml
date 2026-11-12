@@ -66,13 +66,13 @@
             left: 6%;
             bottom: 30px;
 
-            width: 72px;
+            width: 124px;
             height: 64px;
 
             border: 1px #65dfff77;
             border-radius: 31px 12px 31px 12px;
 
-            overflow: hidden;
+            overflow: visible;
 
             decorator: linear-gradient(
                 125deg,
@@ -103,29 +103,40 @@
             left: 0px;
             bottom: 0px;
 
-            width: 72px;
-            height: 64px;
+            width: 120px;
+            height: 80px;
 
             z-index: 2;
+        }
+
+        #input-bar.expanded #wing-hit {
+            width: 58px;
+            height: 58px;
         }
 
         /* WING DESIGN */
 
         #wing-button {
             position: absolute;
-            left: 12px;
-            bottom: 14px;
+            left: 18px;
+            bottom: 26px;
 
-            width: 56px;
-            height: 46px;
+            width: 104px;
+            height: 84px;
 
             pointer-events: none;
 
             transition: left 0.8s cubic-out;
         }
 
+        /* COMPACT WING IN EXPANDED MODE */
+
         #input-bar.expanded #wing-button {
             left: 4.2%;
+            bottom: 7px;
+
+            width: 56px;
+            height: 46px;
         }
 
         /* MESSAGE INPUT */
