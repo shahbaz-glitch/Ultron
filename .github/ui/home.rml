@@ -1,3 +1,4 @@
+
 <rml>
 <head>
     <title>Obsidian Wing Chat</title>
@@ -65,8 +66,8 @@
             left: 6%;
             bottom: 30px;
 
-            width: 58px;
-            height: 58px;
+            width: 82px;
+            height: 64px;
 
             border: 1px #65dfff77;
             border-radius: 31px 12px 31px 12px;
@@ -102,8 +103,8 @@
             left: 0px;
             bottom: 0px;
 
-            width: 58px;
-            height: 58px;
+            width: 82px;
+            height: 64px;
 
             z-index: 2;
         }
@@ -113,10 +114,10 @@
         #wing-button {
             position: absolute;
             left: 5px;
-            bottom: 7px;
+            bottom: 4px;
 
-            width: 48px;
-            height: 42px;
+            width: 68px;
+            height: 56px;
 
             pointer-events: none;
 
@@ -132,7 +133,7 @@
         #message-input {
             position: absolute;
 
-            left: 76px;
+            left: 100px;
             right: 53px;
             top: 50%;
 
