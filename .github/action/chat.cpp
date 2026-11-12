@@ -40,7 +40,7 @@ constexpr Uint64 kLongPressDuration = 550;
 
 constexpr float kInitialInputHeight = 30.0f;
 constexpr float kMaximumInputHeight = 118.0f;
-constexpr float kMinimumBarHeight = 58.0f;
+constexpr float kMinimumBarHeight = 64.0f;
 
 constexpr float kBarExtraHeight = 34.0f;
 constexpr float kChatBottomOffset = 47.0f;
