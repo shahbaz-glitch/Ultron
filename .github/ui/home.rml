@@ -4,11 +4,16 @@
     <title>Obsidian Wing Chat</title>
 
     <style>
+
+        rml,
         body {
             width: 100%;
             height: 100%;
             margin: 0px;
             padding: 0px;
+        }
+
+        body {
             overflow: hidden;
             font-family: "Roboto Flex";
         }
@@ -17,10 +22,13 @@
 
         #chat-area {
             position: absolute;
+
             left: 6%;
             right: 6%;
-            bottom: 105px;
+
+            bottom: 15vh;
             height: 75%;
+
             display: block;
             overflow-y: auto;
             padding: 8px 0px;
@@ -64,15 +72,15 @@
             display: block;
 
             left: 6%;
-            bottom: 30px;
+            bottom: 4vh;
 
-            width: 124px;
-            height: 64px;
+            width: 58px;
+            height: 58px;
 
             border: 1px #65dfff77;
             border-radius: 31px 12px 31px 12px;
 
-            overflow: visible;
+            overflow: hidden;
 
             decorator: linear-gradient(
                 125deg,
@@ -103,40 +111,29 @@
             left: 0px;
             bottom: 0px;
 
-            width: 120px;
-            height: 80px;
-
-            z-index: 2;
-        }
-
-        #input-bar.expanded #wing-hit {
             width: 58px;
             height: 58px;
+
+            z-index: 2;
         }
 
         /* WING DESIGN */
 
         #wing-button {
             position: absolute;
-            left: 18px;
-            bottom: 26px;
+            left: 5px;
+            bottom: 7px;
 
-            width: 104px;
-            height: 84px;
+            width: 48px;
+            height: 42px;
 
             pointer-events: none;
 
             transition: left 0.8s cubic-out;
         }
 
-        /* COMPACT WING IN EXPANDED MODE */
-
         #input-bar.expanded #wing-button {
             left: 4.2%;
-            bottom: 7px;
-
-            width: 56px;
-            height: 46px;
         }
 
         /* MESSAGE INPUT */
