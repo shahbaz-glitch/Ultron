@@ -19,7 +19,7 @@
             position: absolute;
             left: 6%;
             right: 6%;
-            bottom: 25.74vw;
+            bottom: 32.89vw;
             height: 75%;
             display: block;
             overflow-y: auto;
@@ -65,7 +65,7 @@
             display: block;
 
             left: 6%;
-            bottom: 7.35vw;
+            bottom: 14.50vw;
 
             width: 14.22vw;
             height: 14.22vw;
@@ -235,7 +235,7 @@
             /* CHAT AREA */
 
             #chat-area {
-                bottom: 25.74vh;
+                bottom: 32.89vh;
                 padding: 1.96vh 0px;
             }
 
@@ -259,7 +259,7 @@
             /* INPUT BAR */
 
             #input-bar {
-                bottom: 7.35vh;
+                bottom: 14.50vh;
 
                 width: 14.22vh;
                 height: 14.22vh;
