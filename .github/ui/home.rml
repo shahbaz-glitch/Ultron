@@ -5,6 +5,10 @@
 
     <style>
 
+        /* =====================================================
+           ROOT
+        ===================================================== */
+
         rml,
         body {
             width: 100%;
@@ -18,28 +22,46 @@
             font-family: "Roboto Flex";
         }
 
-        /* CHAT AREA */
+
+        /* =====================================================
+           CHAT AREA
+           Only this container scrolls through chat history.
+        ===================================================== */
 
         #chat-area {
             position: absolute;
+
             left: 6%;
             right: 6%;
+
             bottom: 26.7vw;
             height: 75%;
 
             display: block;
+
+            overflow-x: hidden;
             overflow-y: auto;
+
+            overscroll-behavior: contain;
+
             padding: 2vw 0px;
         }
 
-        /* CHAT BUBBLE */
+
+        /* =====================================================
+           CHAT MESSAGE
+        ===================================================== */
 
         .chat-message {
             display: block;
+
             width: auto;
-            max-width: 88%;
+            max-width: 78%;
+
             margin-left: auto;
+            margin-right: 1.25%;
             margin-bottom: 2.5vw;
+
             padding: 3vw 4vw;
 
             border: 1px #65dfff77;
@@ -58,19 +80,24 @@
                 #25aaff33 -1px -1px 3px 0px inset;
 
             color: #dffaff;
+
             font-size: 4.1vw;
             line-height: 1.45;
+
             white-space: pre-wrap;
         }
 
-        /* INPUT BAR */
+
+        /* =====================================================
+           INPUT BAR
+        ===================================================== */
 
         #input-bar {
             position: absolute;
             display: block;
 
             left: 6%;
-            bottom: 7.6vw;
+            bottom: 9vw;
 
             width: 15vw;
             height: 15vw;
@@ -102,10 +129,14 @@
             width: 88%;
         }
 
-        /* WING HIT AREA */
+
+        /* =====================================================
+           WING HIT AREA
+        ===================================================== */
 
         #wing-hit {
             position: absolute;
+
             left: 0px;
             bottom: 0px;
 
@@ -115,10 +146,14 @@
             z-index: 2;
         }
 
-        /* WING DESIGN */
+
+        /* =====================================================
+           WING SVG
+        ===================================================== */
 
         #wing-button {
             position: absolute;
+
             left: 1.3vw;
             bottom: 1.8vw;
 
@@ -127,14 +162,18 @@
 
             pointer-events: none;
 
-            transition: left 0.8s cubic-out;
+            transition:
+                left 0.8s cubic-out;
         }
 
         #input-bar.expanded #wing-button {
             left: 4.2%;
         }
 
-        /* MESSAGE INPUT */
+
+        /* =====================================================
+           TEXT INPUT
+        ===================================================== */
 
         #message-input {
             position: absolute;
@@ -144,10 +183,12 @@
             top: 50%;
 
             width: auto;
+
             height: 7.5vw;
             max-height: 30vw;
 
             margin-top: -3.75vw;
+
             padding: 0.8vw 0px 0.5vw 0px;
 
             font-size: 4.3vw;
@@ -165,20 +206,24 @@
 
             opacity: 0;
 
-            transition: opacity 0.25s linear-in-out;
+            transition:
+                opacity 0.25s linear-in-out;
         }
 
         #input-bar.expanded #message-input {
             opacity: 1;
         }
 
-        /* SEND BUTTON */
+
+        /* =====================================================
+           SEND BUTTON
+        ===================================================== */
 
         #send-button {
             position: absolute;
 
             right: 2.5vw;
-            bottom: 3.7vw;
+            bottom: 3.75vw;
 
             width: 7.5vw;
             height: 7.5vw;
@@ -190,25 +235,41 @@
             opacity: 1;
         }
 
-        /* PULSE AND ARROW */
+
+        /* =====================================================
+           PULSE AND ARROW
+        ===================================================== */
 
         .pulse-icon {
             opacity: 1;
+
+            transition:
+                opacity 0.2s linear;
         }
 
         .arrow-icon {
             opacity: 0;
+
+            transition:
+                opacity 0.2s linear;
         }
+
+        /* Text entered: hide pulse. */
 
         #input-bar.has-text .pulse-icon {
             opacity: 0;
         }
 
+        /* Text entered: show arrow. */
+
         #input-bar.has-text .arrow-icon {
             opacity: 1;
         }
 
-        /* LANDSCAPE RESPONSIVE SIZING */
+
+        /* =====================================================
+           LANDSCAPE
+        ===================================================== */
 
         @media (orientation: landscape) {
 
@@ -218,16 +279,24 @@
             }
 
             .chat-message {
+                max-width: 78%;
+
+                margin-right: 1.25%;
                 margin-bottom: 2.5vh;
+
                 padding: 3vh 4vh;
+
                 border-radius: 8vh 3vh 8vh 3vh;
+
                 font-size: 4.1vh;
             }
 
             #input-bar {
-                bottom: 7.6vh;
+                bottom: 9vh;
+
                 width: 15vh;
                 height: 15vh;
+
                 border-radius: 8vh 3vh 8vh 3vh;
             }
 
@@ -239,6 +308,7 @@
             #wing-button {
                 left: 1.3vh;
                 bottom: 1.8vh;
+
                 width: 12.5vh;
                 height: 10.2vh;
             }
@@ -246,17 +316,22 @@
             #message-input {
                 left: 19vh;
                 right: 14vh;
+
                 height: 7.5vh;
                 max-height: 30vh;
+
                 margin-top: -3.75vh;
+
                 padding: 0.8vh 0px 0.5vh 0px;
+
                 font-size: 4.3vh;
                 line-height: 6vh;
             }
 
             #send-button {
                 right: 2.5vh;
-                bottom: 3.7vh;
+                bottom: 3.75vh;
+
                 width: 7.5vh;
                 height: 7.5vh;
             }
@@ -265,25 +340,34 @@
     </style>
 </head>
 
+
 <body>
 
-    <!-- CHAT AREA -->
+    <!-- =====================================================
+         CHAT AREA
+    ====================================================== -->
 
     <div id="chat-area"></div>
 
-    <!-- INPUT BAR -->
+
+    <!-- =====================================================
+         INPUT BAR
+    ====================================================== -->
 
     <div id="input-bar">
+
 
         <!-- WING HIT AREA -->
 
         <div id="wing-hit"></div>
 
+
         <!-- WING SVG -->
 
-        <svg id="wing-button"
-             viewBox="0 0 54 44"
-             xmlns="http://www.w3.org/2000/svg">
+        <svg
+            id="wing-button"
+            viewBox="0 0 54 44"
+            xmlns="http://www.w3.org/2000/svg">
 
             <path
                 d="M3 22L14 5H39L51 15L42 39H15L3 22Z"
@@ -322,15 +406,23 @@
 
         </svg>
 
+
         <!-- TEXT INPUT -->
 
-        <textarea id="message-input" rows="1"></textarea>
+        <textarea
+            id="message-input"
+            rows="1"></textarea>
+
 
         <!-- SEND SVG -->
 
-        <svg id="send-button"
-             viewBox="0 0 38 38"
-             xmlns="http://www.w3.org/2000/svg">
+        <svg
+            id="send-button"
+            viewBox="0 0 38 38"
+            xmlns="http://www.w3.org/2000/svg">
+
+
+            <!-- ORIGINAL PULSE DESIGN -->
 
             <g class="pulse-icon">
 
@@ -362,6 +454,9 @@
                     stroke-width=".7"/>
 
             </g>
+
+
+            <!-- SEND ARROW -->
 
             <g class="arrow-icon">
 
