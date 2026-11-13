@@ -13,7 +13,6 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <cmath>
 #include <condition_variable>
 #include <cstdint>
 #include <cstdio>
@@ -38,11 +37,11 @@ constexpr const char* kModuleName = "ObsidianWingChat";
 
 constexpr Uint64 kLongPressDuration = 550;
 
-// Responsive dimensions.
+// Responsive viewport units.
 // 1 unit = 1% of the shorter context dimension.
 //
-// Portrait : equivalent to vw.
-// Landscape: equivalent to vh.
+// Portrait  -> vw
+// Landscape -> vh
 
 constexpr float kInitialInputUnits = 7.5f;
 constexpr float kMaximumInputUnits = 30.0f;
@@ -50,27 +49,16 @@ constexpr float kMaximumInputUnits = 30.0f;
 constexpr float kMinimumBarUnits = 15.0f;
 
 constexpr float kInputBottomUnits = 9.0f;
-constexpr float kChatBottomUnits = 8.5f;
+constexpr float kChatGapUnits = 11.7f;
 
-constexpr float kBubbleMaximumWidth = 82.0f;
-constexpr float kBubbleRightMargin = 4.0f;
+constexpr float kBubbleMaxWidthPercent = 78.0f;
+constexpr float kBubbleRightMarginPercent = 1.25f;
 
 constexpr float kLongPressMoveUnits = 2.0f;
 
 
 // =============================================================
-// INPUT SOURCE
-// =============================================================
-
-enum class PressSource
-{
-    None,
-    Touch
-};
-
-
-// =============================================================
-// ACTIONS
+// ACTION TYPES
 // =============================================================
 
 enum class ActionType
@@ -92,7 +80,7 @@ struct PendingAction
 
 
 // =============================================================
-// LONG-PRESS TICKET
+// LONG-PRESS TIMER TICKET
 // =============================================================
 
 struct LongPressTicket
@@ -109,46 +97,40 @@ struct ChatState
 {
     Rml::ElementDocument* document = nullptr;
 
-    // Selected bubble temporarily detached during editing.
-
     Rml::ElementPtr editing_bubble;
-
-    // Original message text.
 
     std::unordered_map<
         Rml::Element*,
         std::string
     > bubble_messages;
 
-    // UI-thread action queue.
+
+    // UI action queue.
 
     std::vector<PendingAction> pending_actions;
 
     bool action_task_pending = false;
+
+
+    // Input update queue.
 
     bool update_task_pending = false;
 
     Rml::ElementDocument* pending_update_document = nullptr;
 
 
-    // ---------------------------------------------------------
-    // LONG PRESS
-    // ---------------------------------------------------------
+    // Long-press state.
 
     std::atomic_uint64_t press_generation{0};
 
     bool press_active = false;
-
-    PressSource press_source = PressSource::None;
 
     Rml::Element* press_target = nullptr;
 
     Uint64 press_started_at = 0;
 
 
-    // ---------------------------------------------------------
-    // TOUCH
-    // ---------------------------------------------------------
+    // Native touch observation.
 
     bool touch_active = false;
 
@@ -166,7 +148,6 @@ struct ChatState
 
     Rml::Vector2f touch_start_position{};
 
-    Rml::Vector2f touch_last_position{};
 };
 
 
@@ -272,35 +253,6 @@ Rml::Element* FindMessageBubble(
         }
 
         element = element->GetParentNode();
-    }
-
-    return nullptr;
-}
-
-
-Rml::Element* FindDescendantByClass(
-    Rml::Element* parent,
-    const char* class_name)
-{
-    if (parent == nullptr)
-    {
-        return nullptr;
-    }
-
-    for (Rml::Element* child = parent->GetFirstChild();
-         child != nullptr;
-         child = child->GetNextSibling())
-    {
-        if (child->IsClassSet(class_name))
-        {
-            return child;
-        }
-
-        if (Rml::Element* result =
-                FindDescendantByClass(child, class_name))
-        {
-            return result;
-        }
     }
 
     return nullptr;
@@ -458,7 +410,7 @@ std::string TrimWhitespace(std::string value)
 
 
 // =============================================================
-// CSS PROPERTY HELPERS
+// CSS HELPERS
 // =============================================================
 
 Rml::String ToPixels(float value)
@@ -469,6 +421,20 @@ Rml::String ToPixels(float value)
         buffer,
         sizeof(buffer),
         "%.3fpx",
+        static_cast<double>(value));
+
+    return buffer;
+}
+
+
+Rml::String ToPercent(float value)
+{
+    char buffer[64]{};
+
+    std::snprintf(
+        buffer,
+        sizeof(buffer),
+        "%.3f%%",
         static_cast<double>(value));
 
     return buffer;
@@ -511,7 +477,7 @@ float GetViewportUnit(
 
 
 // =============================================================
-// DOCUMENT DESIGN CONFIGURATION
+// DOCUMENT CONFIGURATION
 // =============================================================
 
 void ConfigureDocument(
@@ -525,34 +491,31 @@ void ConfigureDocument(
     Rml::Element* chat_area =
         GetElement(document, "chat-area");
 
-    Rml::Element* send_button =
-        GetElement(document, "send-button");
+    Rml::Element* input_bar =
+        GetElement(document, "input-bar");
 
     if (chat_area != nullptr)
     {
-        // Native RmlUi touch scrolling requires a scrollable area.
+        // Chat history is the only history scroll container.
+
+        chat_area->SetProperty(
+            "overflow-x",
+            "hidden");
 
         chat_area->SetProperty(
             "overflow-y",
             "auto");
+
+        chat_area->SetProperty(
+            "overscroll-behavior",
+            "contain");
     }
 
-    if (send_button != nullptr)
+    if (input_bar != nullptr)
     {
-        // Remove the old pulse design permanently.
-        // The arrow remains controlled by the has-text CSS class.
-
-        Rml::Element* pulse =
-            FindDescendantByClass(
-                send_button,
-                "pulse-icon");
-
-        if (pulse != nullptr)
-        {
-            pulse->SetProperty(
-                "opacity",
-                "0");
-        }
+        // Do not force either icon to hidden here.
+        // RML CSS controls pulse/arrow using has-text.
+        // UpdateInput will synchronize that class.
     }
 }
 
@@ -569,23 +532,17 @@ void ConfigureBubbleLayout(
         return;
     }
 
-    // Keep the user message aligned to the right.
-
     bubble->SetProperty(
         "margin-left",
         "auto");
 
-    // Keep a visible gap from the right edge.
-
     bubble->SetProperty(
         "margin-right",
-        "4%");
-
-    // Do not let the bubble occupy almost the entire panel.
+        ToPercent(kBubbleRightMarginPercent));
 
     bubble->SetProperty(
         "max-width",
-        "82%");
+        ToPercent(kBubbleMaxWidthPercent));
 }
 
 
@@ -637,13 +594,15 @@ void UpdateInput(
     const float input_bottom =
         kInputBottomUnits * unit;
 
-    const float chat_bottom =
-        kChatBottomUnits * unit;
+    const float chat_gap =
+        kChatGapUnits * unit;
 
 
     // ---------------------------------------------------------
-    // TEXTAREA MEASUREMENT
+    // MEASURE TEXTAREA CONTENT
     // ---------------------------------------------------------
+
+    // Start with the original single-line height.
 
     message_input->SetProperty(
         "height",
@@ -661,7 +620,7 @@ void UpdateInput(
 
 
     // ---------------------------------------------------------
-    // TEXTAREA HEIGHT
+    // TEXTAREA AUTO-GROW
     // ---------------------------------------------------------
 
     message_input->SetProperty(
@@ -674,18 +633,14 @@ void UpdateInput(
 
 
     // ---------------------------------------------------------
-    // INPUT BAR HEIGHT
+    // INPUT PANEL AUTO-GROW
     // ---------------------------------------------------------
 
-    // Important:
+    // Collapsed or expanded horizontally:
+    // base height remains unchanged when there is one line.
     //
-    // Empty input:
-    //   bar height remains exactly 15 viewport units.
-    //
-    // Text wraps:
-    //   only the additional textarea height is added.
-    //
-    // Expanding horizontally does not increase bar height.
+    // Each additional text line adds only its extra height.
+    // The bottom edge remains anchored.
 
     const float additional_height =
         std::max(
@@ -701,12 +656,8 @@ void UpdateInput(
 
 
     // ---------------------------------------------------------
-    // INPUT BAR BOTTOM GAP
+    // KEYBOARD GAP
     // ---------------------------------------------------------
-
-    // This distance is measured from the current context bottom.
-    // When Android resizes the window for the keyboard,
-    // this gap remains above the keyboard.
 
     input_bar->SetProperty(
         "bottom",
@@ -714,16 +665,16 @@ void UpdateInput(
 
 
     // ---------------------------------------------------------
-    // CHAT AREA POSITION
+    // CHAT POSITION
     // ---------------------------------------------------------
 
     chat_area->SetProperty(
         "bottom",
-        ToPixels(bar_height + chat_bottom));
+        ToPixels(bar_height + chat_gap));
 
 
     // ---------------------------------------------------------
-    // SEND ARROW VISIBILITY
+    // PULSE / ARROW STATE
     // ---------------------------------------------------------
 
     const bool has_text =
@@ -848,14 +799,14 @@ void ToggleInputBar(
         "expanded",
         !expanded);
 
-    // The empty bar retains its exact original height.
+    // Horizontal expansion never changes the empty base height.
 
     UpdateInput(document);
 }
 
 
 // =============================================================
-// BUBBLE TEXT MANAGEMENT
+// BUBBLE TEXT REPLACEMENT
 // =============================================================
 
 void ReplaceBubbleText(
@@ -895,15 +846,13 @@ void ReplaceBubbleText(
 
 void CancelLongPress()
 {
-    // Invalidate all previous timer tickets.
+    // Invalidate every outstanding timer callback.
 
     g_state.press_generation.fetch_add(
         1,
         std::memory_order_acq_rel);
 
     g_state.press_active = false;
-
-    g_state.press_source = PressSource::None;
 
     g_state.press_target = nullptr;
 
@@ -937,8 +886,6 @@ void ResetTouchState()
     g_state.touch_start_target = nullptr;
 
     g_state.touch_start_position = {};
-
-    g_state.touch_last_position = {};
 }
 
 
@@ -963,8 +910,8 @@ Rml::Vector2f GetTouchPosition(
     const Rml::Vector2i dimensions =
         context->GetDimensions();
 
-    // SDL finger coordinates are normalized 0..1.
-    // Convert them to RmlUi context pixel coordinates.
+    // SDL finger positions are normalized between 0 and 1.
+    // Convert to RmlUi context pixel coordinates.
 
     return Rml::Vector2f{
         event.tfinger.x *
@@ -977,31 +924,7 @@ Rml::Vector2f GetTouchPosition(
 
 
 // =============================================================
-// CREATE RML TOUCH LIST
-// =============================================================
-
-Rml::TouchList MakeTouchList(
-    SDL_FingerID finger_id,
-    Rml::Vector2f position)
-{
-    Rml::Touch touch{};
-
-    touch.identifier =
-        static_cast<Rml::TouchId>(
-            static_cast<std::uintptr_t>(finger_id));
-
-    touch.position = position;
-
-    Rml::TouchList touches;
-
-    touches.push_back(touch);
-
-    return touches;
-}
-
-
-// =============================================================
-// TOUCH HIT TESTING
+// TOUCH HIT TEST
 // =============================================================
 
 Rml::Element* FindTouchTarget(
@@ -1014,15 +937,18 @@ Rml::Element* FindTouchTarget(
         return nullptr;
     }
 
-    // ---------------------------------------------------------
-    // SEND BUTTON
-    // ---------------------------------------------------------
-
     Rml::Element* input_bar =
         GetElement(document, "input-bar");
 
     Rml::Element* send_button =
         GetElement(document, "send-button");
+
+
+    // ---------------------------------------------------------
+    // SEND BUTTON
+    // ---------------------------------------------------------
+
+    // It is actionable only after text has been entered.
 
     if (input_bar != nullptr &&
         send_button != nullptr &&
@@ -1051,7 +977,7 @@ Rml::Element* FindTouchTarget(
 
 
     // ---------------------------------------------------------
-    // CHAT MESSAGES
+    // CHAT MESSAGE
     // ---------------------------------------------------------
 
     Rml::Element* chat_area =
@@ -1062,8 +988,6 @@ Rml::Element* FindTouchTarget(
     {
         return nullptr;
     }
-
-    // Newest message is checked first.
 
     for (Rml::Element* child =
             chat_area->GetLastChild();
@@ -1083,6 +1007,20 @@ Rml::Element* FindTouchTarget(
 
 
 // =============================================================
+// LONG-PRESS MOVEMENT TOLERANCE
+// =============================================================
+
+float GetLongPressMovementTolerance(
+    Rml::ElementDocument* document)
+{
+    return std::max(
+        6.0f,
+        kLongPressMoveUnits *
+            GetViewportUnit(document));
+}
+
+
+// =============================================================
 // TOUCH MOVEMENT DISTANCE
 // =============================================================
 
@@ -1094,17 +1032,8 @@ float GetTouchMovementDistance(
 
     const float dy = second.y - first.y;
 
-    return std::hypot(dx, dy);
-}
-
-
-float GetLongPressMovementTolerance(
-    Rml::ElementDocument* document)
-{
-    return std::max(
-        6.0f,
-        kLongPressMoveUnits *
-            GetViewportUnit(document));
+    return std::sqrt(
+        dx * dx + dy * dy);
 }
 
 
@@ -1141,7 +1070,7 @@ void StartEdit(
 
 
     // ---------------------------------------------------------
-    // RETRIEVE ORIGINAL TEXT
+    // GET ORIGINAL MESSAGE
     // ---------------------------------------------------------
 
     std::string message;
@@ -1203,7 +1132,7 @@ void StartEdit(
 
 
     // ---------------------------------------------------------
-    // RESTORE INPUT
+    // RESTORE INPUT TEXT
     // ---------------------------------------------------------
 
     message_input->SetValue(message);
@@ -1219,7 +1148,7 @@ void StartEdit(
 
 
 // =============================================================
-// SCROLL POSITION HELPERS
+// CHAT SCROLL HELPERS
 // =============================================================
 
 bool IsNearChatBottom(
@@ -1238,9 +1167,31 @@ bool IsNearChatBottom(
             chat_area->GetClientHeight());
 
     const float remaining =
-        maximum_scroll - chat_area->GetScrollTop();
+        maximum_scroll -
+        chat_area->GetScrollTop();
 
     return remaining <= threshold;
+}
+
+
+void ScrollChatToBottom(
+    Rml::Element* chat_area)
+{
+    if (chat_area == nullptr)
+    {
+        return;
+    }
+
+    const Rml::Vector2f destination{
+        0.0f,
+        chat_area->GetScrollHeight()
+    };
+
+    // Smooth programmatic scrolling.
+
+    chat_area->ScrollTo(
+        destination,
+        Rml::ScrollBehavior::Smooth);
 }
 
 
@@ -1277,22 +1228,27 @@ void SendMessage(
         return;
     }
 
+
+    // ---------------------------------------------------------
+    // DETECT CURRENT SCROLL POSITION
+    // ---------------------------------------------------------
+
+    document->UpdateDocument();
+
     const float unit =
         GetViewportUnit(document);
 
-    // Preserve manual scroll position when the user is
-    // reading older messages.
-
-    document->UpdateDocument();
+    // Preserve manually selected history position.
+    // Follow new messages only when already near the bottom.
 
     const bool should_follow_bottom =
         IsNearChatBottom(
             chat_area,
-            std::max(6.0f, unit * 3.0f));
+            std::max(8.0f, unit * 3.0f));
 
 
     // ---------------------------------------------------------
-    // EDIT EXISTING MESSAGE
+    // EXISTING MESSAGE EDIT
     // ---------------------------------------------------------
 
     if (g_state.editing_bubble)
@@ -1321,7 +1277,7 @@ void SendMessage(
     }
 
     // ---------------------------------------------------------
-    // CREATE NEW MESSAGE
+    // NEW MESSAGE
     // ---------------------------------------------------------
 
     else
@@ -1374,28 +1330,32 @@ void SendMessage(
 
 
     // ---------------------------------------------------------
-    // UPDATE RESPONSIVE INPUT
+    // RESET INPUT HEIGHT / ARROW STATE
     // ---------------------------------------------------------
 
     UpdateInput(document);
+
+
+    // ---------------------------------------------------------
+    // UPDATE CHAT LAYOUT
+    // ---------------------------------------------------------
 
     document->UpdateDocument();
 
 
     // ---------------------------------------------------------
-    // AUTO-FOLLOW ONLY WHEN ALREADY NEAR BOTTOM
+    // FOLLOW NEW MESSAGE
     // ---------------------------------------------------------
 
     if (should_follow_bottom)
     {
-        chat_area->SetScrollTop(
-            chat_area->GetScrollHeight());
+        ScrollChatToBottom(chat_area);
     }
 }
 
 
 // =============================================================
-// ACTION EXECUTOR
+// PENDING ACTION EXECUTOR
 // =============================================================
 
 void ProcessPendingActions(void*)
@@ -1445,7 +1405,7 @@ void ProcessPendingActions(void*)
     }
 
 
-    // Schedule any actions added while processing.
+    // Process actions added while the current batch was running.
 
     if (!g_state.pending_actions.empty() &&
         !g_state.action_task_pending)
@@ -1475,7 +1435,6 @@ void CompleteLongPress(
         g_state.touch_moved ||
         g_state.touch_long_press_fired ||
         !g_state.press_active ||
-        g_state.press_source != PressSource::Touch ||
         g_state.press_target == nullptr)
     {
         return;
@@ -1514,8 +1473,7 @@ void CompleteLongPress(
     }
 
 
-    // Remember that this touch already performed an edit action.
-    // Its release must not be treated as a normal tap.
+    // Prevent the finger release from becoming a normal tap.
 
     g_state.touch_long_press_fired = true;
 
@@ -1563,8 +1521,6 @@ void BeginLongPress(
 
     g_state.press_target = bubble;
 
-    g_state.press_source = PressSource::Touch;
-
     g_state.press_started_at =
         SDL_GetTicks();
 
@@ -1576,8 +1532,8 @@ void BeginLongPress(
             std::memory_order_acq_rel) + 1;
 
 
-    // The timer only waits.
-    // All RmlUi changes happen on the UI thread.
+    // The worker waits only.
+    // All UI operations remain on the UI thread.
 
     g_long_press_worker = std::jthread(
         [generation](std::stop_token stop_token)
@@ -1594,6 +1550,7 @@ void BeginLongPress(
                 std::chrono::milliseconds(
                     kLongPressDuration),
                 [] { return false; });
+
 
             if (stop_token.stop_requested())
             {
@@ -1621,35 +1578,47 @@ void BeginLongPress(
 
 
 // =============================================================
-// TOUCH STATE RESET WITH CONTEXT CANCELLATION
+// TOUCH STATE RESET
 // =============================================================
 
-void CancelActiveTouch()
+void ResetTouchState()
 {
-    if (g_state.touch_active &&
-        g_state.touch_document != nullptr)
-    {
-        Rml::Context* context =
-            g_state.touch_document->GetContext();
+    CancelLongPress();
 
-        if (context != nullptr)
-        {
-            Rml::TouchList touches =
-                MakeTouchList(
-                    g_state.finger_id,
-                    g_state.touch_last_position);
+    g_state.touch_active = false;
 
-            context->ProcessTouchCancel(touches);
-        }
-    }
+    g_state.touch_moved = false;
 
-    ResetTouchState();
+    g_state.touch_long_press_fired = false;
+
+    g_state.touch_id = 0;
+
+    g_state.finger_id = 0;
+
+    g_state.touch_document = nullptr;
+
+    g_state.touch_start_target = nullptr;
+
+    g_state.touch_start_position = {};
 }
 
 
 // =============================================================
-// NATIVE TOUCH EVENT HANDLER
+// NATIVE SDL TOUCH OBSERVER
 // =============================================================
+
+// IMPORTANT:
+//
+// RmlUi_Platform_SDL is responsible for sending native touch
+// input into the RmlUi context exactly once.
+//
+// This module only observes the same raw SDL events for:
+// - Wing taps
+// - Send taps
+// - 550ms message long-press editing
+//
+// Do not call Context::ProcessTouchStart/Move/End here.
+// The platform backend already processes the scrolling gesture.
 
 bool HandleSDLTouchEvent(
     const SDL_Event* event,
@@ -1669,14 +1638,6 @@ bool HandleSDLTouchEvent(
         return false;
     }
 
-    Rml::Context* context =
-        document->GetContext();
-
-    if (context == nullptr)
-    {
-        return false;
-    }
-
 
     // ---------------------------------------------------------
     // FINGER DOWN
@@ -1684,8 +1645,6 @@ bool HandleSDLTouchEvent(
 
     if (event->type == SDL_EVENT_FINGER_DOWN)
     {
-        // Single active touch pointer for this chat interaction.
-
         if (g_state.touch_active)
         {
             return false;
@@ -1696,21 +1655,6 @@ bool HandleSDLTouchEvent(
         const Rml::Vector2f position =
             GetTouchPosition(*event, document);
 
-        const Rml::TouchList touches =
-            MakeTouchList(
-                event->tfinger.fingerID,
-                position);
-
-
-        // Let RmlUi receive native touch input.
-        // This is important for chat-area scrolling.
-
-        context->ProcessTouchStart(
-            touches,
-            0);
-
-
-        // Initialize touch state.
 
         g_state.touch_active = true;
 
@@ -1730,11 +1674,8 @@ bool HandleSDLTouchEvent(
         g_state.touch_start_position =
             position;
 
-        g_state.touch_last_position =
-            position;
 
-
-        // Determine the initially pressed element.
+        // Determine the element under the initial touch.
 
         Rml::Element* target =
             FindTouchTarget(
@@ -1745,7 +1686,7 @@ bool HandleSDLTouchEvent(
             target;
 
 
-        // Long-press is only supported on chat bubbles.
+        // Start long-press only for chat bubbles.
 
         Rml::Element* bubble =
             FindMessageBubble(
@@ -1782,24 +1723,6 @@ bool HandleSDLTouchEvent(
         const Rml::Vector2f position =
             GetTouchPosition(*event, document);
 
-        g_state.touch_last_position =
-            position;
-
-        const Rml::TouchList touches =
-            MakeTouchList(
-                g_state.finger_id,
-                position);
-
-
-        // Native RmlUi scrolling and touch movement.
-
-        context->ProcessTouchMove(
-            touches,
-            0);
-
-
-        // Cancel long-press and tap when the finger is dragged.
-
         const float movement =
             GetTouchMovementDistance(
                 g_state.touch_start_position,
@@ -1807,6 +1730,9 @@ bool HandleSDLTouchEvent(
 
         const float tolerance =
             GetLongPressMovementTolerance(document);
+
+        // Dragging the chat history must never trigger editing
+        // or a normal tap on release.
 
         if (movement > tolerance)
         {
@@ -1839,11 +1765,8 @@ bool HandleSDLTouchEvent(
         const Rml::Vector2f position =
             GetTouchPosition(*event, document);
 
-        g_state.touch_last_position =
-            position;
 
-
-        // Final movement check.
+        // Final movement validation.
 
         const float movement =
             GetTouchMovementDistance(
@@ -1862,9 +1785,8 @@ bool HandleSDLTouchEvent(
         }
 
 
-        // If the finger remained nearly stationary for
-        // 550ms, complete long-press even if the timer's
-        // UI callback has not run yet.
+        // Complete long-press on release if the worker callback
+        // has not yet reached the UI queue.
 
         if (g_state.press_active &&
             !g_state.touch_moved &&
@@ -1878,25 +1800,12 @@ bool HandleSDLTouchEvent(
         }
 
 
-        // Find release target before ending the RmlUi touch.
+        // Find the release target.
 
         Rml::Element* release_target =
             FindTouchTarget(
                 document,
                 position);
-
-
-        // Complete native touch input.
-        // RmlUi may continue inertial scrolling after release.
-
-        const Rml::TouchList touches =
-            MakeTouchList(
-                g_state.finger_id,
-                position);
-
-        context->ProcessTouchEnd(
-            touches,
-            0);
 
 
         // -----------------------------------------------------
@@ -1943,7 +1852,7 @@ bool HandleSDLTouchEvent(
             event->tfinger.touchID == g_state.touch_id &&
             event->tfinger.fingerID == g_state.finger_id)
         {
-            CancelActiveTouch();
+            ResetTouchState();
         }
 
         return false;
@@ -1954,7 +1863,7 @@ bool HandleSDLTouchEvent(
 
 
 // =============================================================
-// WINDOW RESIZE / KEYBOARD VIEWPORT HANDLER
+// WINDOW RESIZE HANDLER
 // =============================================================
 
 bool HandleSDLWindowEvent(
@@ -1972,8 +1881,8 @@ bool HandleSDLWindowEvent(
         Rml::ElementDocument* document =
             g_state.document;
 
-        // Recalculate responsive dimensions when the available
-        // viewport changes, including Android resize events.
+        // Recalculate dimensions after rotation or when
+        // Android resizes the usable area for the keyboard.
 
         if (IsChatDocument(document))
         {
@@ -2032,7 +1941,7 @@ bool HandleRmlEvent(
     {
         if (document == g_state.document)
         {
-            CancelActiveTouch();
+            ResetTouchState();
 
             g_state.document = nullptr;
         }
@@ -2068,7 +1977,7 @@ bool HandleRmlEvent(
 
 
     // ---------------------------------------------------------
-    // KEYBOARD AND TEXTAREA EVENTS
+    // KEYBOARD INPUT
     // ---------------------------------------------------------
 
     Rml::Element* target =
@@ -2109,7 +2018,7 @@ bool HandleRmlEvent(
                 ActionType::SendMessage,
                 document);
 
-            // Prevent an unwanted textarea newline.
+            // Prevent a default newline.
 
             return true;
         }
@@ -2136,7 +2045,7 @@ bool HandleRmlEvent(
 
 
 // =============================================================
-// EVENT REGISTRATION
+// REGISTRATION HELPERS
 // =============================================================
 
 void RegisterRmlEvent(
@@ -2151,8 +2060,7 @@ void RegisterRmlEvent(
 }
 
 
-void RegisterSDLTouchEvent(
-    Uint32 event_type)
+void RegisterSDLTouchEvent(Uint32 event_type)
 {
     Ultron_RegisterEventHandler(
         kModuleName,
@@ -2163,8 +2071,7 @@ void RegisterSDLTouchEvent(
 }
 
 
-void RegisterSDLWindowEvent(
-    Uint32 event_type)
+void RegisterSDLWindowEvent(Uint32 event_type)
 {
     Ultron_RegisterEventHandler(
         kModuleName,
@@ -2181,17 +2088,14 @@ void RegisterSDLWindowEvent(
 
 void RegisterObsidianWingChat()
 {
-    // ---------------------------------------------------------
-    // PHONE-ONLY INPUT
-    // ---------------------------------------------------------
-
-    // Disable touch -> synthetic mouse.
+    // Disable touch-generated mouse events.
+    // The module is intended for phone-native touch input.
 
     SDL_SetHint(
         SDL_HINT_TOUCH_MOUSE_EVENTS,
         "0");
 
-    // Disable mouse -> synthetic touch.
+    // Do not synthesize touch from a mouse.
 
     SDL_SetHint(
         SDL_HINT_MOUSE_TOUCH_EVENTS,
@@ -2199,7 +2103,7 @@ void RegisterObsidianWingChat()
 
 
     // ---------------------------------------------------------
-    // DOCUMENT LIFECYCLE
+    // DOCUMENT
     // ---------------------------------------------------------
 
     RegisterRmlEvent("show");
@@ -2207,7 +2111,7 @@ void RegisterObsidianWingChat()
 
 
     // ---------------------------------------------------------
-    // KEYBOARD AND TEXT INPUT
+    // TEXT INPUT
     // ---------------------------------------------------------
 
     RegisterRmlEvent("keydown");
@@ -2217,7 +2121,7 @@ void RegisterObsidianWingChat()
 
 
     // ---------------------------------------------------------
-    // NATIVE TOUCH INPUT
+    // NATIVE TOUCH OBSERVATION
     // ---------------------------------------------------------
 
     RegisterSDLTouchEvent(
@@ -2246,7 +2150,7 @@ void RegisterObsidianWingChat()
 
 
 // =============================================================
-// AUTOMATIC MODULE LIFETIME
+// MODULE LIFETIME
 // =============================================================
 
 struct ObsidianWingChatRegistration
@@ -2258,7 +2162,7 @@ struct ObsidianWingChatRegistration
 
     ~ObsidianWingChatRegistration()
     {
-        CancelLongPress();
+        ResetTouchState();
     }
 };
 
