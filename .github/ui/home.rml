@@ -24,8 +24,6 @@
             display: block;
             overflow-y: auto;
             padding: 1.96vw 0px;
-
-            transition: bottom 0.25s cubic-out;
         }
 
         /* CHAT BUBBLE */
@@ -93,8 +91,7 @@
             transition:
                 width 0.8s cubic-out,
                 height 0.22s linear-in-out,
-                border-radius 0.7s linear-in-out,
-                bottom 0.25s cubic-out;
+                border-radius 0.7s linear-in-out;
         }
 
         #input-bar.expanded {
@@ -231,17 +228,6 @@
         }
 
 
-        /* KEYBOARD OPEN POSITION */
-
-        body:focus #input-bar {
-            bottom: 12.35vw;
-        }
-
-        body:focus #chat-area {
-            bottom: 30.74vw;
-        }
-
-
         /* LANDSCAPE RESPONSIVE SCALING */
 
         @media (orientation: landscape) {
@@ -328,16 +314,6 @@
 
                 width: 7.11vh;
                 height: 7.11vh;
-            }
-
-            /* KEYBOARD OPEN POSITION */
-
-            body:focus #input-bar {
-                bottom: 12.35vh;
-            }
-
-            body:focus #chat-area {
-                bottom: 30.74vh;
             }
 
         }
