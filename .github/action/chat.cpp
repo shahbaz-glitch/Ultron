@@ -38,33 +38,40 @@ constexpr const char* kModuleName = "ObsidianWingChat";
 
 constexpr Uint64 kLongPressDuration = 550;
 
-// One unit = 1% of the shorter viewport dimension.
-// Portrait: vw
-// Landscape: vh
+// Responsive dimensions.
+// 1 unit = 1% of the shorter context dimension.
+//
+// Portrait : equivalent to vw.
+// Landscape: equivalent to vh.
 
 constexpr float kInitialInputUnits = 7.5f;
 constexpr float kMaximumInputUnits = 30.0f;
 
 constexpr float kMinimumBarUnits = 15.0f;
 
-// Input bar bottom (RML: 3.5vw / 3.5vh).
-// Gap between input bar and chat area: 4.1 units.
-constexpr float kChatBottomUnits = 7.6f;
+constexpr float kInputBottomUnits = 9.0f;
+constexpr float kChatBottomUnits = 8.5f;
 
-// Ignore small finger movement caused by natural hand jitter.
-constexpr float kTouchMovementThresholdUnits = 1.0f;
+constexpr float kBubbleMaximumWidth = 82.0f;
+constexpr float kBubbleRightMargin = 4.0f;
+
+constexpr float kLongPressMoveUnits = 2.0f;
 
 
 // =============================================================
-// ENUMS
+// INPUT SOURCE
 // =============================================================
 
 enum class PressSource
 {
     None,
-    Mouse,
     Touch
 };
+
+
+// =============================================================
+// ACTIONS
+// =============================================================
 
 enum class ActionType
 {
@@ -73,19 +80,6 @@ enum class ActionType
     StartEdit
 };
 
-enum class TouchTargetKind
-{
-    None,
-    Wing,
-    Send,
-    Bubble,
-    Other
-};
-
-
-// =============================================================
-// PENDING ACTION
-// =============================================================
 
 struct PendingAction
 {
@@ -115,10 +109,18 @@ struct ChatState
 {
     Rml::ElementDocument* document = nullptr;
 
+    // Selected bubble temporarily detached during editing.
+
     Rml::ElementPtr editing_bubble;
 
-    std::unordered_map<Rml::Element*, std::string>
-        bubble_messages;
+    // Original message text.
+
+    std::unordered_map<
+        Rml::Element*,
+        std::string
+    > bubble_messages;
+
+    // UI-thread action queue.
 
     std::vector<PendingAction> pending_actions;
 
@@ -129,7 +131,9 @@ struct ChatState
     Rml::ElementDocument* pending_update_document = nullptr;
 
 
-    // Long-press state.
+    // ---------------------------------------------------------
+    // LONG PRESS
+    // ---------------------------------------------------------
 
     std::atomic_uint64_t press_generation{0};
 
@@ -142,22 +146,27 @@ struct ChatState
     Uint64 press_started_at = 0;
 
 
-    // Native touch observation.
-    // RmlUi's SDL backend handles actual touch scrolling.
+    // ---------------------------------------------------------
+    // TOUCH
+    // ---------------------------------------------------------
 
     bool touch_active = false;
 
     bool touch_moved = false;
 
+    bool touch_long_press_fired = false;
+
     SDL_TouchID touch_id = 0;
 
     SDL_FingerID finger_id = 0;
 
-    TouchTargetKind touch_start_kind = TouchTargetKind::None;
+    Rml::ElementDocument* touch_document = nullptr;
 
-    float touch_start_x = 0.0f;
+    Rml::Element* touch_start_target = nullptr;
 
-    float touch_start_y = 0.0f;
+    Rml::Vector2f touch_start_position{};
+
+    Rml::Vector2f touch_last_position{};
 };
 
 
@@ -175,11 +184,11 @@ std::jthread g_long_press_worker;
 // FORWARD DECLARATIONS
 // =============================================================
 
-void ProcessPendingActions(void* user_data);
+void ProcessPendingActions(void*);
 
-void UpdateInputTask(void* user_data);
+void UpdateInputTask(void*);
 
-void LongPressTimeoutTask(void* user_data);
+void LongPressTimeoutTask(void*);
 
 
 // =============================================================
@@ -216,7 +225,8 @@ Rml::ElementFormControlTextArea* GetMessageInput(
 }
 
 
-bool IsChatDocument(Rml::ElementDocument* document)
+bool IsChatDocument(
+    Rml::ElementDocument* document)
 {
     return
         GetElement(document, "input-bar") != nullptr &&
@@ -252,12 +262,8 @@ Rml::Element* FindMessageBubble(
     Rml::Element* chat_area =
         GetElement(document, "chat-area");
 
-    if (chat_area == nullptr)
-    {
-        return nullptr;
-    }
-
-    while (element != nullptr && element != chat_area)
+    while (element != nullptr &&
+           element != chat_area)
     {
         if (element->IsClassSet("chat-message") &&
             element->GetParentNode() == chat_area)
@@ -266,6 +272,35 @@ Rml::Element* FindMessageBubble(
         }
 
         element = element->GetParentNode();
+    }
+
+    return nullptr;
+}
+
+
+Rml::Element* FindDescendantByClass(
+    Rml::Element* parent,
+    const char* class_name)
+{
+    if (parent == nullptr)
+    {
+        return nullptr;
+    }
+
+    for (Rml::Element* child = parent->GetFirstChild();
+         child != nullptr;
+         child = child->GetNextSibling())
+    {
+        if (child->IsClassSet(class_name))
+        {
+            return child;
+        }
+
+        if (Rml::Element* result =
+                FindDescendantByClass(child, class_name))
+        {
+            return result;
+        }
     }
 
     return nullptr;
@@ -423,7 +458,7 @@ std::string TrimWhitespace(std::string value)
 
 
 // =============================================================
-// CSS HELPERS
+// CSS PROPERTY HELPERS
 // =============================================================
 
 Rml::String ToPixels(float value)
@@ -444,7 +479,8 @@ Rml::String ToPixels(float value)
 // RESPONSIVE VIEWPORT UNIT
 // =============================================================
 
-float GetViewportUnit(Rml::ElementDocument* document)
+float GetViewportUnit(
+    Rml::ElementDocument* document)
 {
     if (document == nullptr)
     {
@@ -462,9 +498,8 @@ float GetViewportUnit(Rml::ElementDocument* document)
     const Rml::Vector2i dimensions =
         context->GetDimensions();
 
-    const int shorter_side = std::min(
-        dimensions.x,
-        dimensions.y);
+    const int shorter_side =
+        std::min(dimensions.x, dimensions.y);
 
     if (shorter_side <= 0)
     {
@@ -476,10 +511,90 @@ float GetViewportUnit(Rml::ElementDocument* document)
 
 
 // =============================================================
-// INPUT HEIGHT AND CHAT POSITION
+// DOCUMENT DESIGN CONFIGURATION
 // =============================================================
 
-void UpdateInput(Rml::ElementDocument* document)
+void ConfigureDocument(
+    Rml::ElementDocument* document)
+{
+    if (!IsChatDocument(document))
+    {
+        return;
+    }
+
+    Rml::Element* chat_area =
+        GetElement(document, "chat-area");
+
+    Rml::Element* send_button =
+        GetElement(document, "send-button");
+
+    if (chat_area != nullptr)
+    {
+        // Native RmlUi touch scrolling requires a scrollable area.
+
+        chat_area->SetProperty(
+            "overflow-y",
+            "auto");
+    }
+
+    if (send_button != nullptr)
+    {
+        // Remove the old pulse design permanently.
+        // The arrow remains controlled by the has-text CSS class.
+
+        Rml::Element* pulse =
+            FindDescendantByClass(
+                send_button,
+                "pulse-icon");
+
+        if (pulse != nullptr)
+        {
+            pulse->SetProperty(
+                "opacity",
+                "0");
+        }
+    }
+}
+
+
+// =============================================================
+// CHAT BUBBLE LAYOUT
+// =============================================================
+
+void ConfigureBubbleLayout(
+    Rml::Element* bubble)
+{
+    if (bubble == nullptr)
+    {
+        return;
+    }
+
+    // Keep the user message aligned to the right.
+
+    bubble->SetProperty(
+        "margin-left",
+        "auto");
+
+    // Keep a visible gap from the right edge.
+
+    bubble->SetProperty(
+        "margin-right",
+        "4%");
+
+    // Do not let the bubble occupy almost the entire panel.
+
+    bubble->SetProperty(
+        "max-width",
+        "82%");
+}
+
+
+// =============================================================
+// RESPONSIVE INPUT UPDATE
+// =============================================================
+
+void UpdateInput(
+    Rml::ElementDocument* document)
 {
     if (document == nullptr)
     {
@@ -519,12 +634,15 @@ void UpdateInput(Rml::ElementDocument* document)
     const float minimum_bar_height =
         kMinimumBarUnits * unit;
 
-    const float chat_bottom_offset =
+    const float input_bottom =
+        kInputBottomUnits * unit;
+
+    const float chat_bottom =
         kChatBottomUnits * unit;
 
 
     // ---------------------------------------------------------
-    // MEASURE TEXTAREA CONTENT
+    // TEXTAREA MEASUREMENT
     // ---------------------------------------------------------
 
     message_input->SetProperty(
@@ -533,33 +651,17 @@ void UpdateInput(Rml::ElementDocument* document)
 
     document->UpdateDocument();
 
-    float content_height =
+    const float content_height =
         message_input->GetScrollHeight();
 
-    content_height = std::max(
-        content_height,
-        initial_height);
-
-    // Ignore tiny measurement differences caused by padding.
-    // A single-line input must not increase the bar height.
-
-    const float measurement_tolerance =
-        0.75f * unit;
-
-    if (content_height <=
-        initial_height + measurement_tolerance)
-    {
-        content_height = initial_height;
-    }
-
     const float new_height = std::clamp(
-        content_height,
+        std::max(content_height, initial_height),
         initial_height,
         maximum_height);
 
 
     // ---------------------------------------------------------
-    // APPLY TEXTAREA HEIGHT
+    // TEXTAREA HEIGHT
     // ---------------------------------------------------------
 
     message_input->SetProperty(
@@ -575,18 +677,20 @@ void UpdateInput(Rml::ElementDocument* document)
     // INPUT BAR HEIGHT
     // ---------------------------------------------------------
 
-    const bool expanded =
-        input_bar->IsClassSet("expanded");
-
-    // Horizontal expansion alone never increases height.
+    // Important:
     //
-    // The panel grows only when the textarea actually needs
-    // additional vertical space.
+    // Empty input:
+    //   bar height remains exactly 15 viewport units.
+    //
+    // Text wraps:
+    //   only the additional textarea height is added.
+    //
+    // Expanding horizontally does not increase bar height.
 
     const float additional_height =
-        expanded
-            ? std::max(0.0f, new_height - initial_height)
-            : 0.0f;
+        std::max(
+            0.0f,
+            new_height - initial_height);
 
     const float bar_height =
         minimum_bar_height + additional_height;
@@ -597,16 +701,29 @@ void UpdateInput(Rml::ElementDocument* document)
 
 
     // ---------------------------------------------------------
+    // INPUT BAR BOTTOM GAP
+    // ---------------------------------------------------------
+
+    // This distance is measured from the current context bottom.
+    // When Android resizes the window for the keyboard,
+    // this gap remains above the keyboard.
+
+    input_bar->SetProperty(
+        "bottom",
+        ToPixels(input_bottom));
+
+
+    // ---------------------------------------------------------
     // CHAT AREA POSITION
     // ---------------------------------------------------------
 
     chat_area->SetProperty(
         "bottom",
-        ToPixels(bar_height + chat_bottom_offset));
+        ToPixels(bar_height + chat_bottom));
 
 
     // ---------------------------------------------------------
-    // PULSE / ARROW
+    // SEND ARROW VISIBILITY
     // ---------------------------------------------------------
 
     const bool has_text =
@@ -640,9 +757,11 @@ void UpdateInputTask(void*)
 }
 
 
-void QueueInputUpdate(Rml::ElementDocument* document)
+void QueueInputUpdate(
+    Rml::ElementDocument* document)
 {
-    if (!IsChatDocument(document))
+    if (!IsChatDocument(document) ||
+        !document->IsVisible())
     {
         return;
     }
@@ -661,6 +780,7 @@ void QueueInputUpdate(Rml::ElementDocument* document)
             nullptr))
     {
         g_state.update_task_pending = false;
+
         g_state.pending_update_document = nullptr;
     }
 }
@@ -700,16 +820,18 @@ void QueueAction(
             nullptr))
     {
         g_state.action_task_pending = false;
+
         g_state.pending_actions.clear();
     }
 }
 
 
 // =============================================================
-// INPUT BAR
+// INPUT BAR TOGGLE
 // =============================================================
 
-void ToggleInputBar(Rml::ElementDocument* document)
+void ToggleInputBar(
+    Rml::ElementDocument* document)
 {
     Rml::Element* input_bar =
         GetElement(document, "input-bar");
@@ -726,15 +848,14 @@ void ToggleInputBar(Rml::ElementDocument* document)
         "expanded",
         !expanded);
 
-    // Recalculate after the width transition is requested.
-    // Its height remains unchanged for a single-line input.
+    // The empty bar retains its exact original height.
 
     UpdateInput(document);
 }
 
 
 // =============================================================
-// BUBBLE TEXT
+// BUBBLE TEXT MANAGEMENT
 // =============================================================
 
 void ReplaceBubbleText(
@@ -742,7 +863,8 @@ void ReplaceBubbleText(
     Rml::Element* bubble,
     const std::string& message)
 {
-    if (document == nullptr || bubble == nullptr)
+    if (document == nullptr ||
+        bubble == nullptr)
     {
         return;
     }
@@ -773,6 +895,8 @@ void ReplaceBubbleText(
 
 void CancelLongPress()
 {
+    // Invalidate all previous timer tickets.
+
     g_state.press_generation.fetch_add(
         1,
         std::memory_order_acq_rel);
@@ -791,6 +915,200 @@ void CancelLongPress()
 
 
 // =============================================================
+// TOUCH STATE CLEANUP
+// =============================================================
+
+void ResetTouchState()
+{
+    CancelLongPress();
+
+    g_state.touch_active = false;
+
+    g_state.touch_moved = false;
+
+    g_state.touch_long_press_fired = false;
+
+    g_state.touch_id = 0;
+
+    g_state.finger_id = 0;
+
+    g_state.touch_document = nullptr;
+
+    g_state.touch_start_target = nullptr;
+
+    g_state.touch_start_position = {};
+
+    g_state.touch_last_position = {};
+}
+
+
+// =============================================================
+// TOUCH COORDINATES
+// =============================================================
+
+Rml::Vector2f GetTouchPosition(
+    const SDL_Event& event,
+    Rml::ElementDocument* document)
+{
+    Rml::Context* context =
+        document != nullptr
+            ? document->GetContext()
+            : nullptr;
+
+    if (context == nullptr)
+    {
+        return {};
+    }
+
+    const Rml::Vector2i dimensions =
+        context->GetDimensions();
+
+    // SDL finger coordinates are normalized 0..1.
+    // Convert them to RmlUi context pixel coordinates.
+
+    return Rml::Vector2f{
+        event.tfinger.x *
+            static_cast<float>(dimensions.x),
+
+        event.tfinger.y *
+            static_cast<float>(dimensions.y)
+    };
+}
+
+
+// =============================================================
+// CREATE RML TOUCH LIST
+// =============================================================
+
+Rml::TouchList MakeTouchList(
+    SDL_FingerID finger_id,
+    Rml::Vector2f position)
+{
+    Rml::Touch touch{};
+
+    touch.identifier =
+        static_cast<Rml::TouchId>(
+            static_cast<std::uintptr_t>(finger_id));
+
+    touch.position = position;
+
+    Rml::TouchList touches;
+
+    touches.push_back(touch);
+
+    return touches;
+}
+
+
+// =============================================================
+// TOUCH HIT TESTING
+// =============================================================
+
+Rml::Element* FindTouchTarget(
+    Rml::ElementDocument* document,
+    Rml::Vector2f position)
+{
+    if (!IsChatDocument(document) ||
+        !document->IsVisible())
+    {
+        return nullptr;
+    }
+
+    // ---------------------------------------------------------
+    // SEND BUTTON
+    // ---------------------------------------------------------
+
+    Rml::Element* input_bar =
+        GetElement(document, "input-bar");
+
+    Rml::Element* send_button =
+        GetElement(document, "send-button");
+
+    if (input_bar != nullptr &&
+        send_button != nullptr &&
+        input_bar->IsClassSet("expanded") &&
+        input_bar->IsClassSet("has-text") &&
+        send_button->IsVisible(true) &&
+        send_button->IsPointWithinElement(position))
+    {
+        return send_button;
+    }
+
+
+    // ---------------------------------------------------------
+    // WING BUTTON
+    // ---------------------------------------------------------
+
+    Rml::Element* wing =
+        GetElement(document, "wing-hit");
+
+    if (wing != nullptr &&
+        wing->IsVisible(true) &&
+        wing->IsPointWithinElement(position))
+    {
+        return wing;
+    }
+
+
+    // ---------------------------------------------------------
+    // CHAT MESSAGES
+    // ---------------------------------------------------------
+
+    Rml::Element* chat_area =
+        GetElement(document, "chat-area");
+
+    if (chat_area == nullptr ||
+        !chat_area->IsPointWithinElement(position))
+    {
+        return nullptr;
+    }
+
+    // Newest message is checked first.
+
+    for (Rml::Element* child =
+            chat_area->GetLastChild();
+         child != nullptr;
+         child = child->GetPreviousSibling())
+    {
+        if (child->IsClassSet("chat-message") &&
+            child->IsVisible(true) &&
+            child->IsPointWithinElement(position))
+        {
+            return child;
+        }
+    }
+
+    return nullptr;
+}
+
+
+// =============================================================
+// TOUCH MOVEMENT DISTANCE
+// =============================================================
+
+float GetTouchMovementDistance(
+    Rml::Vector2f first,
+    Rml::Vector2f second)
+{
+    const float dx = second.x - first.x;
+
+    const float dy = second.y - first.y;
+
+    return std::hypot(dx, dy);
+}
+
+
+float GetLongPressMovementTolerance(
+    Rml::ElementDocument* document)
+{
+    return std::max(
+        6.0f,
+        kLongPressMoveUnits *
+            GetViewportUnit(document));
+}
+
+
+// =============================================================
 // MESSAGE EDITING
 // =============================================================
 
@@ -798,7 +1116,8 @@ void StartEdit(
     Rml::ElementDocument* document,
     Rml::Element* bubble)
 {
-    if (document == nullptr || bubble == nullptr)
+    if (document == nullptr ||
+        bubble == nullptr)
     {
         return;
     }
@@ -821,7 +1140,9 @@ void StartEdit(
     }
 
 
-    // Retrieve original message.
+    // ---------------------------------------------------------
+    // RETRIEVE ORIGINAL TEXT
+    // ---------------------------------------------------------
 
     std::string message;
 
@@ -834,7 +1155,9 @@ void StartEdit(
     }
 
 
-    // Remove all messages below the selected message.
+    // ---------------------------------------------------------
+    // REMOVE ALL MESSAGES BELOW SELECTED MESSAGE
+    // ---------------------------------------------------------
 
     Rml::Element* next =
         bubble->GetNextSibling();
@@ -853,7 +1176,9 @@ void StartEdit(
     }
 
 
-    // Discard previous detached editing bubble.
+    // ---------------------------------------------------------
+    // DISCARD PREVIOUS DETACHED EDIT
+    // ---------------------------------------------------------
 
     if (g_state.editing_bubble)
     {
@@ -864,7 +1189,9 @@ void StartEdit(
     }
 
 
-    // Detach selected bubble.
+    // ---------------------------------------------------------
+    // DETACH SELECTED BUBBLE
+    // ---------------------------------------------------------
 
     g_state.editing_bubble =
         chat_area->RemoveChild(bubble);
@@ -875,43 +1202,45 @@ void StartEdit(
     }
 
 
-    // Restore text into textarea.
+    // ---------------------------------------------------------
+    // RESTORE INPUT
+    // ---------------------------------------------------------
 
     message_input->SetValue(message);
-
-
-    // Expand input bar.
 
     input_bar->SetClass(
         "expanded",
         true);
 
-
-    // Recalculate height and position.
-
     UpdateInput(document);
+
+    document->UpdateDocument();
 }
 
 
 // =============================================================
-// SCROLL TO LATEST MESSAGE
+// SCROLL POSITION HELPERS
 // =============================================================
 
-void ScrollChatToBottom(
-    Rml::ElementDocument* document)
+bool IsNearChatBottom(
+    Rml::Element* chat_area,
+    float threshold)
 {
-    Rml::Element* chat_area =
-        GetElement(document, "chat-area");
-
     if (chat_area == nullptr)
     {
-        return;
+        return true;
     }
 
-    document->UpdateDocument();
+    const float maximum_scroll =
+        std::max(
+            0.0f,
+            chat_area->GetScrollHeight() -
+            chat_area->GetClientHeight());
 
-    chat_area->SetScrollTop(
-        chat_area->GetScrollHeight());
+    const float remaining =
+        maximum_scroll - chat_area->GetScrollTop();
+
+    return remaining <= threshold;
 }
 
 
@@ -919,7 +1248,8 @@ void ScrollChatToBottom(
 // MESSAGE SENDING
 // =============================================================
 
-void SendMessage(Rml::ElementDocument* document)
+void SendMessage(
+    Rml::ElementDocument* document)
 {
     if (document == nullptr)
     {
@@ -947,6 +1277,19 @@ void SendMessage(Rml::ElementDocument* document)
         return;
     }
 
+    const float unit =
+        GetViewportUnit(document);
+
+    // Preserve manual scroll position when the user is
+    // reading older messages.
+
+    document->UpdateDocument();
+
+    const bool should_follow_bottom =
+        IsNearChatBottom(
+            chat_area,
+            std::max(6.0f, unit * 3.0f));
+
 
     // ---------------------------------------------------------
     // EDIT EXISTING MESSAGE
@@ -961,6 +1304,8 @@ void SendMessage(Rml::ElementDocument* document)
             document,
             bubble,
             message);
+
+        ConfigureBubbleLayout(bubble);
 
         g_state.bubble_messages[bubble] =
             message;
@@ -992,6 +1337,9 @@ void SendMessage(Rml::ElementDocument* document)
         bubble->SetClass(
             "chat-message",
             true);
+
+        ConfigureBubbleLayout(
+            bubble.get());
 
         Rml::ElementPtr text_node =
             document->CreateTextNode(message);
@@ -1026,17 +1374,23 @@ void SendMessage(Rml::ElementDocument* document)
 
 
     // ---------------------------------------------------------
-    // RESTORE EMPTY INPUT STATE
+    // UPDATE RESPONSIVE INPUT
     // ---------------------------------------------------------
 
     UpdateInput(document);
 
+    document->UpdateDocument();
+
 
     // ---------------------------------------------------------
-    // SCROLL TO NEWEST MESSAGE
+    // AUTO-FOLLOW ONLY WHEN ALREADY NEAR BOTTOM
     // ---------------------------------------------------------
 
-    ScrollChatToBottom(document);
+    if (should_follow_bottom)
+    {
+        chat_area->SetScrollTop(
+            chat_area->GetScrollHeight());
+    }
 }
 
 
@@ -1091,7 +1445,7 @@ void ProcessPendingActions(void*)
     }
 
 
-    // Process actions queued during this batch.
+    // Schedule any actions added while processing.
 
     if (!g_state.pending_actions.empty() &&
         !g_state.action_task_pending)
@@ -1103,6 +1457,7 @@ void ProcessPendingActions(void*)
                 nullptr))
         {
             g_state.action_task_pending = false;
+
             g_state.pending_actions.clear();
         }
     }
@@ -1113,23 +1468,29 @@ void ProcessPendingActions(void*)
 // LONG-PRESS COMPLETION
 // =============================================================
 
-void CompleteLongPress(std::uint64_t generation)
+void CompleteLongPress(
+    std::uint64_t generation)
 {
-    if (!g_state.press_active ||
-        g_state.press_source == PressSource::None ||
+    if (!g_state.touch_active ||
+        g_state.touch_moved ||
+        g_state.touch_long_press_fired ||
+        !g_state.press_active ||
+        g_state.press_source != PressSource::Touch ||
         g_state.press_target == nullptr)
     {
         return;
     }
 
-    if (g_state.press_generation.load(
-            std::memory_order_acquire) != generation)
+    if (generation !=
+        g_state.press_generation.load(
+            std::memory_order_acquire))
     {
         return;
     }
 
     const Uint64 elapsed =
-        SDL_GetTicks() - g_state.press_started_at;
+        SDL_GetTicks() -
+        g_state.press_started_at;
 
     if (elapsed < kLongPressDuration)
     {
@@ -1140,23 +1501,35 @@ void CompleteLongPress(std::uint64_t generation)
         g_state.press_target;
 
     Rml::ElementDocument* document =
-        bubble->GetOwnerDocument();
+        g_state.touch_document;
+
+    Rml::Element* chat_area =
+        GetElement(document, "chat-area");
+
+    if (chat_area == nullptr ||
+        bubble->GetParentNode() != chat_area)
+    {
+        CancelLongPress();
+        return;
+    }
+
+
+    // Remember that this touch already performed an edit action.
+    // Its release must not be treated as a normal tap.
+
+    g_state.touch_long_press_fired = true;
 
     CancelLongPress();
 
-    if (IsChatDocument(document) &&
-        document->IsVisible())
-    {
-        QueueAction(
-            ActionType::StartEdit,
-            document,
-            bubble);
-    }
+    QueueAction(
+        ActionType::StartEdit,
+        document,
+        bubble);
 }
 
 
 // =============================================================
-// LONG-PRESS TIMER TASK
+// LONG-PRESS TIMER CALLBACK
 // =============================================================
 
 void LongPressTimeoutTask(void* user_data)
@@ -1169,35 +1542,19 @@ void LongPressTimeoutTask(void* user_data)
         return;
     }
 
-    const std::uint64_t generation =
-        ticket->generation;
-
-    if (generation !=
-        g_state.press_generation.load(
-            std::memory_order_acquire))
-    {
-        return;
-    }
-
-    if (!g_state.press_active)
-    {
-        return;
-    }
-
-    CompleteLongPress(generation);
+    CompleteLongPress(
+        ticket->generation);
 }
 
 
 // =============================================================
-// START LONG-PRESS
+// START LONG-PRESS TIMER
 // =============================================================
 
 void BeginLongPress(
-    Rml::Element* bubble,
-    PressSource source)
+    Rml::Element* bubble)
 {
-    if (bubble == nullptr ||
-        source == PressSource::None)
+    if (bubble == nullptr)
     {
         return;
     }
@@ -1206,7 +1563,7 @@ void BeginLongPress(
 
     g_state.press_target = bubble;
 
-    g_state.press_source = source;
+    g_state.press_source = PressSource::Touch;
 
     g_state.press_started_at =
         SDL_GetTicks();
@@ -1218,6 +1575,9 @@ void BeginLongPress(
             1,
             std::memory_order_acq_rel) + 1;
 
+
+    // The timer only waits.
+    // All RmlUi changes happen on the UI thread.
 
     g_long_press_worker = std::jthread(
         [generation](std::stop_token stop_token)
@@ -1236,12 +1596,6 @@ void BeginLongPress(
                 [] { return false; });
 
             if (stop_token.stop_requested())
-            {
-                return;
-            }
-
-            if (g_state.press_generation.load(
-                    std::memory_order_acquire) != generation)
             {
                 return;
             }
@@ -1267,266 +1621,34 @@ void BeginLongPress(
 
 
 // =============================================================
-// MOUSE HANDLING
+// TOUCH STATE RESET WITH CONTEXT CANCELLATION
 // =============================================================
 
-void HandleMouseDown(Rml::Event& event)
+void CancelActiveTouch()
 {
-    const int button =
-        event.GetParameter<int>("button", 0);
-
-    if (button != 0)
+    if (g_state.touch_active &&
+        g_state.touch_document != nullptr)
     {
-        return;
-    }
+        Rml::Context* context =
+            g_state.touch_document->GetContext();
 
-    Rml::ElementDocument* document =
-        GetDocumentFromEvent(&event);
-
-    if (!IsChatDocument(document))
-    {
-        CancelLongPress();
-        return;
-    }
-
-    Rml::Element* bubble =
-        FindMessageBubble(
-            event.GetTargetElement(),
-            document);
-
-    if (bubble == nullptr)
-    {
-        CancelLongPress();
-        return;
-    }
-
-    BeginLongPress(
-        bubble,
-        PressSource::Mouse);
-}
-
-
-void HandleMouseUp(Rml::Event& event)
-{
-    const int button =
-        event.GetParameter<int>("button", 0);
-
-    if (button != 0 ||
-        g_state.press_source != PressSource::Mouse ||
-        !g_state.press_active)
-    {
-        return;
-    }
-
-    Rml::Element* bubble =
-        g_state.press_target;
-
-    Rml::ElementDocument* document =
-        bubble != nullptr
-            ? bubble->GetOwnerDocument()
-            : nullptr;
-
-    const Uint64 elapsed =
-        SDL_GetTicks() - g_state.press_started_at;
-
-    Rml::Element* released_bubble =
-        FindMessageBubble(
-            event.GetTargetElement(),
-            document);
-
-    const bool released_inside =
-        bubble != nullptr &&
-        released_bubble == bubble;
-
-    const bool completed =
-        elapsed >= kLongPressDuration &&
-        released_inside;
-
-    CancelLongPress();
-
-    if (completed &&
-        IsChatDocument(document) &&
-        document->IsVisible())
-    {
-        QueueAction(
-            ActionType::StartEdit,
-            document,
-            bubble);
-    }
-}
-
-
-void HandleMouseMove(Rml::Event& event)
-{
-    if (!g_state.press_active ||
-        g_state.press_source != PressSource::Mouse)
-    {
-        return;
-    }
-
-    Rml::Element* pressed_bubble =
-        g_state.press_target;
-
-    if (pressed_bubble == nullptr)
-    {
-        CancelLongPress();
-        return;
-    }
-
-    Rml::ElementDocument* document =
-        pressed_bubble->GetOwnerDocument();
-
-    Rml::Element* current_bubble =
-        FindMessageBubble(
-            event.GetTargetElement(),
-            document);
-
-    if (current_bubble != pressed_bubble)
-    {
-        CancelLongPress();
-    }
-}
-
-
-// =============================================================
-// TOUCH POSITION AND HIT TESTING
-// =============================================================
-
-Rml::Vector2f GetTouchPosition(
-    const SDL_Event& event,
-    Rml::ElementDocument* document)
-{
-    Rml::Context* context =
-        document != nullptr
-            ? document->GetContext()
-            : nullptr;
-
-    if (context == nullptr)
-    {
-        return Rml::Vector2f{};
-    }
-
-    const Rml::Vector2i dimensions =
-        context->GetDimensions();
-
-    return Rml::Vector2f{
-        event.tfinger.x *
-            static_cast<float>(dimensions.x),
-
-        event.tfinger.y *
-            static_cast<float>(dimensions.y)
-    };
-}
-
-
-Rml::Element* FindTouchBubble(
-    Rml::ElementDocument* document,
-    Rml::Vector2f position)
-{
-    Rml::Element* chat_area =
-        GetElement(document, "chat-area");
-
-    if (chat_area == nullptr ||
-        !chat_area->IsPointWithinElement(position))
-    {
-        return nullptr;
-    }
-
-    // Newest bubble first.
-
-    for (Rml::Element* child = chat_area->GetLastChild();
-         child != nullptr;
-         child = child->GetPreviousSibling())
-    {
-        if (child->IsClassSet("chat-message") &&
-            child->IsVisible(true) &&
-            child->IsPointWithinElement(position))
+        if (context != nullptr)
         {
-            return child;
+            Rml::TouchList touches =
+                MakeTouchList(
+                    g_state.finger_id,
+                    g_state.touch_last_position);
+
+            context->ProcessTouchCancel(touches);
         }
     }
 
-    return nullptr;
-}
-
-
-TouchTargetKind GetTouchTargetKind(
-    Rml::ElementDocument* document,
-    Rml::Vector2f position)
-{
-    if (!IsChatDocument(document))
-    {
-        return TouchTargetKind::None;
-    }
-
-    Rml::Element* wing =
-        GetElement(document, "wing-hit");
-
-    if (wing != nullptr &&
-        wing->IsVisible(true) &&
-        wing->IsPointWithinElement(position))
-    {
-        return TouchTargetKind::Wing;
-    }
-
-    Rml::Element* send =
-        GetElement(document, "send-button");
-
-    if (send != nullptr &&
-        send->IsVisible(true) &&
-        send->IsPointWithinElement(position))
-    {
-        return TouchTargetKind::Send;
-    }
-
-    if (FindTouchBubble(document, position) != nullptr)
-    {
-        return TouchTargetKind::Bubble;
-    }
-
-    Rml::Element* chat_area =
-        GetElement(document, "chat-area");
-
-    if (chat_area != nullptr &&
-        chat_area->IsPointWithinElement(position))
-    {
-        return TouchTargetKind::Other;
-    }
-
-    return TouchTargetKind::None;
+    ResetTouchState();
 }
 
 
 // =============================================================
-// TOUCH STATE CLEANUP
-// =============================================================
-
-void ClearTouchState()
-{
-    if (g_state.press_source == PressSource::Touch)
-    {
-        CancelLongPress();
-    }
-
-    g_state.touch_active = false;
-
-    g_state.touch_moved = false;
-
-    g_state.touch_id = 0;
-
-    g_state.finger_id = 0;
-
-    g_state.touch_start_kind =
-        TouchTargetKind::None;
-
-    g_state.touch_start_x = 0.0f;
-
-    g_state.touch_start_y = 0.0f;
-}
-
-
-// =============================================================
-// SDL TOUCH EVENT HANDLER
+// NATIVE TOUCH EVENT HANDLER
 // =============================================================
 
 bool HandleSDLTouchEvent(
@@ -1547,217 +1669,319 @@ bool HandleSDLTouchEvent(
         return false;
     }
 
-    switch (event->type)
+    Rml::Context* context =
+        document->GetContext();
+
+    if (context == nullptr)
     {
-        // -----------------------------------------------------
-        // FINGER DOWN
-        // -----------------------------------------------------
+        return false;
+    }
 
-        case SDL_EVENT_FINGER_DOWN:
+
+    // ---------------------------------------------------------
+    // FINGER DOWN
+    // ---------------------------------------------------------
+
+    if (event->type == SDL_EVENT_FINGER_DOWN)
+    {
+        // Single active touch pointer for this chat interaction.
+
+        if (g_state.touch_active)
         {
-            if (g_state.touch_active)
-            {
-                return false;
-            }
-
-            document->UpdateDocument();
-
-            const Rml::Vector2f position =
-                GetTouchPosition(*event, document);
-
-            const TouchTargetKind target_kind =
-                GetTouchTargetKind(document, position);
-
-            g_state.touch_active = true;
-
-            g_state.touch_moved = false;
-
-            g_state.touch_id =
-                event->tfinger.touchID;
-
-            g_state.finger_id =
-                event->tfinger.fingerID;
-
-            g_state.touch_start_kind =
-                target_kind;
-
-            g_state.touch_start_x = position.x;
-
-            g_state.touch_start_y = position.y;
-
-
-            // Long-press only on a chat message.
-
-            if (target_kind == TouchTargetKind::Bubble)
-            {
-                Rml::Element* bubble =
-                    FindTouchBubble(document, position);
-
-                if (bubble != nullptr)
-                {
-                    BeginLongPress(
-                        bubble,
-                        PressSource::Touch);
-                }
-            }
-
-            // Do not consume the event.
-            // RmlUi's SDL backend must receive it to handle
-            // textarea focus and native scroll/inertia.
-
             return false;
         }
 
+        document->UpdateDocument();
 
-        // -----------------------------------------------------
-        // FINGER MOTION
-        // -----------------------------------------------------
+        const Rml::Vector2f position =
+            GetTouchPosition(*event, document);
 
-        case SDL_EVENT_FINGER_MOTION:
+        const Rml::TouchList touches =
+            MakeTouchList(
+                event->tfinger.fingerID,
+                position);
+
+
+        // Let RmlUi receive native touch input.
+        // This is important for chat-area scrolling.
+
+        context->ProcessTouchStart(
+            touches,
+            0);
+
+
+        // Initialize touch state.
+
+        g_state.touch_active = true;
+
+        g_state.touch_moved = false;
+
+        g_state.touch_long_press_fired = false;
+
+        g_state.touch_id =
+            event->tfinger.touchID;
+
+        g_state.finger_id =
+            event->tfinger.fingerID;
+
+        g_state.touch_document =
+            document;
+
+        g_state.touch_start_position =
+            position;
+
+        g_state.touch_last_position =
+            position;
+
+
+        // Determine the initially pressed element.
+
+        Rml::Element* target =
+            FindTouchTarget(
+                document,
+                position);
+
+        g_state.touch_start_target =
+            target;
+
+
+        // Long-press is only supported on chat bubbles.
+
+        Rml::Element* bubble =
+            FindMessageBubble(
+                target,
+                document);
+
+        if (bubble != nullptr)
         {
-            if (!g_state.touch_active ||
-                event->tfinger.touchID != g_state.touch_id ||
-                event->tfinger.fingerID != g_state.finger_id)
-            {
-                return false;
-            }
+            BeginLongPress(bubble);
+        }
+        else
+        {
+            CancelLongPress();
+        }
 
-            const Rml::Vector2f position =
-                GetTouchPosition(*event, document);
+        return false;
+    }
 
-            const float dx =
-                position.x - g_state.touch_start_x;
 
-            const float dy =
-                position.y - g_state.touch_start_y;
+    // ---------------------------------------------------------
+    // FINGER MOTION
+    // ---------------------------------------------------------
 
-            const float distance =
-                std::sqrt(dx * dx + dy * dy);
-
-            const float unit =
-                GetViewportUnit(document);
-
-            const float threshold =
-                std::max(
-                    4.0f,
-                    kTouchMovementThresholdUnits * unit);
-
-            if (!g_state.touch_moved &&
-                distance >= threshold)
-            {
-                g_state.touch_moved = true;
-
-                // A real scroll gesture cancels long-press.
-
-                if (g_state.press_source == PressSource::Touch)
-                {
-                    CancelLongPress();
-                }
-            }
-
-            // Let the RmlUi context process this movement.
-            // It provides native scroll and inertial movement.
-
+    if (event->type == SDL_EVENT_FINGER_MOTION)
+    {
+        if (!g_state.touch_active ||
+            event->tfinger.touchID != g_state.touch_id ||
+            event->tfinger.fingerID != g_state.finger_id ||
+            g_state.touch_document != document)
+        {
             return false;
         }
 
+        const Rml::Vector2f position =
+            GetTouchPosition(*event, document);
 
-        // -----------------------------------------------------
-        // FINGER UP
-        // -----------------------------------------------------
+        g_state.touch_last_position =
+            position;
 
-        case SDL_EVENT_FINGER_UP:
+        const Rml::TouchList touches =
+            MakeTouchList(
+                g_state.finger_id,
+                position);
+
+
+        // Native RmlUi scrolling and touch movement.
+
+        context->ProcessTouchMove(
+            touches,
+            0);
+
+
+        // Cancel long-press and tap when the finger is dragged.
+
+        const float movement =
+            GetTouchMovementDistance(
+                g_state.touch_start_position,
+                position);
+
+        const float tolerance =
+            GetLongPressMovementTolerance(document);
+
+        if (movement > tolerance)
         {
-            if (!g_state.touch_active ||
-                event->tfinger.touchID != g_state.touch_id ||
-                event->tfinger.fingerID != g_state.finger_id)
-            {
-                return false;
-            }
+            g_state.touch_moved = true;
 
-            const Rml::Vector2f position =
-                GetTouchPosition(*event, document);
-
-            const Uint64 elapsed =
-                SDL_GetTicks() - g_state.press_started_at;
-
-
-            // Complete long-press on release if the timer
-            // callback has not yet reached the UI queue.
-
-            if (g_state.press_source == PressSource::Touch &&
-                g_state.press_active &&
-                !g_state.touch_moved &&
-                elapsed >= kLongPressDuration)
-            {
-                const std::uint64_t generation =
-                    g_state.press_generation.load(
-                        std::memory_order_acquire);
-
-                CompleteLongPress(generation);
-            }
-            else if (
-                g_state.press_source == PressSource::Touch)
+            if (g_state.press_active)
             {
                 CancelLongPress();
             }
-
-
-            // Normal tap actions.
-
-            if (!g_state.touch_moved)
-            {
-                const TouchTargetKind release_kind =
-                    GetTouchTargetKind(
-                        document,
-                        position);
-
-                // The finger must start and finish on
-                // the same interactive control.
-
-                if (release_kind == g_state.touch_start_kind)
-                {
-                    if (release_kind == TouchTargetKind::Wing)
-                    {
-                        QueueAction(
-                            ActionType::ToggleInput,
-                            document);
-                    }
-                    else if (
-                        release_kind == TouchTargetKind::Send)
-                    {
-                        QueueAction(
-                            ActionType::SendMessage,
-                            document);
-                    }
-                }
-            }
-
-            ClearTouchState();
-
-            return false;
         }
 
-
-        // -----------------------------------------------------
-        // FINGER CANCEL
-        // -----------------------------------------------------
-
-        case SDL_EVENT_FINGER_CANCELED:
-        {
-            if (g_state.touch_active &&
-                event->tfinger.touchID == g_state.touch_id &&
-                event->tfinger.fingerID == g_state.finger_id)
-            {
-                ClearTouchState();
-            }
-
-            return false;
-        }
-
-        default:
-            return false;
+        return false;
     }
+
+
+    // ---------------------------------------------------------
+    // FINGER UP
+    // ---------------------------------------------------------
+
+    if (event->type == SDL_EVENT_FINGER_UP)
+    {
+        if (!g_state.touch_active ||
+            event->tfinger.touchID != g_state.touch_id ||
+            event->tfinger.fingerID != g_state.finger_id ||
+            g_state.touch_document != document)
+        {
+            return false;
+        }
+
+        const Rml::Vector2f position =
+            GetTouchPosition(*event, document);
+
+        g_state.touch_last_position =
+            position;
+
+
+        // Final movement check.
+
+        const float movement =
+            GetTouchMovementDistance(
+                g_state.touch_start_position,
+                position);
+
+        if (movement >
+            GetLongPressMovementTolerance(document))
+        {
+            g_state.touch_moved = true;
+
+            if (g_state.press_active)
+            {
+                CancelLongPress();
+            }
+        }
+
+
+        // If the finger remained nearly stationary for
+        // 550ms, complete long-press even if the timer's
+        // UI callback has not run yet.
+
+        if (g_state.press_active &&
+            !g_state.touch_moved &&
+            !g_state.touch_long_press_fired)
+        {
+            const std::uint64_t generation =
+                g_state.press_generation.load(
+                    std::memory_order_acquire);
+
+            CompleteLongPress(generation);
+        }
+
+
+        // Find release target before ending the RmlUi touch.
+
+        Rml::Element* release_target =
+            FindTouchTarget(
+                document,
+                position);
+
+
+        // Complete native touch input.
+        // RmlUi may continue inertial scrolling after release.
+
+        const Rml::TouchList touches =
+            MakeTouchList(
+                g_state.finger_id,
+                position);
+
+        context->ProcessTouchEnd(
+            touches,
+            0);
+
+
+        // -----------------------------------------------------
+        // NORMAL TAP
+        // -----------------------------------------------------
+
+        if (!g_state.touch_long_press_fired &&
+            !g_state.touch_moved &&
+            release_target != nullptr &&
+            release_target == g_state.touch_start_target)
+        {
+            if (FindAncestorById(
+                    release_target,
+                    "wing-hit") != nullptr)
+            {
+                QueueAction(
+                    ActionType::ToggleInput,
+                    document);
+            }
+            else if (
+                release_target ==
+                    GetElement(document, "send-button"))
+            {
+                QueueAction(
+                    ActionType::SendMessage,
+                    document);
+            }
+        }
+
+
+        ResetTouchState();
+
+        return false;
+    }
+
+
+    // ---------------------------------------------------------
+    // FINGER CANCEL
+    // ---------------------------------------------------------
+
+    if (event->type == SDL_EVENT_FINGER_CANCELED)
+    {
+        if (g_state.touch_active &&
+            event->tfinger.touchID == g_state.touch_id &&
+            event->tfinger.fingerID == g_state.finger_id)
+        {
+            CancelActiveTouch();
+        }
+
+        return false;
+    }
+
+    return false;
+}
+
+
+// =============================================================
+// WINDOW RESIZE / KEYBOARD VIEWPORT HANDLER
+// =============================================================
+
+bool HandleSDLWindowEvent(
+    const SDL_Event* event,
+    void*)
+{
+    if (event == nullptr)
+    {
+        return false;
+    }
+
+    if (event->type == SDL_EVENT_WINDOW_RESIZED ||
+        event->type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED)
+    {
+        Rml::ElementDocument* document =
+            g_state.document;
+
+        // Recalculate responsive dimensions when the available
+        // viewport changes, including Android resize events.
+
+        if (IsChatDocument(document))
+        {
+            QueueInputUpdate(document);
+        }
+    }
+
+    return false;
 }
 
 
@@ -1791,6 +2015,8 @@ bool HandleRmlEvent(
         {
             g_state.document = document;
 
+            ConfigureDocument(document);
+
             QueueInputUpdate(document);
         }
 
@@ -1806,9 +2032,7 @@ bool HandleRmlEvent(
     {
         if (document == g_state.document)
         {
-            CancelLongPress();
-
-            ClearTouchState();
+            CancelActiveTouch();
 
             g_state.document = nullptr;
         }
@@ -1842,73 +2066,28 @@ bool HandleRmlEvent(
 
     g_state.document = document;
 
+
+    // ---------------------------------------------------------
+    // KEYBOARD AND TEXTAREA EVENTS
+    // ---------------------------------------------------------
+
     Rml::Element* target =
         event->GetTargetElement();
 
-
-    // ---------------------------------------------------------
-    // MOUSE CLICK
-    // ---------------------------------------------------------
-
-    if (event_name == "click")
-    {
-        if (event->GetParameter<int>("button", 0) != 0)
-        {
-            return false;
-        }
-
-        if (FindAncestorById(target, "wing-hit") != nullptr)
-        {
-            QueueAction(
-                ActionType::ToggleInput,
-                document);
-        }
-        else if (
-            FindAncestorById(target, "send-button") != nullptr)
-        {
-            QueueAction(
-                ActionType::SendMessage,
-                document);
-        }
-
-        return false;
-    }
-
-
-    // ---------------------------------------------------------
-    // MOUSE LONG-PRESS
-    // ---------------------------------------------------------
-
-    if (event_name == "mousedown")
-    {
-        HandleMouseDown(*event);
-        return false;
-    }
-
-    if (event_name == "mouseup")
-    {
-        HandleMouseUp(*event);
-        return false;
-    }
-
-    if (event_name == "mousemove")
-    {
-        HandleMouseMove(*event);
-        return false;
-    }
-
-
-    // ---------------------------------------------------------
-    // TEXT INPUT AND KEYBOARD
-    // ---------------------------------------------------------
-
     Rml::Element* input =
-        FindAncestorById(target, "message-input");
+        FindAncestorById(
+            target,
+            "message-input");
 
     if (input == nullptr)
     {
         return false;
     }
+
+
+    // ---------------------------------------------------------
+    // ENTER TO SEND
+    // ---------------------------------------------------------
 
     if (event_name == "keydown")
     {
@@ -1922,9 +2101,6 @@ bool HandleRmlEvent(
                 "shift_key",
                 false);
 
-        // Enter sends.
-        // Shift + Enter creates a newline.
-
         if ((key == Rml::Input::KI_RETURN ||
              key == Rml::Input::KI_NUMPADENTER) &&
             !shift)
@@ -1933,6 +2109,8 @@ bool HandleRmlEvent(
                 ActionType::SendMessage,
                 document);
 
+            // Prevent an unwanted textarea newline.
+
             return true;
         }
 
@@ -1940,14 +2118,16 @@ bool HandleRmlEvent(
     }
 
 
-    // Update arrow visibility and textarea dimensions
-    // after text entry or a value change.
+    // ---------------------------------------------------------
+    // TEXT CHANGES
+    // ---------------------------------------------------------
 
     if (event_name == "textinput" ||
         event_name == "keyup" ||
         event_name == "change")
     {
         QueueInputUpdate(document);
+
         return false;
     }
 
@@ -1959,7 +2139,8 @@ bool HandleRmlEvent(
 // EVENT REGISTRATION
 // =============================================================
 
-void RegisterRmlEvent(const char* event_name)
+void RegisterRmlEvent(
+    const char* event_name)
 {
     Ultron_RegisterRmlEventHandler(
         kModuleName,
@@ -1970,12 +2151,25 @@ void RegisterRmlEvent(const char* event_name)
 }
 
 
-void RegisterSDLTouchEvent(Uint32 event_type)
+void RegisterSDLTouchEvent(
+    Uint32 event_type)
 {
     Ultron_RegisterEventHandler(
         kModuleName,
         event_type,
         &HandleSDLTouchEvent,
+        nullptr,
+        100);
+}
+
+
+void RegisterSDLWindowEvent(
+    Uint32 event_type)
+{
+    Ultron_RegisterEventHandler(
+        kModuleName,
+        event_type,
+        &HandleSDLWindowEvent,
         nullptr,
         100);
 }
@@ -1987,32 +2181,34 @@ void RegisterSDLTouchEvent(Uint32 event_type)
 
 void RegisterObsidianWingChat()
 {
-    // RmlUi 6.3 has native touch input.
-    //
-    // Disable SDL-generated synthetic mouse events.
-    // Native touch is handled by RmlUi's SDL platform backend.
-    // Mouse input remains available for desktop devices.
+    // ---------------------------------------------------------
+    // PHONE-ONLY INPUT
+    // ---------------------------------------------------------
+
+    // Disable touch -> synthetic mouse.
 
     SDL_SetHint(
         SDL_HINT_TOUCH_MOUSE_EVENTS,
         "0");
 
+    // Disable mouse -> synthetic touch.
 
-    // Document lifecycle.
+    SDL_SetHint(
+        SDL_HINT_MOUSE_TOUCH_EVENTS,
+        "0");
+
+
+    // ---------------------------------------------------------
+    // DOCUMENT LIFECYCLE
+    // ---------------------------------------------------------
 
     RegisterRmlEvent("show");
     RegisterRmlEvent("hide");
 
 
-    // Mouse interaction.
-
-    RegisterRmlEvent("click");
-    RegisterRmlEvent("mousedown");
-    RegisterRmlEvent("mouseup");
-    RegisterRmlEvent("mousemove");
-
-
-    // Textarea interaction.
+    // ---------------------------------------------------------
+    // KEYBOARD AND TEXT INPUT
+    // ---------------------------------------------------------
 
     RegisterRmlEvent("keydown");
     RegisterRmlEvent("keyup");
@@ -2020,21 +2216,37 @@ void RegisterObsidianWingChat()
     RegisterRmlEvent("change");
 
 
-    // Native touch events.
-    //
-    // The handler observes taps and long-press.
-    // It returns false so the RmlUi backend can process
-    // native scrolling, focus, and inertial movement.
+    // ---------------------------------------------------------
+    // NATIVE TOUCH INPUT
+    // ---------------------------------------------------------
 
-    RegisterSDLTouchEvent(SDL_EVENT_FINGER_DOWN);
-    RegisterSDLTouchEvent(SDL_EVENT_FINGER_MOTION);
-    RegisterSDLTouchEvent(SDL_EVENT_FINGER_UP);
-    RegisterSDLTouchEvent(SDL_EVENT_FINGER_CANCELED);
+    RegisterSDLTouchEvent(
+        SDL_EVENT_FINGER_DOWN);
+
+    RegisterSDLTouchEvent(
+        SDL_EVENT_FINGER_MOTION);
+
+    RegisterSDLTouchEvent(
+        SDL_EVENT_FINGER_UP);
+
+    RegisterSDLTouchEvent(
+        SDL_EVENT_FINGER_CANCELED);
+
+
+    // ---------------------------------------------------------
+    // VIEWPORT RESIZE
+    // ---------------------------------------------------------
+
+    RegisterSDLWindowEvent(
+        SDL_EVENT_WINDOW_RESIZED);
+
+    RegisterSDLWindowEvent(
+        SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED);
 }
 
 
 // =============================================================
-// AUTOMATIC REGISTRATION
+// AUTOMATIC MODULE LIFETIME
 // =============================================================
 
 struct ObsidianWingChatRegistration
@@ -2047,8 +2259,6 @@ struct ObsidianWingChatRegistration
     ~ObsidianWingChatRegistration()
     {
         CancelLongPress();
-
-        ClearTouchState();
     }
 };
 
