@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <cstdint>
 #include <cstdio>
@@ -496,8 +497,6 @@ void ConfigureDocument(
 
     if (chat_area != nullptr)
     {
-        // Chat history is the only history scroll container.
-
         chat_area->SetProperty(
             "overflow-x",
             "hidden");
@@ -513,9 +512,8 @@ void ConfigureDocument(
 
     if (input_bar != nullptr)
     {
-        // Do not force either icon to hidden here.
-        // RML CSS controls pulse/arrow using has-text.
-        // UpdateInput will synchronize that class.
+        // RML controls icon visibility through has-text.
+        // Do not force either icon hidden here.
     }
 }
 
@@ -598,11 +596,7 @@ void UpdateInput(
         kChatGapUnits * unit;
 
 
-    // ---------------------------------------------------------
-    // MEASURE TEXTAREA CONTENT
-    // ---------------------------------------------------------
-
-    // Start with the original single-line height.
+    // Reset textarea to its responsive base height.
 
     message_input->SetProperty(
         "height",
@@ -619,9 +613,7 @@ void UpdateInput(
         maximum_height);
 
 
-    // ---------------------------------------------------------
-    // TEXTAREA AUTO-GROW
-    // ---------------------------------------------------------
+    // Apply textarea auto-growth.
 
     message_input->SetProperty(
         "height",
@@ -632,15 +624,8 @@ void UpdateInput(
         ToPixels(-new_height * 0.5f));
 
 
-    // ---------------------------------------------------------
-    // INPUT PANEL AUTO-GROW
-    // ---------------------------------------------------------
-
-    // Collapsed or expanded horizontally:
-    // base height remains unchanged when there is one line.
-    //
-    // Each additional text line adds only its extra height.
-    // The bottom edge remains anchored.
+    // Keep base bar height fixed.
+    // Grow only for additional text lines.
 
     const float additional_height =
         std::max(
@@ -655,27 +640,21 @@ void UpdateInput(
         ToPixels(bar_height));
 
 
-    // ---------------------------------------------------------
-    // KEYBOARD GAP
-    // ---------------------------------------------------------
+    // Maintain the keyboard gap.
 
     input_bar->SetProperty(
         "bottom",
         ToPixels(input_bottom));
 
 
-    // ---------------------------------------------------------
-    // CHAT POSITION
-    // ---------------------------------------------------------
+    // Move chat area above the input bar.
 
     chat_area->SetProperty(
         "bottom",
         ToPixels(bar_height + chat_gap));
 
 
-    // ---------------------------------------------------------
-    // PULSE / ARROW STATE
-    // ---------------------------------------------------------
+    // Show arrow only after actual text is entered.
 
     const bool has_text =
         !TrimWhitespace(
@@ -799,8 +778,6 @@ void ToggleInputBar(
         "expanded",
         !expanded);
 
-    // Horizontal expansion never changes the empty base height.
-
     UpdateInput(document);
 }
 
@@ -846,8 +823,6 @@ void ReplaceBubbleText(
 
 void CancelLongPress()
 {
-    // Invalidate every outstanding timer callback.
-
     g_state.press_generation.fetch_add(
         1,
         std::memory_order_acq_rel);
@@ -910,9 +885,6 @@ Rml::Vector2f GetTouchPosition(
     const Rml::Vector2i dimensions =
         context->GetDimensions();
 
-    // SDL finger positions are normalized between 0 and 1.
-    // Convert to RmlUi context pixel coordinates.
-
     return Rml::Vector2f{
         event.tfinger.x *
             static_cast<float>(dimensions.x),
@@ -944,11 +916,7 @@ Rml::Element* FindTouchTarget(
         GetElement(document, "send-button");
 
 
-    // ---------------------------------------------------------
     // SEND BUTTON
-    // ---------------------------------------------------------
-
-    // It is actionable only after text has been entered.
 
     if (input_bar != nullptr &&
         send_button != nullptr &&
@@ -961,9 +929,7 @@ Rml::Element* FindTouchTarget(
     }
 
 
-    // ---------------------------------------------------------
     // WING BUTTON
-    // ---------------------------------------------------------
 
     Rml::Element* wing =
         GetElement(document, "wing-hit");
@@ -976,9 +942,7 @@ Rml::Element* FindTouchTarget(
     }
 
 
-    // ---------------------------------------------------------
-    // CHAT MESSAGE
-    // ---------------------------------------------------------
+    // CHAT MESSAGES
 
     Rml::Element* chat_area =
         GetElement(document, "chat-area");
@@ -1069,9 +1033,7 @@ void StartEdit(
     }
 
 
-    // ---------------------------------------------------------
-    // GET ORIGINAL MESSAGE
-    // ---------------------------------------------------------
+    // Retrieve original message.
 
     std::string message;
 
@@ -1084,9 +1046,7 @@ void StartEdit(
     }
 
 
-    // ---------------------------------------------------------
-    // REMOVE ALL MESSAGES BELOW SELECTED MESSAGE
-    // ---------------------------------------------------------
+    // Remove all messages below the selected message.
 
     Rml::Element* next =
         bubble->GetNextSibling();
@@ -1105,9 +1065,7 @@ void StartEdit(
     }
 
 
-    // ---------------------------------------------------------
-    // DISCARD PREVIOUS DETACHED EDIT
-    // ---------------------------------------------------------
+    // Discard previous detached edit.
 
     if (g_state.editing_bubble)
     {
@@ -1118,9 +1076,7 @@ void StartEdit(
     }
 
 
-    // ---------------------------------------------------------
-    // DETACH SELECTED BUBBLE
-    // ---------------------------------------------------------
+    // Detach selected bubble.
 
     g_state.editing_bubble =
         chat_area->RemoveChild(bubble);
@@ -1131,9 +1087,7 @@ void StartEdit(
     }
 
 
-    // ---------------------------------------------------------
-    // RESTORE INPUT TEXT
-    // ---------------------------------------------------------
+    // Restore message in input.
 
     message_input->SetValue(message);
 
@@ -1187,8 +1141,6 @@ void ScrollChatToBottom(
         chat_area->GetScrollHeight()
     };
 
-    // Smooth programmatic scrolling.
-
     chat_area->ScrollTo(
         destination,
         Rml::ScrollBehavior::Smooth);
@@ -1229,17 +1181,12 @@ void SendMessage(
     }
 
 
-    // ---------------------------------------------------------
-    // DETECT CURRENT SCROLL POSITION
-    // ---------------------------------------------------------
+    // Detect current scroll position.
 
     document->UpdateDocument();
 
     const float unit =
         GetViewportUnit(document);
-
-    // Preserve manually selected history position.
-    // Follow new messages only when already near the bottom.
 
     const bool should_follow_bottom =
         IsNearChatBottom(
@@ -1247,9 +1194,7 @@ void SendMessage(
             std::max(8.0f, unit * 3.0f));
 
 
-    // ---------------------------------------------------------
-    // EXISTING MESSAGE EDIT
-    // ---------------------------------------------------------
+    // EDIT EXISTING MESSAGE.
 
     if (g_state.editing_bubble)
     {
@@ -1276,9 +1221,7 @@ void SendMessage(
         }
     }
 
-    // ---------------------------------------------------------
-    // NEW MESSAGE
-    // ---------------------------------------------------------
+    // CREATE NEW MESSAGE.
 
     else
     {
@@ -1322,30 +1265,22 @@ void SendMessage(
     }
 
 
-    // ---------------------------------------------------------
-    // CLEAR INPUT
-    // ---------------------------------------------------------
+    // Clear input.
 
     message_input->SetValue("");
 
 
-    // ---------------------------------------------------------
-    // RESET INPUT HEIGHT / ARROW STATE
-    // ---------------------------------------------------------
+    // Reset input height and arrow state.
 
     UpdateInput(document);
 
 
-    // ---------------------------------------------------------
-    // UPDATE CHAT LAYOUT
-    // ---------------------------------------------------------
+    // Recalculate chat layout.
 
     document->UpdateDocument();
 
 
-    // ---------------------------------------------------------
-    // FOLLOW NEW MESSAGE
-    // ---------------------------------------------------------
+    // Follow new messages only if already at the bottom.
 
     if (should_follow_bottom)
     {
@@ -1405,7 +1340,7 @@ void ProcessPendingActions(void*)
     }
 
 
-    // Process actions added while the current batch was running.
+    // Handle actions added during processing.
 
     if (!g_state.pending_actions.empty() &&
         !g_state.action_task_pending)
@@ -1473,8 +1408,6 @@ void CompleteLongPress(
     }
 
 
-    // Prevent the finger release from becoming a normal tap.
-
     g_state.touch_long_press_fired = true;
 
     CancelLongPress();
@@ -1532,8 +1465,8 @@ void BeginLongPress(
             std::memory_order_acq_rel) + 1;
 
 
-    // The worker waits only.
-    // All UI operations remain on the UI thread.
+    // Worker waits only.
+    // RmlUi changes are performed on the UI thread.
 
     g_long_press_worker = std::jthread(
         [generation](std::stop_token stop_token)
@@ -1578,47 +1511,18 @@ void BeginLongPress(
 
 
 // =============================================================
-// TOUCH STATE RESET
-// =============================================================
-
-void ResetTouchState()
-{
-    CancelLongPress();
-
-    g_state.touch_active = false;
-
-    g_state.touch_moved = false;
-
-    g_state.touch_long_press_fired = false;
-
-    g_state.touch_id = 0;
-
-    g_state.finger_id = 0;
-
-    g_state.touch_document = nullptr;
-
-    g_state.touch_start_target = nullptr;
-
-    g_state.touch_start_position = {};
-}
-
-
-// =============================================================
 // NATIVE SDL TOUCH OBSERVER
 // =============================================================
 
-// IMPORTANT:
+// RmlUi_Platform_SDL is responsible for processing native
+// touch events and forwarding them to the RmlUi context.
 //
-// RmlUi_Platform_SDL is responsible for sending native touch
-// input into the RmlUi context exactly once.
-//
-// This module only observes the same raw SDL events for:
+// This module observes raw SDL events for:
 // - Wing taps
 // - Send taps
 // - 550ms message long-press editing
 //
 // Do not call Context::ProcessTouchStart/Move/End here.
-// The platform backend already processes the scrolling gesture.
 
 bool HandleSDLTouchEvent(
     const SDL_Event* event,
@@ -1639,9 +1543,7 @@ bool HandleSDLTouchEvent(
     }
 
 
-    // ---------------------------------------------------------
     // FINGER DOWN
-    // ---------------------------------------------------------
 
     if (event->type == SDL_EVENT_FINGER_DOWN)
     {
@@ -1675,7 +1577,7 @@ bool HandleSDLTouchEvent(
             position;
 
 
-        // Determine the element under the initial touch.
+        // Determine the initial target.
 
         Rml::Element* target =
             FindTouchTarget(
@@ -1686,7 +1588,7 @@ bool HandleSDLTouchEvent(
             target;
 
 
-        // Start long-press only for chat bubbles.
+        // Long-press works only on chat bubbles.
 
         Rml::Element* bubble =
             FindMessageBubble(
@@ -1706,9 +1608,7 @@ bool HandleSDLTouchEvent(
     }
 
 
-    // ---------------------------------------------------------
     // FINGER MOTION
-    // ---------------------------------------------------------
 
     if (event->type == SDL_EVENT_FINGER_MOTION)
     {
@@ -1731,8 +1631,7 @@ bool HandleSDLTouchEvent(
         const float tolerance =
             GetLongPressMovementTolerance(document);
 
-        // Dragging the chat history must never trigger editing
-        // or a normal tap on release.
+        // Dragging must not become a tap or edit.
 
         if (movement > tolerance)
         {
@@ -1748,9 +1647,7 @@ bool HandleSDLTouchEvent(
     }
 
 
-    // ---------------------------------------------------------
     // FINGER UP
-    // ---------------------------------------------------------
 
     if (event->type == SDL_EVENT_FINGER_UP)
     {
@@ -1785,7 +1682,7 @@ bool HandleSDLTouchEvent(
         }
 
 
-        // Complete long-press on release if the worker callback
+        // Complete long-press if its timer callback
         // has not yet reached the UI queue.
 
         if (g_state.press_active &&
@@ -1800,7 +1697,7 @@ bool HandleSDLTouchEvent(
         }
 
 
-        // Find the release target.
+        // Determine where the finger was released.
 
         Rml::Element* release_target =
             FindTouchTarget(
@@ -1808,9 +1705,7 @@ bool HandleSDLTouchEvent(
                 position);
 
 
-        // -----------------------------------------------------
         // NORMAL TAP
-        // -----------------------------------------------------
 
         if (!g_state.touch_long_press_fired &&
             !g_state.touch_moved &&
@@ -1842,9 +1737,7 @@ bool HandleSDLTouchEvent(
     }
 
 
-    // ---------------------------------------------------------
     // FINGER CANCEL
-    // ---------------------------------------------------------
 
     if (event->type == SDL_EVENT_FINGER_CANCELED)
     {
@@ -1881,9 +1774,6 @@ bool HandleSDLWindowEvent(
         Rml::ElementDocument* document =
             g_state.document;
 
-        // Recalculate dimensions after rotation or when
-        // Android resizes the usable area for the keyboard.
-
         if (IsChatDocument(document))
         {
             QueueInputUpdate(document);
@@ -1914,9 +1804,7 @@ bool HandleRmlEvent(
         GetDocumentFromEvent(event);
 
 
-    // ---------------------------------------------------------
     // DOCUMENT SHOW
-    // ---------------------------------------------------------
 
     if (event_name == "show")
     {
@@ -1933,9 +1821,7 @@ bool HandleRmlEvent(
     }
 
 
-    // ---------------------------------------------------------
     // DOCUMENT HIDE
-    // ---------------------------------------------------------
 
     if (event_name == "hide")
     {
@@ -1976,9 +1862,7 @@ bool HandleRmlEvent(
     g_state.document = document;
 
 
-    // ---------------------------------------------------------
     // KEYBOARD INPUT
-    // ---------------------------------------------------------
 
     Rml::Element* target =
         event->GetTargetElement();
@@ -1994,9 +1878,7 @@ bool HandleRmlEvent(
     }
 
 
-    // ---------------------------------------------------------
     // ENTER TO SEND
-    // ---------------------------------------------------------
 
     if (event_name == "keydown")
     {
@@ -2018,8 +1900,6 @@ bool HandleRmlEvent(
                 ActionType::SendMessage,
                 document);
 
-            // Prevent a default newline.
-
             return true;
         }
 
@@ -2027,9 +1907,7 @@ bool HandleRmlEvent(
     }
 
 
-    // ---------------------------------------------------------
     // TEXT CHANGES
-    // ---------------------------------------------------------
 
     if (event_name == "textinput" ||
         event_name == "keyup" ||
@@ -2089,30 +1967,24 @@ void RegisterSDLWindowEvent(Uint32 event_type)
 void RegisterObsidianWingChat()
 {
     // Disable touch-generated mouse events.
-    // The module is intended for phone-native touch input.
+    // This module is designed for native phone touch input.
 
     SDL_SetHint(
         SDL_HINT_TOUCH_MOUSE_EVENTS,
         "0");
-
-    // Do not synthesize touch from a mouse.
 
     SDL_SetHint(
         SDL_HINT_MOUSE_TOUCH_EVENTS,
         "0");
 
 
-    // ---------------------------------------------------------
     // DOCUMENT
-    // ---------------------------------------------------------
 
     RegisterRmlEvent("show");
     RegisterRmlEvent("hide");
 
 
-    // ---------------------------------------------------------
     // TEXT INPUT
-    // ---------------------------------------------------------
 
     RegisterRmlEvent("keydown");
     RegisterRmlEvent("keyup");
@@ -2120,9 +1992,7 @@ void RegisterObsidianWingChat()
     RegisterRmlEvent("change");
 
 
-    // ---------------------------------------------------------
-    // NATIVE TOUCH OBSERVATION
-    // ---------------------------------------------------------
+    // NATIVE TOUCH
 
     RegisterSDLTouchEvent(
         SDL_EVENT_FINGER_DOWN);
@@ -2137,9 +2007,7 @@ void RegisterObsidianWingChat()
         SDL_EVENT_FINGER_CANCELED);
 
 
-    // ---------------------------------------------------------
     // VIEWPORT RESIZE
-    // ---------------------------------------------------------
 
     RegisterSDLWindowEvent(
         SDL_EVENT_WINDOW_RESIZED);
