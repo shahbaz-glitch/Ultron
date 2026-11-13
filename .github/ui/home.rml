@@ -48,6 +48,7 @@
             ) border-box;
 
             box-shadow:
+                #d6faff22 0px 0px 1px 0px inset,
                 #d6faff44 1px 1px 2px 0px inset,
                 #25aaff33 -1px -1px 3px 0px inset;
 
@@ -83,6 +84,7 @@
             ) border-box;
 
             box-shadow:
+                #d6faff22 0px 0px 1px 0px inset,
                 #d6faff44 1px 1px 2px 0px inset,
                 #25aaff33 -1px -1px 3px 0px inset;
 
