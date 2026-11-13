@@ -48,7 +48,7 @@
             ) border-box;
 
             box-shadow:
-                #d6faff22 0px 0px 0px 0.25vw inset,
+                #d6faff22 0px 0px 0.25vw 0px inset,
                 #d6faff44 0.25vw 0.25vw 0.49vw 0px inset,
                 #25aaff33 -0.25vw -0.25vw 0.74vw 0px inset;
 
@@ -84,7 +84,7 @@
             ) border-box;
 
             box-shadow:
-                #d6faff22 0px 0px 0px 0.25vw inset,
+                #d6faff22 0px 0px 0.25vw 0px inset,
                 #d6faff44 0.25vw 0.25vw 0.49vw 0px inset,
                 #25aaff33 -0.25vw -0.25vw 0.74vw 0px inset;
 
@@ -226,7 +226,7 @@
                 border-radius: 7.60vh 2.94vh 7.60vh 2.94vh;
 
                 box-shadow:
-                    #d6faff22 0px 0px 0px 0.25vh inset,
+                    #d6faff22 0px 0px 0.25vh 0px inset,
                     #d6faff44 0.25vh 0.25vh 0.49vh 0px inset,
                     #25aaff33 -0.25vh -0.25vh 0.74vh 0px inset;
 
@@ -245,7 +245,7 @@
                 border-radius: 7.60vh 2.94vh 7.60vh 2.94vh;
 
                 box-shadow:
-                    #d6faff22 0px 0px 0px 0.25vh inset,
+                    #d6faff22 0px 0px 0.25vh 0px inset,
                     #d6faff44 0.25vh 0.25vh 0.49vh 0px inset,
                     #25aaff33 -0.25vh -0.25vh 0.74vh 0px inset;
             }
