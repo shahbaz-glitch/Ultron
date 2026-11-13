@@ -173,6 +173,8 @@
         #send-button {
             position: absolute;
 
+            display: none;
+
             right: 2.45vw;
             bottom: 3.55vw;
 
@@ -183,6 +185,7 @@
         }
 
         #input-bar.expanded #send-button {
+            display: block;
             opacity: 1;
         }
 
