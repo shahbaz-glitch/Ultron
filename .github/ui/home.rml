@@ -83,6 +83,8 @@
                 #5bdcff08 100%
             ) border-box;
 
+            /* CONTINUOUS INTERNAL SHADOW */
+
             box-shadow:
                 #d6faff44 0px 0px 0.53vw 0px inset,
                 #25aaff33 0px 0px 0.80vw 0px inset;
@@ -289,6 +291,8 @@
 
                 border: 0.27vh #65dfff77;
                 border-radius: 8.21vh 3.18vh 8.21vh 3.18vh;
+
+                /* CONTINUOUS INTERNAL SHADOW */
 
                 box-shadow:
                     #d6faff44 0px 0px 0.53vh 0px inset,
