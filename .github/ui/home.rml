@@ -3,6 +3,7 @@
     <title>Obsidian Wing Chat</title>
 
     <style>
+
         body {
             width: 100%;
             height: 100%;
@@ -18,11 +19,11 @@
             position: absolute;
             left: 6%;
             right: 6%;
-            bottom: 25.74vw;
+            bottom: 27.80vw;
             height: 75%;
             display: block;
             overflow-y: auto;
-            padding: 1.96vw 0px;
+            padding: 2.12vw 0px;
         }
 
         /* CHAT BUBBLE */
@@ -32,11 +33,11 @@
             width: auto;
             max-width: 88%;
             margin-left: auto;
-            margin-bottom: 2.45vw;
-            padding: 2.94vw 3.92vw;
+            margin-bottom: 2.65vw;
+            padding: 3.18vw 4.23vw;
 
-            border: 0.25vw #65dfff77;
-            border-radius: 7.60vw 2.94vw 7.60vw 2.94vw;
+            border: 0.27vw #65dfff77;
+            border-radius: 8.21vw 3.18vw 8.21vw 3.18vw;
 
             decorator: linear-gradient(
                 125deg,
@@ -47,12 +48,11 @@
             ) border-box;
 
             box-shadow:
-                #d6faff22 0px 0px 0.25vw 0px inset,
-                #d6faff44 0.25vw 0.25vw 0.49vw 0px inset,
-                #25aaff33 -0.25vw -0.25vw 0.74vw 0px inset;
+                #d6faff44 0.27vw 0.27vw 0.53vw 0px inset,
+                #25aaff33 -0.27vw -0.27vw 0.80vw 0px inset;
 
             color: #dffaff;
-            font-size: 3.92vw;
+            font-size: 4.23vw;
             line-height: 1.45;
             white-space: pre-wrap;
         }
@@ -64,13 +64,13 @@
             display: block;
 
             left: 6%;
-            bottom: 7.35vw;
+            bottom: 7.94vw;
 
-            width: 14.22vw;
-            height: 14.22vw;
+            width: 15.36vw;
+            height: 15.36vw;
 
-            border: 0.25vw #65dfff77;
-            border-radius: 7.60vw 2.94vw 7.60vw 2.94vw;
+            border: 0.27vw #65dfff77;
+            border-radius: 8.21vw 3.18vw 8.21vw 3.18vw;
 
             overflow: hidden;
 
@@ -83,18 +83,22 @@
             ) border-box;
 
             box-shadow:
-                #d6faff22 0px 0px 0.25vw 0px inset,
-                #d6faff44 0.25vw 0.25vw 0.49vw 0px inset,
-                #25aaff33 -0.25vw -0.25vw 0.74vw 0px inset;
+                #d6faff44 0.27vw 0.27vw 0.53vw 0px inset,
+                #25aaff33 -0.27vw -0.27vw 0.80vw 0px inset;
 
             transition:
                 width 0.8s cubic-out,
-                height 0.22s linear-in-out,
                 border-radius 0.7s linear-in-out;
         }
 
         #input-bar.expanded {
             width: 88%;
+        }
+
+        /* MULTILINE INPUT BAR */
+
+        #input-bar.multiline {
+            /* Height controlled by UpdateInput(). */
         }
 
         /* WING HIT AREA */
@@ -104,8 +108,8 @@
             left: 0px;
             bottom: 0px;
 
-            width: 14.22vw;
-            height: 14.22vw;
+            width: 15.36vw;
+            height: 15.36vw;
 
             z-index: 2;
         }
@@ -114,11 +118,11 @@
 
         #wing-button {
             position: absolute;
-            left: 1.23vw;
-            bottom: 1.72vw;
+            left: 1.33vw;
+            bottom: 1.86vw;
 
-            width: 11.76vw;
-            height: 10.29vw;
+            width: 12.70vw;
+            height: 11.11vw;
 
             pointer-events: none;
 
@@ -134,19 +138,19 @@
         #message-input {
             position: absolute;
 
-            left: 18.63vw;
-            right: 12.99vw;
+            left: 20.12vw;
+            right: 14.03vw;
             top: 50%;
 
             width: auto;
-            height: 7.35vw;
-            max-height: 28.92vw;
+            height: 7.94vw;
+            max-height: 31.23vw;
 
-            margin-top: -3.68vw;
-            padding: 0.74vw 0px 0.49vw 0px;
+            margin-top: -3.97vw;
+            padding: 0.80vw 0px 0.53vw 0px;
 
-            font-size: 4.17vw;
-            line-height: 5.88vw;
+            font-size: 4.50vw;
+            line-height: 6.35vw;
 
             color: #dffaff;
             background-color: transparent;
@@ -160,11 +164,31 @@
 
             opacity: 0;
 
-            transition: opacity 0.25s linear-in-out;
+            transition: opacity 0.15s linear-in-out;
         }
 
         #input-bar.expanded #message-input {
             opacity: 1;
+        }
+
+        /*
+            FIRST LINE SHIFT
+
+            First line starts after the wing.
+
+            Once wrapping begins, the textarea
+            moves upward and uses full available width.
+        */
+
+        #input-bar.multiline #message-input {
+            left: 4.50vw;
+            right: 2.65vw;
+            top: 0px;
+
+            width: auto;
+            margin-top: 0px;
+
+            padding: 0.80vw 0px 0.53vw 0px;
         }
 
         /* SEND BUTTON */
@@ -174,11 +198,11 @@
 
             display: none;
 
-            right: 2.45vw;
-            bottom: 3.55vw;
+            right: 2.65vw;
+            bottom: 3.83vw;
 
-            width: 7.11vw;
-            height: 7.11vw;
+            width: 7.68vw;
+            height: 7.68vw;
 
             opacity: 0;
         }
@@ -234,90 +258,100 @@
             /* CHAT AREA */
 
             #chat-area {
-                bottom: 25.74vh;
-                padding: 1.96vh 0px;
+                bottom: 27.80vh;
+                padding: 2.12vh 0px;
             }
 
             /* CHAT BUBBLE */
 
             .chat-message {
-                margin-bottom: 2.45vh;
-                padding: 2.94vh 3.92vh;
+                margin-bottom: 2.65vh;
+                padding: 3.18vh 4.23vh;
 
-                border: 0.25vh #65dfff77;
-                border-radius: 7.60vh 2.94vh 7.60vh 2.94vh;
+                border: 0.27vh #65dfff77;
+                border-radius: 8.21vh 3.18vh 8.21vh 3.18vh;
 
                 box-shadow:
-                    #d6faff22 0px 0px 0.25vh 0px inset,
-                    #d6faff44 0.25vh 0.25vh 0.49vh 0px inset,
-                    #25aaff33 -0.25vh -0.25vh 0.74vh 0px inset;
+                    #d6faff44 0.27vh 0.27vh 0.53vh 0px inset,
+                    #25aaff33 -0.27vh -0.27vh 0.80vh 0px inset;
 
-                font-size: 3.92vh;
+                font-size: 4.23vh;
             }
 
             /* INPUT BAR */
 
             #input-bar {
-                bottom: 7.35vh;
+                bottom: 7.94vh;
 
-                width: 14.22vh;
-                height: 14.22vh;
+                width: 15.36vh;
+                height: 15.36vh;
 
-                border: 0.25vh #65dfff77;
-                border-radius: 7.60vh 2.94vh 7.60vh 2.94vh;
+                border: 0.27vh #65dfff77;
+                border-radius: 8.21vh 3.18vh 8.21vh 3.18vh;
 
                 box-shadow:
-                    #d6faff22 0px 0px 0.25vh 0px inset,
-                    #d6faff44 0.25vh 0.25vh 0.49vh 0px inset,
-                    #25aaff33 -0.25vh -0.25vh 0.74vh 0px inset;
+                    #d6faff44 0.27vh 0.27vh 0.53vh 0px inset,
+                    #25aaff33 -0.27vh -0.27vh 0.80vh 0px inset;
             }
 
             /* WING HIT AREA */
 
             #wing-hit {
-                width: 14.22vh;
-                height: 14.22vh;
+                width: 15.36vh;
+                height: 15.36vh;
             }
 
             /* WING DESIGN */
 
             #wing-button {
-                left: 1.23vh;
-                bottom: 1.72vh;
+                left: 1.33vh;
+                bottom: 1.86vh;
 
-                width: 11.76vh;
-                height: 10.29vh;
+                width: 12.70vh;
+                height: 11.11vh;
             }
 
             /* MESSAGE INPUT */
 
             #message-input {
-                left: 18.63vh;
-                right: 12.99vh;
+                left: 20.12vh;
+                right: 14.03vh;
 
-                height: 7.35vh;
-                max-height: 28.92vh;
+                height: 7.94vh;
+                max-height: 31.23vh;
 
-                margin-top: -3.68vh;
-                padding: 0.74vh 0px 0.49vh 0px;
+                margin-top: -3.97vh;
+                padding: 0.80vh 0px 0.53vh 0px;
 
-                font-size: 4.17vh;
-                line-height: 5.88vh;
+                font-size: 4.50vh;
+                line-height: 6.35vh;
+            }
+
+            /* MULTILINE INPUT */
+
+            #input-bar.multiline #message-input {
+                left: 4.50vh;
+                right: 2.65vh;
+                top: 0px;
+
+                margin-top: 0px;
+                padding: 0.80vh 0px 0.53vh 0px;
             }
 
             /* SEND BUTTON */
 
             #send-button {
-                right: 2.45vh;
-                bottom: 3.55vh;
+                right: 2.65vh;
+                bottom: 3.83vh;
 
-                width: 7.11vh;
-                height: 7.11vh;
+                width: 7.68vh;
+                height: 7.68vh;
             }
 
         }
 
     </style>
+
 </head>
 
 <body>
@@ -385,7 +419,7 @@
 
         <div id="send-button">
 
-            <!-- ORIGINAL PULSE DESIGN -->
+            <!-- PULSE ICON -->
 
             <div class="pulse-icon">
 
@@ -424,7 +458,7 @@
 
             </div>
 
-            <!-- ORIGINAL ARROW DESIGN -->
+            <!-- ARROW ICON -->
 
             <div class="arrow-icon">
 
