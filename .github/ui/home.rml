@@ -1,4 +1,3 @@
-
 <rml>
 <head>
     <title>Obsidian Wing Chat</title>
@@ -24,7 +23,6 @@
             display: block;
             overflow-y: auto;
             padding: 1.96vw 0px;
-            transition: bottom 0.22s linear-in-out;
         }
 
         /* CHAT BUBBLE */
@@ -131,33 +129,20 @@
             left: 4.2%;
         }
 
-        /* MESSAGE INPUT VIEWPORT */
-
-        #message-input-viewport {
-            position: absolute;
-
-            left: 18.63vw;
-            right: 17.50vw;
-
-            top: 3.435vw;
-            bottom: 3.435vw;
-
-            overflow: hidden;
-        }
-
         /* MESSAGE INPUT */
 
         #message-input {
             position: absolute;
 
-            left: 0px;
-            right: 0px;
-            top: 0px;
+            left: 18.63vw;
+            right: 12.99vw;
+            top: 50%;
 
             width: auto;
-            height: 47.04vw;
+            height: 7.35vw;
+            max-height: 28.92vw;
 
-            margin: 0px;
+            margin-top: -3.68vw;
             padding: 0.74vw 0px 0.49vw 0px;
 
             font-size: 4.17vw;
@@ -170,15 +155,23 @@
             border-color: transparent;
 
             overflow-y: auto;
-            overflow-x: hidden;
 
             caret-color: #65dfff;
+
+            opacity: 0;
+
+            transition: opacity 0.25s linear-in-out;
+        }
+
+        #input-bar.expanded #message-input {
+            opacity: 1;
         }
 
         /* SEND BUTTON */
 
         #send-button {
             position: absolute;
+
             display: none;
 
             right: 2.45vw;
@@ -296,21 +289,16 @@
                 height: 10.29vh;
             }
 
-            /* MESSAGE INPUT VIEWPORT */
-
-            #message-input-viewport {
-                left: 18.63vh;
-                right: 17.50vh;
-
-                top: 3.435vh;
-                bottom: 3.435vh;
-            }
-
             /* MESSAGE INPUT */
 
             #message-input {
-                height: 47.04vh;
+                left: 18.63vh;
+                right: 12.99vh;
 
+                height: 7.35vh;
+                max-height: 28.92vh;
+
+                margin-top: -3.68vh;
                 padding: 0.74vh 0px 0.49vh 0px;
 
                 font-size: 4.17vh;
@@ -389,13 +377,9 @@
 
         </svg>
 
-        <!-- MESSAGE INPUT VIEWPORT -->
+        <!-- TEXT INPUT -->
 
-        <div id="message-input-viewport">
-
-            <textarea id="message-input" rows="1"></textarea>
-
-        </div>
+        <textarea id="message-input" rows="1"></textarea>
 
         <!-- SEND BUTTON CONTAINER -->
 
