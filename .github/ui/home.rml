@@ -24,6 +24,7 @@
             display: block;
             overflow-y: auto;
             padding: 1.96vw 0px;
+            transition: bottom 0.22s linear-in-out;
         }
 
         /* CHAT BUBBLE */
@@ -154,9 +155,7 @@
             top: 0px;
 
             width: auto;
-            height: 28.92vw;
-
-            box-sizing: border-box;
+            height: 47.04vw;
 
             margin: 0px;
             padding: 0.74vw 0px 0.49vw 0px;
@@ -180,7 +179,6 @@
 
         #send-button {
             position: absolute;
-
             display: none;
 
             right: 2.45vw;
@@ -311,7 +309,7 @@
             /* MESSAGE INPUT */
 
             #message-input {
-                height: 28.92vh;
+                height: 47.04vh;
 
                 padding: 0.74vh 0px 0.49vh 0px;
 
@@ -394,8 +392,6 @@
         <!-- MESSAGE INPUT VIEWPORT -->
 
         <div id="message-input-viewport">
-
-            <!-- TEXT INPUT -->
 
             <textarea id="message-input" rows="1"></textarea>
 
