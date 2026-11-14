@@ -1,3 +1,4 @@
+
 <rml>
 <head>
     <title>Obsidian Wing Chat</title>
@@ -83,6 +84,7 @@
             ) border-box;
 
             box-shadow:
+                #65dfff44 0px 0px 0px 0.27vw inset,
                 #d6faff44 0.27vw 0.27vw 0.53vw 0px inset,
                 #25aaff33 -0.27vw -0.27vw 0.80vw 0px inset;
 
@@ -290,6 +292,7 @@
                 border-radius: 8.21vh 3.18vh 8.21vh 3.18vh;
 
                 box-shadow:
+                    #65dfff44 0px 0px 0px 0.27vh inset,
                     #d6faff44 0.27vh 0.27vh 0.53vh 0px inset,
                     #25aaff33 -0.27vh -0.27vh 0.80vh 0px inset;
             }
