@@ -19,7 +19,7 @@
             position: absolute;
             left: 6%;
             right: 6%;
-            bottom: 32.89vw;
+            bottom: 25.74vw;
             height: 75%;
             display: block;
             overflow-y: auto;
@@ -65,7 +65,7 @@
             display: block;
 
             left: 6%;
-            bottom: 14.50vw;
+            bottom: 7.35vw;
 
             width: 14.22vw;
             height: 14.22vw;
@@ -130,20 +130,35 @@
             left: 4.2%;
         }
 
+        /* MESSAGE INPUT VIEWPORT */
+
+        #message-input-viewport {
+            position: absolute;
+
+            left: 18.63vw;
+            right: 17.50vw;
+
+            top: 3.435vw;
+            bottom: 3.435vw;
+
+            overflow: hidden;
+        }
+
         /* MESSAGE INPUT */
 
         #message-input {
             position: absolute;
 
-            left: 18.63vw;
-            right: 12.99vw;
-            top: 50%;
+            left: 0px;
+            right: 0px;
+            top: 0px;
 
             width: auto;
-            height: 7.35vw;
-            max-height: 28.92vw;
+            height: 28.92vw;
 
-            margin-top: -3.68vw;
+            box-sizing: border-box;
+
+            margin: 0px;
             padding: 0.74vw 0px 0.49vw 0px;
 
             font-size: 4.17vw;
@@ -156,16 +171,9 @@
             border-color: transparent;
 
             overflow-y: auto;
+            overflow-x: hidden;
 
             caret-color: #65dfff;
-
-            opacity: 0;
-
-            transition: opacity 0.25s linear-in-out;
-        }
-
-        #input-bar.expanded #message-input {
-            opacity: 1;
         }
 
         /* SEND BUTTON */
@@ -235,7 +243,7 @@
             /* CHAT AREA */
 
             #chat-area {
-                bottom: 32.89vh;
+                bottom: 25.74vh;
                 padding: 1.96vh 0px;
             }
 
@@ -259,7 +267,7 @@
             /* INPUT BAR */
 
             #input-bar {
-                bottom: 14.50vh;
+                bottom: 7.35vh;
 
                 width: 14.22vh;
                 height: 14.22vh;
@@ -290,16 +298,21 @@
                 height: 10.29vh;
             }
 
+            /* MESSAGE INPUT VIEWPORT */
+
+            #message-input-viewport {
+                left: 18.63vh;
+                right: 17.50vh;
+
+                top: 3.435vh;
+                bottom: 3.435vh;
+            }
+
             /* MESSAGE INPUT */
 
             #message-input {
-                left: 18.63vh;
-                right: 12.99vh;
+                height: 28.92vh;
 
-                height: 7.35vh;
-                max-height: 28.92vh;
-
-                margin-top: -3.68vh;
                 padding: 0.74vh 0px 0.49vh 0px;
 
                 font-size: 4.17vh;
@@ -378,9 +391,15 @@
 
         </svg>
 
-        <!-- TEXT INPUT -->
+        <!-- MESSAGE INPUT VIEWPORT -->
 
-        <textarea id="message-input" rows="1"></textarea>
+        <div id="message-input-viewport">
+
+            <!-- TEXT INPUT -->
+
+            <textarea id="message-input" rows="1"></textarea>
+
+        </div>
 
         <!-- SEND BUTTON CONTAINER -->
 
