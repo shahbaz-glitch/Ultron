@@ -84,7 +84,6 @@
             ) border-box;
 
             box-shadow:
-                #65dfff44 0px 0px 0px 0.27vw inset,
                 #d6faff44 0.27vw 0.27vw 0.53vw 0px inset,
                 #25aaff33 -0.27vw -0.27vw 0.80vw 0px inset;
 
@@ -95,6 +94,24 @@
 
         #input-bar.expanded {
             width: 88%;
+        }
+
+        /* CONTINUOUS INTERNAL BORDER */
+
+        #input-inner-border {
+            position: absolute;
+
+            left: 0.54vw;
+            right: 0.54vw;
+            top: 0.54vw;
+            bottom: 0.54vw;
+
+            border: 0.27vw #65dfff66;
+
+            border-radius:
+                7.67vw 2.64vw 7.67vw 2.64vw;
+
+            pointer-events: none;
         }
 
         /* MULTILINE INPUT BAR */
@@ -292,9 +309,22 @@
                 border-radius: 8.21vh 3.18vh 8.21vh 3.18vh;
 
                 box-shadow:
-                    #65dfff44 0px 0px 0px 0.27vh inset,
                     #d6faff44 0.27vh 0.27vh 0.53vh 0px inset,
                     #25aaff33 -0.27vh -0.27vh 0.80vh 0px inset;
+            }
+
+            /* CONTINUOUS INTERNAL BORDER */
+
+            #input-inner-border {
+                left: 0.54vh;
+                right: 0.54vh;
+                top: 0.54vh;
+                bottom: 0.54vh;
+
+                border: 0.27vh #65dfff66;
+
+                border-radius:
+                    7.67vh 2.64vh 7.67vh 2.64vh;
             }
 
             /* WING HIT AREA */
@@ -366,6 +396,10 @@
     <!-- INPUT BAR -->
 
     <div id="input-bar">
+
+        <!-- CONTINUOUS INTERNAL BORDER -->
+
+        <div id="input-inner-border"></div>
 
         <!-- WING HIT AREA -->
 
