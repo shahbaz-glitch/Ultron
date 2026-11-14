@@ -11,8 +11,8 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
-#include <cstddef>
 #include <string>
+#include <vector>
 
 namespace
 {
@@ -25,6 +25,7 @@ constexpr const char* kModuleName = "ObsidianWingChat";
 
 constexpr const char* kWingHitId = "wing-hit";
 constexpr const char* kInputBarId = "input-bar";
+constexpr const char* kInputViewportId = "message-input-viewport";
 constexpr const char* kMessageInputId = "message-input";
 constexpr const char* kChatAreaId = "chat-area";
 
@@ -34,20 +35,32 @@ constexpr const char* kChatAreaId = "chat-area";
 // Landscape: vh
 // -------------------------------------------------------------
 
-constexpr float kBaseTextareaHeight = 7.35f;
-constexpr float kMaxTextareaHeight = 28.92f;
-
 constexpr float kBaseInputBarHeight = 14.22f;
+
 constexpr float kInputBarBottom = 7.35f;
 constexpr float kChatAreaGap = 4.17f;
 
+constexpr float kVerticalInsets = 6.87f;
+
+constexpr float kTextareaPaddingVertical = 1.23f;
+constexpr float kTextareaMaxBoxHeight = 28.92f;
+
+constexpr float kMinimumLineHeightPixels = 1.0f;
+
 // -------------------------------------------------------------
-// DEFERRED INPUT STATE
+// DEFERRED UI STATE
 // -------------------------------------------------------------
 
 Rml::ObserverPtr<Rml::Element> g_pending_textarea;
+Rml::ObserverPtr<Rml::Element> g_scrollable_textarea;
+Rml::ObserverPtr<Rml::Element> g_last_input_bar;
 
 bool g_input_refresh_queued = false;
+
+float g_last_input_height_units = -1.0f;
+float g_last_chat_bottom_units = -1.0f;
+
+std::string g_last_responsive_unit;
 
 // -------------------------------------------------------------
 // TEXT CONTENT CHECK
@@ -65,22 +78,10 @@ bool HasMeaningfulText(const Rml::String& value)
 }
 
 // -------------------------------------------------------------
-// RESPONSIVE LENGTH
+// COUNT EXPLICIT NEWLINES
 // -------------------------------------------------------------
 
-Rml::String ToResponsiveLength(
-    float value,
-    const char* unit)
-{
-    return std::to_string(value) + unit;
-}
-
-// -------------------------------------------------------------
-// COUNT LEADING NEWLINES
-// -------------------------------------------------------------
-
-std::size_t CountLeadingNewlines(
-    const Rml::String& value)
+std::size_t CountLeadingNewlines(const Rml::String& value)
 {
     std::size_t count = 0;
 
@@ -95,12 +96,7 @@ std::size_t CountLeadingNewlines(
     return count;
 }
 
-// -------------------------------------------------------------
-// COUNT TRAILING NEWLINES
-// -------------------------------------------------------------
-
-std::size_t CountTrailingNewlines(
-    const Rml::String& value)
+std::size_t CountTrailingNewlines(const Rml::String& value)
 {
     std::size_t count = 0;
 
@@ -118,13 +114,16 @@ std::size_t CountTrailingNewlines(
 }
 
 // -------------------------------------------------------------
-// MEASURE ACTUAL FORMATTED TEXT LINES
+// MEASURE ACTUAL RMLUI FORMATTED TEXT ROWS
 //
-// RmlUi textarea internally creates two ElementText children:
-// 0 = normal text
-// 1 = selected text
+// RmlUi's textarea widget creates two hidden ElementText
+// children:
 //
-// Their line positions include actual word wrapping.
+// 1. Normal text
+// 2. Selected text
+//
+// GetLines() contains formatted line positions, including
+// automatically wrapped lines and manually entered newlines.
 // -------------------------------------------------------------
 
 std::size_t MeasureVisualLineCount(
@@ -134,18 +133,18 @@ std::size_t MeasureVisualLineCount(
     if (textarea_element == nullptr)
         return 1;
 
-    const int child_count =
+    std::vector<float> line_positions;
+
+    const int visible_children =
+        textarea_element->GetNumChildren();
+
+    const int all_children =
         textarea_element->GetNumChildren(true);
 
-    float minimum_y = 0.0f;
-    float maximum_y = 0.0f;
+    // Only inspect the native textarea's hidden text children.
 
-    bool found_line = false;
-
-    // Inspect the two native text-rendering elements.
-
-    for (int index = 0;
-         index < std::min(child_count, 2);
+    for (int index = visible_children;
+         index < all_children;
          ++index)
     {
         Rml::Element* child =
@@ -160,29 +159,23 @@ std::size_t MeasureVisualLineCount(
         auto* text_element =
             static_cast<Rml::ElementText*>(child);
 
-        const auto& lines = text_element->GetLines();
-
-        for (const auto& line : lines)
+        for (const Rml::ElementText::Line& line :
+             text_element->GetLines())
         {
-            const float y = line.position.y;
-
-            if (!found_line)
-            {
-                minimum_y = y;
-                maximum_y = y;
-                found_line = true;
-            }
-            else
-            {
-                minimum_y = std::min(minimum_y, y);
-                maximum_y = std::max(maximum_y, y);
-            }
+            line_positions.push_back(line.position.y);
         }
     }
 
-    // Empty text or entirely blank lines.
+    const std::size_t leading_newlines =
+        CountLeadingNewlines(value);
 
-    if (!found_line)
+    const std::size_t trailing_newlines =
+        CountTrailingNewlines(value);
+
+    // No visible text geometry, such as an empty value or
+    // a value containing only explicit blank lines.
+
+    if (line_positions.empty())
     {
         const std::size_t newline_count =
             static_cast<std::size_t>(
@@ -191,31 +184,77 @@ std::size_t MeasureVisualLineCount(
         return newline_count + 1;
     }
 
-    // Match the rounded line height used by RmlUi's
-    // native WidgetTextInput implementation.
+    std::sort(
+        line_positions.begin(),
+        line_positions.end());
 
     const float line_height =
         std::max(
-            1.0f,
-            std::round(textarea_element->GetLineHeight()));
+            kMinimumLineHeightPixels,
+            textarea_element->GetLineHeight());
 
     const float vertical_span =
-        std::max(0.0f, maximum_y - minimum_y);
+        std::max(
+            0.0f,
+            line_positions.back() - line_positions.front());
+
+    // Reconstruct the number of formatted rows from the
+    // vertical distance between the first and last rows.
 
     const std::size_t rendered_rows =
         static_cast<std::size_t>(
             std::lround(vertical_span / line_height)) + 1;
 
-    // Blank lines before and after rendered text do not
-    // necessarily generate ElementText geometry.
+    // Blank lines at the beginning and end do not always
+    // generate visible text geometry.
 
-    return rendered_rows +
-           CountLeadingNewlines(value) +
-           CountTrailingNewlines(value);
+    return std::max<std::size_t>(
+        1,
+        rendered_rows +
+            leading_newlines +
+            trailing_newlines);
 }
 
 // -------------------------------------------------------------
-// APPLY TEXT STATE AND DYNAMIC INPUT HEIGHT
+// ENABLE NATIVE TEXTAREA SCROLLING ONCE
+// -------------------------------------------------------------
+
+void EnsureScrollableTextarea(Rml::Element* textarea)
+{
+    if (textarea == nullptr ||
+        textarea->GetId() != kMessageInputId)
+    {
+        return;
+    }
+
+    if (g_scrollable_textarea.get() == textarea)
+    {
+        return;
+    }
+
+    // RmlUi's native text widget initially sets overflow-y
+    // to hidden. Override it once so its internal scrollbar
+    // becomes available after the maximum height is reached.
+
+    textarea->SetProperty("overflow-y", "auto");
+
+    g_scrollable_textarea =
+        textarea->GetObserverPtr();
+}
+
+// -------------------------------------------------------------
+// CONVERT RESPONSIVE DIMENSION TO RCSS LENGTH
+// -------------------------------------------------------------
+
+Rml::String ToResponsiveLength(
+    float value,
+    const char* unit)
+{
+    return std::to_string(value) + unit;
+}
+
+// -------------------------------------------------------------
+// APPLY INPUT HEIGHT AND CHAT POSITION
 // -------------------------------------------------------------
 
 void ApplyInputState(void*)
@@ -244,13 +283,36 @@ void ApplyInputState(void*)
     if (document == nullptr)
         return;
 
+    // ---------------------------------------------------------
+    // NEW RML STRUCTURE:
+    //
+    // input-bar
+    //   └── message-input-viewport
+    //         └── message-input
+    // ---------------------------------------------------------
+
+    Rml::Element* viewport =
+        textarea_element->GetParentNode();
+
+    if (viewport == nullptr ||
+        viewport->GetId() != kInputViewportId)
+    {
+        return;
+    }
+
     Rml::Element* input_bar =
-        document->GetElementById(kInputBarId);
+        viewport->GetParentNode();
+
+    if (input_bar == nullptr ||
+        input_bar->GetId() != kInputBarId)
+    {
+        return;
+    }
 
     Rml::Element* chat_area =
         document->GetElementById(kChatAreaId);
 
-    if (input_bar == nullptr || chat_area == nullptr)
+    if (chat_area == nullptr)
         return;
 
     auto* textarea =
@@ -258,7 +320,7 @@ void ApplyInputState(void*)
             textarea_element);
 
     // ---------------------------------------------------------
-    // PULSE / ARROW STATE
+    // HAS-TEXT STATE
     // ---------------------------------------------------------
 
     const Rml::String value =
@@ -267,10 +329,13 @@ void ApplyInputState(void*)
     const bool has_text =
         HasMeaningfulText(value);
 
-    input_bar->SetClass("has-text", has_text);
+    if (input_bar->IsClassSet("has-text") != has_text)
+    {
+        input_bar->SetClass("has-text", has_text);
+    }
 
     // ---------------------------------------------------------
-    // DETERMINE RESPONSIVE UNIT
+    // RESPONSIVE VIEWPORT
     // ---------------------------------------------------------
 
     Rml::Context* context =
@@ -302,113 +367,137 @@ void ApplyInputState(void*)
         portrait ? "vw" : "vh";
 
     // ---------------------------------------------------------
-    // MEASURE NATIVE FORMATTED LINES
+    // ACTUAL FORMATTED LINE COUNT
     // ---------------------------------------------------------
 
-    const std::size_t visual_line_count =
+    const std::size_t line_count =
         MeasureVisualLineCount(
             textarea_element,
             value);
 
     const float line_height_pixels =
         std::max(
-            1.0f,
-            std::round(textarea_element->GetLineHeight()));
+            kMinimumLineHeightPixels,
+            textarea_element->GetLineHeight());
 
-    const float measured_content_height_pixels =
-        static_cast<float>(visual_line_count) *
-        line_height_pixels;
-
-    // ---------------------------------------------------------
-    // CALCULATE RESPONSIVE TEXTAREA HEIGHT
-    // ---------------------------------------------------------
-
-    const float measured_height_units =
-        measured_content_height_pixels / unit_pixels;
-
-    const float target_textarea_height =
-        std::clamp(
-            measured_height_units,
-            kBaseTextareaHeight,
-            kMaxTextareaHeight);
+    const float line_height_units =
+        line_height_pixels / unit_pixels;
 
     // ---------------------------------------------------------
-    // MAXIMUM HEIGHT / INTERNAL SCROLLING
-    // ---------------------------------------------------------
-
-    const bool needs_internal_scroll =
-        measured_height_units > kMaxTextareaHeight;
-
-    textarea_element->SetProperty(
-        "overflow-y",
-        needs_internal_scroll ? "auto" : "hidden");
-
-    // ---------------------------------------------------------
-    // INPUT BAR HEIGHT
+    // CALCULATE REQUIRED INPUT BAR HEIGHT
+    //
+    // The textarea itself never changes height.
+    // Only the clipping viewport and outer panel grow.
     // ---------------------------------------------------------
 
     const bool expanded =
         input_bar->IsClassSet("expanded");
 
-    const float input_bar_height =
-        expanded
-            ? kBaseInputBarHeight +
-                (target_textarea_height -
-                 kBaseTextareaHeight)
-            : kBaseInputBarHeight;
+    float desired_input_height =
+        kBaseInputBarHeight;
+
+    if (expanded)
+    {
+        const float required_height =
+            kVerticalInsets +
+            kTextareaPaddingVertical +
+            static_cast<float>(line_count) *
+                line_height_units;
+
+        const float maximum_input_height =
+            kVerticalInsets +
+            kTextareaMaxBoxHeight;
+
+        desired_input_height =
+            std::clamp(
+                std::max(
+                    kBaseInputBarHeight,
+                    required_height),
+                kBaseInputBarHeight,
+                maximum_input_height);
+    }
 
     // ---------------------------------------------------------
     // CHAT AREA POSITION
     // ---------------------------------------------------------
 
-    const float chat_area_bottom =
+    const float desired_chat_bottom =
         kInputBarBottom +
-        input_bar_height +
+        desired_input_height +
         kChatAreaGap;
 
     // ---------------------------------------------------------
-    // UPDATE TEXTAREA
+    // RESET CACHE WHEN DOCUMENT ELEMENT CHANGES
     // ---------------------------------------------------------
 
-    textarea_element->SetProperty(
-        "height",
-        ToResponsiveLength(
-            expanded
-                ? target_textarea_height
-                : kBaseTextareaHeight,
-            responsive_unit));
+    if (g_last_input_bar.get() != input_bar)
+    {
+        g_last_input_bar =
+            input_bar->GetObserverPtr();
 
-    textarea_element->SetProperty(
-        "margin-top",
-        ToResponsiveLength(
-            -(expanded
-                ? target_textarea_height
-                : kBaseTextareaHeight) / 2.0f,
-            responsive_unit));
+        g_last_input_height_units = -1.0f;
+        g_last_chat_bottom_units = -1.0f;
+        g_last_responsive_unit.clear();
+    }
+
+    const bool unit_changed =
+        g_last_responsive_unit != responsive_unit;
 
     // ---------------------------------------------------------
-    // UPDATE INPUT BAR
+    // IMPORTANT:
+    // Update only when the visual row count changes.
+    //
+    // Never change textarea height, width or margin here.
     // ---------------------------------------------------------
 
-    input_bar->SetProperty(
-        "height",
-        ToResponsiveLength(
-            input_bar_height,
-            responsive_unit));
+    if (unit_changed ||
+        std::fabs(
+            desired_input_height -
+            g_last_input_height_units) > 0.01f)
+    {
+        const bool success =
+            input_bar->SetProperty(
+                "height",
+                ToResponsiveLength(
+                    desired_input_height,
+                    responsive_unit));
+
+        if (!success)
+            return;
+
+        g_last_input_height_units =
+            desired_input_height;
+    }
 
     // ---------------------------------------------------------
-    // UPDATE CHAT AREA
+    // UPDATE CHAT AREA ONLY WHEN REQUIRED
     // ---------------------------------------------------------
 
-    chat_area->SetProperty(
-        "bottom",
-        ToResponsiveLength(
-            chat_area_bottom,
-            responsive_unit));
+    if (unit_changed ||
+        std::fabs(
+            desired_chat_bottom -
+            g_last_chat_bottom_units) > 0.01f)
+    {
+        const bool success =
+            chat_area->SetProperty(
+                "bottom",
+                ToResponsiveLength(
+                    desired_chat_bottom,
+                    responsive_unit));
+
+        if (!success)
+            return;
+
+        g_last_chat_bottom_units =
+            desired_chat_bottom;
+    }
+
+    g_last_responsive_unit =
+        responsive_unit;
 }
 
 // -------------------------------------------------------------
-// QUEUE INPUT UPDATE ON ULTRON UI THREAD
+// QUEUE REFRESH ON ULTRON UI THREAD
 // -------------------------------------------------------------
 
 void QueueInputRefresh(Rml::Element* target)
@@ -422,6 +511,9 @@ void QueueInputRefresh(Rml::Element* target)
 
     g_pending_textarea =
         target->GetObserverPtr();
+
+    // Coalesce textinput, keydown and change notifications
+    // into a single update after native RmlUi processing.
 
     if (g_input_refresh_queued)
         return;
@@ -472,11 +564,46 @@ bool HandleWingClick(
         "expanded",
         !currently_expanded);
 
+    Rml::ElementDocument* document =
+        input_bar->GetOwnerDocument();
+
+    if (document != nullptr)
+    {
+        QueueInputRefresh(
+            document->GetElementById(kMessageInputId));
+    }
+
     return false;
 }
 
 // -------------------------------------------------------------
-// TEXT INPUT — PULSE / ARROW + HEIGHT
+// TEXTAREA FOCUS — PREPARE INTERNAL SCROLLING
+// -------------------------------------------------------------
+
+bool HandleTextareaFocus(
+    Rml::Event* event,
+    void*)
+{
+    if (event == nullptr)
+        return false;
+
+    Rml::Element* target =
+        event->GetTargetElement();
+
+    if (target == nullptr ||
+        target->GetId() != kMessageInputId)
+    {
+        return false;
+    }
+
+    // Set overflow behavior before the user starts typing.
+    EnsureScrollableTextarea(target);
+
+    return false;
+}
+
+// -------------------------------------------------------------
+// TEXT INPUT — PULSE / ARROW + DYNAMIC HEIGHT
 // -------------------------------------------------------------
 
 bool HandleTextInput(
@@ -493,7 +620,7 @@ bool HandleTextInput(
 }
 
 // -------------------------------------------------------------
-// KEYBOARD INPUT — DELETE / BACKSPACE / ENTER
+// KEYBOARD INPUT — BACKSPACE / DELETE / ENTER
 // -------------------------------------------------------------
 
 bool HandleKeyDown(
@@ -506,14 +633,15 @@ bool HandleKeyDown(
     QueueInputRefresh(
         event->GetTargetElement());
 
-    // Never consume Enter.
-    // Multiline textarea keeps its native newline behaviour.
+    // Do not consume Enter or modify the textarea's value.
+    // SDL3's RmlUi backend already forwards Return as '\n'.
+    // The native multiline textarea handles the newline.
 
     return false;
 }
 
 // -------------------------------------------------------------
-// CHANGE EVENT — TEXT MODIFICATION
+// CHANGE EVENT — INSERT / DELETE / PASTE / CUT
 // -------------------------------------------------------------
 
 bool HandleTextareaChange(
@@ -542,6 +670,12 @@ const bool g_handlers_registered = []()
             "click",
             &HandleWingClick);
 
+    const bool focus_registered =
+        Ultron_RegisterRmlEventHandler(
+            kModuleName,
+            "focus",
+            &HandleTextareaFocus);
+
     const bool textinput_registered =
         Ultron_RegisterRmlEventHandler(
             kModuleName,
@@ -561,6 +695,7 @@ const bool g_handlers_registered = []()
             &HandleTextareaChange);
 
     return click_registered &&
+           focus_registered &&
            textinput_registered &&
            keydown_registered &&
            change_registered;
