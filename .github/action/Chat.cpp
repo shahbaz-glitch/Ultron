@@ -26,26 +26,25 @@ constexpr const char* kMessageInputId = "message-input";
 constexpr const char* kChatAreaId = "chat-area";
 
 // -------------------------------------------------------------
-// Responsive input dimensions
-// Reference: portrait vw / landscape vh
+// Responsive dimensions
+// Reference: Portrait = vw, Landscape = vh
 // -------------------------------------------------------------
 
 constexpr float kBaseTextareaHeight = 7.35f;
 constexpr float kMaxTextareaHeight = 28.92f;
-constexpr float kTextareaVerticalPadding = 1.23f;
 
 constexpr float kBaseInputBarHeight = 14.22f;
+
 constexpr float kInputBarBottom = 7.35f;
 constexpr float kChatAreaGap = 4.17f;
 
 // -------------------------------------------------------------
-// Deferred text-state and layout updates
+// Deferred input update
 // -------------------------------------------------------------
 
 Rml::ObserverPtr<Rml::Element> g_pending_textarea;
 
-bool g_text_refresh_queued = false;
-bool g_input_layout_refresh_queued = false;
+bool g_input_refresh_queued = false;
 
 // -------------------------------------------------------------
 // Check whether text contains non-whitespace characters
@@ -63,7 +62,7 @@ bool HasMeaningfulText(const Rml::String& value)
 }
 
 // -------------------------------------------------------------
-// Convert responsive value into an RCSS length
+// Convert a responsive value to an RML length
 // -------------------------------------------------------------
 
 Rml::String ToResponsiveLength(
@@ -74,36 +73,26 @@ Rml::String ToResponsiveLength(
 }
 
 // -------------------------------------------------------------
-// Apply dynamic input height after text layout
+// Apply text state and dynamic input layout
 // -------------------------------------------------------------
 
-void ApplyDynamicInputLayout(void*)
+void ApplyInputState(void*)
 {
-    g_input_layout_refresh_queued = false;
+    g_input_refresh_queued = false;
 
-    const Rml::ObserverPtr<Rml::Element> textarea_observer =
+    const Rml::ObserverPtr<Rml::Element> observer =
         g_pending_textarea;
 
-    if (!textarea_observer)
+    if (!observer)
     {
         return;
     }
 
-    Rml::Element* textarea_element =
-        textarea_observer.get();
+    Rml::Element* textarea_element = observer.get();
 
     if (textarea_element == nullptr ||
         textarea_element->GetId() != kMessageInputId ||
         textarea_element->GetTagName() != "textarea")
-    {
-        return;
-    }
-
-    Rml::Element* input_bar =
-        textarea_element->GetParentNode();
-
-    if (input_bar == nullptr ||
-        input_bar->GetId() != kInputBarId)
     {
         return;
     }
@@ -116,13 +105,54 @@ void ApplyDynamicInputLayout(void*)
         return;
     }
 
-    Rml::Element* chat_area =
-        document->GetElementById(kChatAreaId);
+    // ---------------------------------------------------------
+    // IMPORTANT:
+    // Refresh native RmlUi text formatting and document layout
+    // before reading the textarea's scrollable content height.
+    // ---------------------------------------------------------
 
-    if (chat_area == nullptr)
+    document->UpdateDocument();
+
+    // Revalidate after document update.
+    if (!observer)
     {
         return;
     }
+
+    textarea_element = observer.get();
+
+    if (textarea_element == nullptr)
+    {
+        return;
+    }
+
+    Rml::Element* input_bar =
+        document->GetElementById(kInputBarId);
+
+    Rml::Element* chat_area =
+        document->GetElementById(kChatAreaId);
+
+    if (input_bar == nullptr || chat_area == nullptr)
+    {
+        return;
+    }
+
+    auto* textarea =
+        static_cast<Rml::ElementFormControlTextArea*>(
+            textarea_element);
+
+    // ---------------------------------------------------------
+    // PULSE / ARROW STATE
+    // ---------------------------------------------------------
+
+    const bool has_text =
+        HasMeaningfulText(textarea->GetValue());
+
+    input_bar->SetClass("has-text", has_text);
+
+    // ---------------------------------------------------------
+    // Determine responsive viewport units
+    // ---------------------------------------------------------
 
     Rml::Context* context =
         textarea_element->GetContext();
@@ -139,10 +169,6 @@ void ApplyDynamicInputLayout(void*)
     {
         return;
     }
-
-    // Use the shorter viewport axis:
-    // Portrait  = vw
-    // Landscape = vh
 
     const bool portrait =
         dimensions.x <= dimensions.y;
@@ -166,43 +192,57 @@ void ApplyDynamicInputLayout(void*)
     // Read actual textarea content height
     // ---------------------------------------------------------
 
-    auto* textarea =
-        static_cast<Rml::ElementFormControlTextArea*>(
-            textarea_element);
+    float textarea_height_units =
+        kBaseTextareaHeight;
 
-    // GetScrollHeight includes padding.
-    // Remove the original top and bottom textarea padding.
+    const bool expanded =
+        input_bar->IsClassSet("expanded");
 
-    const float measured_content_height =
-        std::max(
-            kBaseTextareaHeight * unit_pixels,
-            textarea_element->GetScrollHeight() -
-                (kTextareaVerticalPadding * unit_pixels));
+    if (expanded)
+    {
+        // RmlUi's scrollable height includes the element's
+        // padding frame. Remove it to obtain content height.
 
-    // Clamp textarea height to the existing maximum.
-    // Beyond this limit, the textarea scrolls internally.
+        const float padding_frame_height =
+            textarea_element->GetBox().GetFrameSize(
+                Rml::BoxArea::Padding).y;
 
-    const float target_textarea_height =
-        std::clamp(
-            measured_content_height,
-            kBaseTextareaHeight * unit_pixels,
-            kMaxTextareaHeight * unit_pixels);
+        const float content_height_pixels =
+            std::max(
+                0.0f,
+                textarea_element->GetScrollHeight() -
+                    padding_frame_height);
+
+        const float measured_height_units =
+            content_height_pixels / unit_pixels;
+
+        // Keep original minimum and maximum dimensions.
+
+        textarea_height_units =
+            std::clamp(
+                measured_height_units,
+                kBaseTextareaHeight,
+                kMaxTextareaHeight);
+    }
 
     // ---------------------------------------------------------
-    // Calculate responsive dimensions
+    // Calculate input bar height
     // ---------------------------------------------------------
 
-    const float textarea_height_units =
-        target_textarea_height / unit_pixels;
+    float input_bar_height_units =
+        kBaseInputBarHeight;
 
-    // Keep the original input-bar height for one-line text.
-    // Additional textarea height expands the bar upward.
+    if (expanded)
+    {
+        input_bar_height_units =
+            kBaseInputBarHeight +
+            (textarea_height_units - kBaseTextareaHeight);
+    }
 
-    const float input_bar_height_units =
-        kBaseInputBarHeight +
-        (textarea_height_units - kBaseTextareaHeight);
-
-    // Preserve the original gap between chat area and input bar.
+    // ---------------------------------------------------------
+    // Calculate chat area bottom position
+    // Preserve original spacing.
+    // ---------------------------------------------------------
 
     const float chat_area_bottom_units =
         kInputBarBottom +
@@ -210,7 +250,7 @@ void ApplyDynamicInputLayout(void*)
         kChatAreaGap;
 
     // ---------------------------------------------------------
-    // Update textarea
+    // Update textarea height and vertical centering
     // ---------------------------------------------------------
 
     textarea_element->SetProperty(
@@ -218,9 +258,6 @@ void ApplyDynamicInputLayout(void*)
         ToResponsiveLength(
             textarea_height_units,
             responsive_unit));
-
-    // Keep the textarea vertically centered in the growing bar.
-    // The input bar itself remains anchored at its bottom.
 
     textarea_element->SetProperty(
         "margin-top",
@@ -247,85 +284,19 @@ void ApplyDynamicInputLayout(void*)
         ToResponsiveLength(
             chat_area_bottom_units,
             responsive_unit));
+
+    // ---------------------------------------------------------
+    // Recalculate layout after changing dimensions
+    // ---------------------------------------------------------
+
+    document->UpdateDocument();
 }
 
 // -------------------------------------------------------------
-// Schedule dynamic layout update after RmlUi layout update
+// Queue input refresh on the UI thread
 // -------------------------------------------------------------
 
-void QueueDynamicInputLayout()
-{
-    if (g_input_layout_refresh_queued)
-    {
-        return;
-    }
-
-    g_input_layout_refresh_queued = true;
-
-    // This second-stage task runs on the next UI-loop iteration,
-    // after the current RmlUi Context::Update() has processed layout.
-
-    if (!Ultron_PostToUI(
-            &ApplyDynamicInputLayout,
-            nullptr))
-    {
-        g_input_layout_refresh_queued = false;
-    }
-}
-
-// -------------------------------------------------------------
-// Apply has-text class after native text processing
-// -------------------------------------------------------------
-
-void ApplyHasTextState(void*)
-{
-    g_text_refresh_queued = false;
-
-    const Rml::ObserverPtr<Rml::Element> textarea_observer =
-        g_pending_textarea;
-
-    if (!textarea_observer)
-    {
-        return;
-    }
-
-    Rml::Element* textarea_element =
-        textarea_observer.get();
-
-    if (textarea_element == nullptr ||
-        textarea_element->GetId() != kMessageInputId ||
-        textarea_element->GetTagName() != "textarea")
-    {
-        return;
-    }
-
-    Rml::Element* input_bar =
-        textarea_element->GetParentNode();
-
-    if (input_bar == nullptr ||
-        input_bar->GetId() != kInputBarId)
-    {
-        return;
-    }
-
-    auto* textarea =
-        static_cast<Rml::ElementFormControlTextArea*>(
-            textarea_element);
-
-    const bool has_text =
-        HasMeaningfulText(textarea->GetValue());
-
-    input_bar->SetClass("has-text", has_text);
-
-    // Schedule height calculation after native text layout.
-    QueueDynamicInputLayout();
-}
-
-// -------------------------------------------------------------
-// Schedule text-state update on Ultron UI thread
-// -------------------------------------------------------------
-
-void QueueHasTextRefresh(Rml::Element* target)
+void QueueInputRefresh(Rml::Element* target)
 {
     if (target == nullptr ||
         target->GetId() != kMessageInputId ||
@@ -334,22 +305,22 @@ void QueueHasTextRefresh(Rml::Element* target)
         return;
     }
 
-    // ObserverPtr prevents access to a destroyed RmlUi element.
     g_pending_textarea = target->GetObserverPtr();
 
-    // Coalesce multiple keyboard/text input events into one update.
-    if (g_text_refresh_queued)
+    // Combine multiple events into one UI update.
+
+    if (g_input_refresh_queued)
     {
         return;
     }
 
-    g_text_refresh_queued = true;
+    g_input_refresh_queued = true;
 
     if (!Ultron_PostToUI(
-            &ApplyHasTextState,
+            &ApplyInputState,
             nullptr))
     {
-        g_text_refresh_queued = false;
+        g_input_refresh_queued = false;
     }
 }
 
@@ -391,12 +362,22 @@ bool HandleWingClick(
         "expanded",
         !currently_expanded);
 
+    // Recalculate dimensions when opening or closing.
+    Rml::ElementDocument* document =
+        input_bar->GetOwnerDocument();
+
+    if (document != nullptr)
+    {
+        QueueInputRefresh(
+            document->GetElementById(kMessageInputId));
+    }
+
     // Preserve normal RmlUi event processing.
     return false;
 }
 
 // -------------------------------------------------------------
-// TEXT INPUT — PULSE / ARROW
+// TEXT INPUT — PULSE / ARROW + DYNAMIC HEIGHT
 // -------------------------------------------------------------
 
 bool HandleTextInput(
@@ -408,14 +389,14 @@ bool HandleTextInput(
         return false;
     }
 
-    QueueHasTextRefresh(
+    QueueInputRefresh(
         event->GetTargetElement());
 
     return false;
 }
 
 // -------------------------------------------------------------
-// KEYBOARD INPUT — BACKSPACE / DELETE / ETC.
+// KEYBOARD INPUT — DELETE / BACKSPACE / ENTER
 // -------------------------------------------------------------
 
 bool HandleKeyDown(
@@ -427,18 +408,18 @@ bool HandleKeyDown(
         return false;
     }
 
-    QueueHasTextRefresh(
+    QueueInputRefresh(
         event->GetTargetElement());
 
     // Do not consume Enter.
-    // RmlUi's SDL3 backend forwards Return as '\n' text input.
-    // The native multiline textarea handles the newline.
+    // SDL3's RmlUi backend forwards Return as newline text input.
+    // The multiline textarea handles it natively.
 
     return false;
 }
 
 // -------------------------------------------------------------
-// TEXTAREA CHANGE — RELIABLE CONTENT UPDATE
+// TEXTAREA CHANGE — PASTE / CUT / TEXT MODIFICATIONS
 // -------------------------------------------------------------
 
 bool HandleTextareaChange(
@@ -450,7 +431,7 @@ bool HandleTextareaChange(
         return false;
     }
 
-    QueueHasTextRefresh(
+    QueueInputRefresh(
         event->GetTargetElement());
 
     return false;
