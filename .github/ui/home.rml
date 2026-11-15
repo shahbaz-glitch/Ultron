@@ -20,11 +20,11 @@
             position: absolute;
             left: 6%;
             right: 6%;
-            bottom: 27.80vw;
+            bottom: 25.74vw;
             height: 75%;
             display: block;
             overflow-y: auto;
-            padding: 2.12vw 0px;
+            padding: 1.96vw 0px;
         }
 
         /* CHAT BUBBLE */
@@ -34,11 +34,11 @@
             width: auto;
             max-width: 88%;
             margin-left: auto;
-            margin-bottom: 2.65vw;
-            padding: 3.18vw 4.23vw;
+            margin-bottom: 2.45vw;
+            padding: 2.94vw 3.92vw;
 
-            border: 0.30vw #65dfff99;
-            border-radius: 8.21vw 3.18vw 8.21vw 3.18vw;
+            border: 0.25vw #65dfff77;
+            border-radius: 7.60vw 2.94vw 7.60vw 2.94vw;
 
             decorator: linear-gradient(
                 125deg,
@@ -49,12 +49,11 @@
             ) border-box;
 
             box-shadow:
-                #d6faff44 0px 0px 0.38vw 0px inset,
-                #d6faff66 0.27vw 0.27vw 0.70vw 0px inset,
-                #25aaff55 -0.27vw -0.27vw 1.05vw 0px inset;
+                #d6faff44 0.25vw 0.25vw 0.49vw 0px inset,
+                #25aaff33 -0.25vw -0.25vw 0.74vw 0px inset;
 
             color: #dffaff;
-            font-size: 4.23vw;
+            font-size: 3.92vw;
             line-height: 1.45;
             white-space: pre-wrap;
         }
@@ -66,13 +65,13 @@
             display: block;
 
             left: 6%;
-            bottom: 7.94vw;
+            bottom: 7.35vw;
 
-            width: 15.36vw;
-            height: 15.36vw;
+            width: 14.22vw;
+            height: 14.22vw;
 
-            border: 0.30vw #65dfff99;
-            border-radius: 8.21vw 3.18vw 8.21vw 3.18vw;
+            border: 0.25vw #65dfff77;
+            border-radius: 7.60vw 2.94vw 7.60vw 2.94vw;
 
             overflow: hidden;
 
@@ -85,12 +84,13 @@
             ) border-box;
 
             box-shadow:
-                #d6faff44 0px 0px 0.38vw 0px inset,
-                #d6faff66 0.27vw 0.27vw 0.70vw 0px inset,
-                #25aaff55 -0.27vw -0.27vw 1.05vw 0px inset;
+                #65dfff33 0px 0px 0.80vw 0px,
+                #d6faff44 0.25vw 0.25vw 0.49vw 0px inset,
+                #25aaff33 -0.25vw -0.25vw 0.74vw 0px inset;
 
             transition:
                 width 0.8s cubic-out,
+                height 0.22s linear-in-out,
                 border-radius 0.7s linear-in-out;
         }
 
@@ -111,8 +111,8 @@
             left: 0px;
             bottom: 0px;
 
-            width: 15.36vw;
-            height: 15.36vw;
+            width: 14.22vw;
+            height: 14.22vw;
 
             z-index: 2;
         }
@@ -121,11 +121,11 @@
 
         #wing-button {
             position: absolute;
-            left: 1.33vw;
-            bottom: 1.86vw;
+            left: 1.23vw;
+            bottom: 1.72vw;
 
-            width: 12.70vw;
-            height: 11.11vw;
+            width: 11.76vw;
+            height: 10.29vw;
 
             pointer-events: none;
 
@@ -141,19 +141,19 @@
         #message-input {
             position: absolute;
 
-            left: 20.12vw;
-            right: 14.03vw;
+            left: 18.63vw;
+            right: 12.99vw;
             top: 50%;
 
             width: auto;
-            height: 7.94vw;
-            max-height: 31.23vw;
+            height: 7.35vw;
+            max-height: 28.92vw;
 
-            margin-top: -3.97vw;
-            padding: 0.80vw 0px 0.53vw 0px;
+            margin-top: -3.68vw;
+            padding: 0.74vw 0px 0.49vw 0px;
 
-            font-size: 4.50vw;
-            line-height: 6.35vw;
+            font-size: 4.17vw;
+            line-height: 5.88vw;
 
             color: #dffaff;
             background-color: transparent;
@@ -174,24 +174,17 @@
             opacity: 1;
         }
 
-        /*
-            FIRST LINE SHIFT
-
-            First line starts after the wing.
-
-            Once wrapping begins, the textarea
-            moves upward and uses full available width.
-        */
+        /* FIRST LINE SHIFT */
 
         #input-bar.multiline #message-input {
-            left: 4.50vw;
-            right: 2.65vw;
+            left: 4.17vw;
+            right: 2.45vw;
             top: 0px;
 
             width: auto;
             margin-top: 0px;
 
-            padding: 0.80vw 0px 0.53vw 0px;
+            padding: 0.74vw 0px 0.49vw 0px;
         }
 
         /* SEND BUTTON */
@@ -201,11 +194,11 @@
 
             display: none;
 
-            right: 2.65vw;
-            bottom: 3.83vw;
+            right: 2.45vw;
+            bottom: 3.55vw;
 
-            width: 7.68vw;
-            height: 7.68vw;
+            width: 7.11vw;
+            height: 7.11vw;
 
             opacity: 0;
         }
@@ -261,96 +254,95 @@
             /* CHAT AREA */
 
             #chat-area {
-                bottom: 27.80vh;
-                padding: 2.12vh 0px;
+                bottom: 25.74vh;
+                padding: 1.96vh 0px;
             }
 
             /* CHAT BUBBLE */
 
             .chat-message {
-                margin-bottom: 2.65vh;
-                padding: 3.18vh 4.23vh;
+                margin-bottom: 2.45vh;
+                padding: 2.94vh 3.92vh;
 
-                border: 0.30vh #65dfff99;
-                border-radius: 8.21vh 3.18vh 8.21vh 3.18vh;
+                border: 0.25vh #65dfff77;
+                border-radius: 7.60vh 2.94vh 7.60vh 2.94vh;
 
                 box-shadow:
-                    #d6faff44 0px 0px 0.38vh 0px inset,
-                    #d6faff66 0.27vh 0.27vh 0.70vh 0px inset,
-                    #25aaff55 -0.27vh -0.27vh 1.05vh 0px inset;
+                    #d6faff44 0.25vh 0.25vh 0.49vh 0px inset,
+                    #25aaff33 -0.25vh -0.25vh 0.74vh 0px inset;
 
-                font-size: 4.23vh;
+                font-size: 3.92vh;
             }
 
             /* INPUT BAR */
 
             #input-bar {
-                bottom: 7.94vh;
+                bottom: 7.35vh;
 
-                width: 15.36vh;
-                height: 15.36vh;
+                width: 14.22vh;
+                height: 14.22vh;
 
-                border: 0.30vh #65dfff99;
-                border-radius: 8.21vh 3.18vh 8.21vh 3.18vh;
+                border: 0.25vh #65dfff77;
+                border-radius: 7.60vh 2.94vh 7.60vh 2.94vh;
 
                 box-shadow:
-                    #d6faff44 0px 0px 0.38vh 0px inset,
-                    #d6faff66 0.27vh 0.27vh 0.70vh 0px inset,
-                    #25aaff55 -0.27vh -0.27vh 1.05vh 0px inset;
+                    #65dfff33 0px 0px 0.80vh 0px,
+                    #d6faff44 0.25vh 0.25vh 0.49vh 0px inset,
+                    #25aaff33 -0.25vh -0.25vh 0.74vh 0px inset;
             }
 
             /* WING HIT AREA */
 
             #wing-hit {
-                width: 15.36vh;
-                height: 15.36vh;
+                width: 14.22vh;
+                height: 14.22vh;
             }
 
             /* WING DESIGN */
 
             #wing-button {
-                left: 1.33vh;
-                bottom: 1.86vh;
+                left: 1.23vh;
+                bottom: 1.72vh;
 
-                width: 12.70vh;
-                height: 11.11vh;
+                width: 11.76vh;
+                height: 10.29vh;
             }
 
             /* MESSAGE INPUT */
 
             #message-input {
-                left: 20.12vh;
-                right: 14.03vh;
+                left: 18.63vh;
+                right: 12.99vh;
 
-                height: 7.94vh;
-                max-height: 31.23vh;
+                height: 7.35vh;
+                max-height: 28.92vh;
 
-                margin-top: -3.97vh;
-                padding: 0.80vh 0px 0.53vh 0px;
+                margin-top: -3.68vh;
+                padding: 0.74vh 0px 0.49vh 0px;
 
-                font-size: 4.50vh;
-                line-height: 6.35vh;
+                font-size: 4.17vh;
+                line-height: 5.88vh;
             }
 
             /* MULTILINE INPUT */
 
             #input-bar.multiline #message-input {
-                left: 4.50vh;
-                right: 2.65vh;
+                left: 4.17vh;
+                right: 2.45vh;
                 top: 0px;
 
                 margin-top: 0px;
-                padding: 0.80vh 0px 0.53vh 0px;
+                padding: 0.74vh 0px 0.49vh 0px;
             }
 
             /* SEND BUTTON */
 
             #send-button {
-                right: 2.65vh;
-                bottom: 3.83vh;
+                right: 2.45vh;
+                bottom: 3.55vh;
 
-                width: 7.68vh;
-                height: 7.68vh;
+                width: 7.11vh;
+                height: 7.11vh;
             }
 
         }
@@ -491,376 +483,6 @@
         </div>
 
     </div>
-
-
-    <!-- CHAT INPUT LOGIC -->
-
-    <script>
-
-        var inputBar = document.GetElementById("input-bar");
-        var wingHit = document.GetElementById("wing-hit");
-        var messageInput = document.GetElementById("message-input");
-        var sendButton = document.GetElementById("send-button");
-        var chatArea = document.GetElementById("chat-area");
-
-        var editingBubble = null;
-
-        /*
-            FIRST LINE STATE
-
-            Once the first line shifts upward,
-            it stays shifted until input is cleared.
-        */
-
-        var firstLineShifted = false;
-
-
-        /* OPEN / CLOSE INPUT BAR */
-
-        wingHit.AddEventListener("click", function() {
-
-            if (inputBar.GetClassList().Contains("expanded")) {
-
-                inputBar.GetClassList().Remove("expanded");
-
-            } else {
-
-                inputBar.GetClassList().Add("expanded");
-
-                messageInput.focus();
-
-            }
-
-        });
-
-
-        /* INPUT HEIGHT AND TEXT POSITION */
-
-        function UpdateInput() {
-
-            var message = messageInput.value;
-
-            /*
-                RESPONSIVE CONTROL HEIGHT
-
-                Gets the actual rendered wing area
-                in portrait or landscape.
-            */
-
-            var controlHeight = wingHit.offsetHeight;
-
-            /*
-                Responsive vertical padding.
-
-                Top + bottom = 1.33vw / vh.
-            */
-
-            var paddingHeight =
-                controlHeight * (1.33 / 15.36);
-
-            /*
-                Responsive maximum text height.
-            */
-
-            var maxTextHeight =
-                controlHeight * (32.56 / 15.36);
-
-            var barHeight = controlHeight;
-
-
-            /* EMPTY INPUT */
-
-            if (message.length == 0) {
-
-                firstLineShifted = false;
-
-                inputBar.GetClassList().Remove("multiline");
-
-                messageInput.style.height = "";
-
-            }
-
-            else {
-
-                /*
-                    FIRST LINE DETECTION
-
-                    Compare actual content height
-                    against the visible one-line area.
-                */
-
-                if (!firstLineShifted) {
-
-                    if (
-                        messageInput.scrollHeight >
-                        messageInput.clientHeight + 1
-                    ) {
-
-                        firstLineShifted = true;
-
-                        inputBar.GetClassList().Add("multiline");
-
-                    }
-
-                }
-
-
-                /*
-                    MULTILINE INPUT
-
-                    Textarea moves upward and uses
-                    full available width.
-                */
-
-                if (firstLineShifted) {
-
-                    messageInput.style.height = "0px";
-
-                    var contentHeight =
-                        messageInput.scrollHeight;
-
-                    var newHeight = Math.min(
-                        contentHeight,
-                        maxTextHeight
-                    );
-
-                    messageInput.style.height =
-                        Math.max(
-                            0,
-                            newHeight - paddingHeight
-                        ) + "px";
-
-                    /*
-                        Text area + bottom control area.
-                    */
-
-                    barHeight =
-                        newHeight + controlHeight;
-
-                }
-
-                else {
-
-                    messageInput.style.height = "";
-
-                    barHeight = controlHeight;
-
-                }
-
-            }
-
-
-            /* INPUT BAR HEIGHT */
-
-            inputBar.style.height =
-                barHeight + "px";
-
-
-            /*
-                CHAT AREA POSITION
-
-                Original spacing is scaled
-                proportionally with the control.
-            */
-
-            chatArea.style.bottom =
-                (
-                    barHeight +
-                    controlHeight * (12.44 / 15.36)
-                ) + "px";
-
-
-            /* PULSE / ARROW STATE */
-
-            if (message.trim().length > 0) {
-
-                inputBar.GetClassList().Add("has-text");
-
-            } else {
-
-                inputBar.GetClassList().Remove("has-text");
-
-            }
-
-        }
-
-
-        /* INPUT EVENT */
-
-        messageInput.AddEventListener("input", function() {
-
-            UpdateInput();
-
-        });
-
-
-        /* LONG PRESS EDIT */
-
-        function StartEdit(bubble) {
-
-            if (!bubble || !bubble.parentNode) {
-                return;
-            }
-
-            var next = bubble.nextElementSibling;
-
-            while (next) {
-
-                var following = next.nextElementSibling;
-
-                next.remove();
-
-                next = following;
-
-            }
-
-            editingBubble = bubble;
-
-            messageInput.value = bubble.textContent;
-
-            bubble.remove();
-
-            firstLineShifted = false;
-
-            inputBar.GetClassList().Add("expanded");
-
-            UpdateInput();
-
-            messageInput.focus();
-
-        }
-
-
-        /* LONG PRESS DETECTION */
-
-        function AttachLongPress(bubble) {
-
-            var pressTimer = null;
-
-            bubble.AddEventListener("pointerdown", function(event) {
-
-                if (event.pointerType == "mouse" && event.button != 0) {
-                    return;
-                }
-
-                if (pressTimer != null) {
-
-                    clearTimeout(pressTimer);
-
-                }
-
-                pressTimer = setTimeout(function() {
-
-                    StartEdit(bubble);
-
-                    pressTimer = null;
-
-                }, 550);
-
-            });
-
-
-            function CancelPress() {
-
-                if (pressTimer != null) {
-
-                    clearTimeout(pressTimer);
-
-                    pressTimer = null;
-
-                }
-
-            }
-
-
-            bubble.AddEventListener("pointerup", CancelPress);
-
-            bubble.AddEventListener("pointercancel", CancelPress);
-
-            bubble.AddEventListener("pointerleave", CancelPress);
-
-
-            bubble.AddEventListener("contextmenu", function(event) {
-
-                event.preventDefault();
-
-            });
-
-        }
-
-
-        /* SEND MESSAGE */
-
-        function SendMessage() {
-
-            var message = messageInput.value.trim();
-
-            if (message.length == 0) {
-                return;
-            }
-
-
-            if (editingBubble != null) {
-
-                editingBubble.textContent = message;
-
-                chatArea.AppendChild(editingBubble);
-
-                editingBubble = null;
-
-            }
-
-            else {
-
-                var bubble = document.CreateElement("div");
-
-                bubble.SetClass("chat-message");
-
-                bubble.textContent = message;
-
-                AttachLongPress(bubble);
-
-                chatArea.AppendChild(bubble);
-
-            }
-
-
-            chatArea.scrollTop = chatArea.scrollHeight;
-
-            messageInput.value = "";
-
-            firstLineShifted = false;
-
-            UpdateInput();
-
-        }
-
-
-        /* SEND BUTTON */
-
-        sendButton.AddEventListener("click", function() {
-
-            SendMessage();
-
-        });
-
-
-        /*
-            ENTER BEHAVIOUR
-
-            Enter creates a new line.
-
-            No Enter-to-send handler.
-
-            The arrow button sends the message.
-        */
-
-
-        /* INITIAL CHAT POSITION */
-
-        UpdateInput();
-
-    </script>
 
 </body>
 </rml>
