@@ -37,7 +37,7 @@
             margin-bottom: 2.65vw;
             padding: 3.18vw 4.23vw;
 
-            border: 0.27vw #65dfff77;
+            border: 0.30vw #65dfff99;
             border-radius: 8.21vw 3.18vw 8.21vw 3.18vw;
 
             decorator: linear-gradient(
@@ -49,9 +49,9 @@
             ) border-box;
 
             box-shadow:
-                #d6faff22 0px 0px 0.27vw 0px inset,
-                #d6faff44 0.27vw 0.27vw 0.53vw 0px inset,
-                #25aaff33 -0.27vw -0.27vw 0.80vw 0px inset;
+                #d6faff44 0px 0px 0.38vw 0px inset,
+                #d6faff66 0.27vw 0.27vw 0.70vw 0px inset,
+                #25aaff55 -0.27vw -0.27vw 1.05vw 0px inset;
 
             color: #dffaff;
             font-size: 4.23vw;
@@ -71,7 +71,7 @@
             width: 15.36vw;
             height: 15.36vw;
 
-            border: 0.27vw #65dfff77;
+            border: 0.30vw #65dfff99;
             border-radius: 8.21vw 3.18vw 8.21vw 3.18vw;
 
             overflow: hidden;
@@ -85,9 +85,9 @@
             ) border-box;
 
             box-shadow:
-                #d6faff22 0px 0px 0.27vw 0px inset,
-                #d6faff44 0.27vw 0.27vw 0.53vw 0px inset,
-                #25aaff33 -0.27vw -0.27vw 0.80vw 0px inset;
+                #d6faff44 0px 0px 0.38vw 0px inset,
+                #d6faff66 0.27vw 0.27vw 0.70vw 0px inset,
+                #25aaff55 -0.27vw -0.27vw 1.05vw 0px inset;
 
             transition:
                 width 0.8s cubic-out,
@@ -271,13 +271,13 @@
                 margin-bottom: 2.65vh;
                 padding: 3.18vh 4.23vh;
 
-                border: 0.27vh #65dfff77;
+                border: 0.30vh #65dfff99;
                 border-radius: 8.21vh 3.18vh 8.21vh 3.18vh;
 
                 box-shadow:
-                    #d6faff22 0px 0px 0.27vh 0px inset,
-                    #d6faff44 0.27vh 0.27vh 0.53vh 0px inset,
-                    #25aaff33 -0.27vh -0.27vh 0.80vh 0px inset;
+                    #d6faff44 0px 0px 0.38vh 0px inset,
+                    #d6faff66 0.27vh 0.27vh 0.70vh 0px inset,
+                    #25aaff55 -0.27vh -0.27vh 1.05vh 0px inset;
 
                 font-size: 4.23vh;
             }
@@ -290,13 +290,13 @@
                 width: 15.36vh;
                 height: 15.36vh;
 
-                border: 0.27vh #65dfff77;
+                border: 0.30vh #65dfff99;
                 border-radius: 8.21vh 3.18vh 8.21vh 3.18vh;
 
                 box-shadow:
-                    #d6faff22 0px 0px 0.27vh 0px inset,
-                    #d6faff44 0.27vh 0.27vh 0.53vh 0px inset,
-                    #25aaff33 -0.27vh -0.27vh 0.80vh 0px inset;
+                    #d6faff44 0px 0px 0.38vh 0px inset,
+                    #d6faff66 0.27vh 0.27vh 0.70vh 0px inset,
+                    #25aaff55 -0.27vh -0.27vh 1.05vh 0px inset;
             }
 
             /* WING HIT AREA */
@@ -356,6 +356,7 @@
         }
 
     </style>
+
 </head>
 
 <body>
@@ -490,6 +491,376 @@
         </div>
 
     </div>
+
+
+    <!-- CHAT INPUT LOGIC -->
+
+    <script>
+
+        var inputBar = document.GetElementById("input-bar");
+        var wingHit = document.GetElementById("wing-hit");
+        var messageInput = document.GetElementById("message-input");
+        var sendButton = document.GetElementById("send-button");
+        var chatArea = document.GetElementById("chat-area");
+
+        var editingBubble = null;
+
+        /*
+            FIRST LINE STATE
+
+            Once the first line shifts upward,
+            it stays shifted until input is cleared.
+        */
+
+        var firstLineShifted = false;
+
+
+        /* OPEN / CLOSE INPUT BAR */
+
+        wingHit.AddEventListener("click", function() {
+
+            if (inputBar.GetClassList().Contains("expanded")) {
+
+                inputBar.GetClassList().Remove("expanded");
+
+            } else {
+
+                inputBar.GetClassList().Add("expanded");
+
+                messageInput.focus();
+
+            }
+
+        });
+
+
+        /* INPUT HEIGHT AND TEXT POSITION */
+
+        function UpdateInput() {
+
+            var message = messageInput.value;
+
+            /*
+                RESPONSIVE CONTROL HEIGHT
+
+                Gets the actual rendered wing area
+                in portrait or landscape.
+            */
+
+            var controlHeight = wingHit.offsetHeight;
+
+            /*
+                Responsive vertical padding.
+
+                Top + bottom = 1.33vw / vh.
+            */
+
+            var paddingHeight =
+                controlHeight * (1.33 / 15.36);
+
+            /*
+                Responsive maximum text height.
+            */
+
+            var maxTextHeight =
+                controlHeight * (32.56 / 15.36);
+
+            var barHeight = controlHeight;
+
+
+            /* EMPTY INPUT */
+
+            if (message.length == 0) {
+
+                firstLineShifted = false;
+
+                inputBar.GetClassList().Remove("multiline");
+
+                messageInput.style.height = "";
+
+            }
+
+            else {
+
+                /*
+                    FIRST LINE DETECTION
+
+                    Compare actual content height
+                    against the visible one-line area.
+                */
+
+                if (!firstLineShifted) {
+
+                    if (
+                        messageInput.scrollHeight >
+                        messageInput.clientHeight + 1
+                    ) {
+
+                        firstLineShifted = true;
+
+                        inputBar.GetClassList().Add("multiline");
+
+                    }
+
+                }
+
+
+                /*
+                    MULTILINE INPUT
+
+                    Textarea moves upward and uses
+                    full available width.
+                */
+
+                if (firstLineShifted) {
+
+                    messageInput.style.height = "0px";
+
+                    var contentHeight =
+                        messageInput.scrollHeight;
+
+                    var newHeight = Math.min(
+                        contentHeight,
+                        maxTextHeight
+                    );
+
+                    messageInput.style.height =
+                        Math.max(
+                            0,
+                            newHeight - paddingHeight
+                        ) + "px";
+
+                    /*
+                        Text area + bottom control area.
+                    */
+
+                    barHeight =
+                        newHeight + controlHeight;
+
+                }
+
+                else {
+
+                    messageInput.style.height = "";
+
+                    barHeight = controlHeight;
+
+                }
+
+            }
+
+
+            /* INPUT BAR HEIGHT */
+
+            inputBar.style.height =
+                barHeight + "px";
+
+
+            /*
+                CHAT AREA POSITION
+
+                Original spacing is scaled
+                proportionally with the control.
+            */
+
+            chatArea.style.bottom =
+                (
+                    barHeight +
+                    controlHeight * (12.44 / 15.36)
+                ) + "px";
+
+
+            /* PULSE / ARROW STATE */
+
+            if (message.trim().length > 0) {
+
+                inputBar.GetClassList().Add("has-text");
+
+            } else {
+
+                inputBar.GetClassList().Remove("has-text");
+
+            }
+
+        }
+
+
+        /* INPUT EVENT */
+
+        messageInput.AddEventListener("input", function() {
+
+            UpdateInput();
+
+        });
+
+
+        /* LONG PRESS EDIT */
+
+        function StartEdit(bubble) {
+
+            if (!bubble || !bubble.parentNode) {
+                return;
+            }
+
+            var next = bubble.nextElementSibling;
+
+            while (next) {
+
+                var following = next.nextElementSibling;
+
+                next.remove();
+
+                next = following;
+
+            }
+
+            editingBubble = bubble;
+
+            messageInput.value = bubble.textContent;
+
+            bubble.remove();
+
+            firstLineShifted = false;
+
+            inputBar.GetClassList().Add("expanded");
+
+            UpdateInput();
+
+            messageInput.focus();
+
+        }
+
+
+        /* LONG PRESS DETECTION */
+
+        function AttachLongPress(bubble) {
+
+            var pressTimer = null;
+
+            bubble.AddEventListener("pointerdown", function(event) {
+
+                if (event.pointerType == "mouse" && event.button != 0) {
+                    return;
+                }
+
+                if (pressTimer != null) {
+
+                    clearTimeout(pressTimer);
+
+                }
+
+                pressTimer = setTimeout(function() {
+
+                    StartEdit(bubble);
+
+                    pressTimer = null;
+
+                }, 550);
+
+            });
+
+
+            function CancelPress() {
+
+                if (pressTimer != null) {
+
+                    clearTimeout(pressTimer);
+
+                    pressTimer = null;
+
+                }
+
+            }
+
+
+            bubble.AddEventListener("pointerup", CancelPress);
+
+            bubble.AddEventListener("pointercancel", CancelPress);
+
+            bubble.AddEventListener("pointerleave", CancelPress);
+
+
+            bubble.AddEventListener("contextmenu", function(event) {
+
+                event.preventDefault();
+
+            });
+
+        }
+
+
+        /* SEND MESSAGE */
+
+        function SendMessage() {
+
+            var message = messageInput.value.trim();
+
+            if (message.length == 0) {
+                return;
+            }
+
+
+            if (editingBubble != null) {
+
+                editingBubble.textContent = message;
+
+                chatArea.AppendChild(editingBubble);
+
+                editingBubble = null;
+
+            }
+
+            else {
+
+                var bubble = document.CreateElement("div");
+
+                bubble.SetClass("chat-message");
+
+                bubble.textContent = message;
+
+                AttachLongPress(bubble);
+
+                chatArea.AppendChild(bubble);
+
+            }
+
+
+            chatArea.scrollTop = chatArea.scrollHeight;
+
+            messageInput.value = "";
+
+            firstLineShifted = false;
+
+            UpdateInput();
+
+        }
+
+
+        /* SEND BUTTON */
+
+        sendButton.AddEventListener("click", function() {
+
+            SendMessage();
+
+        });
+
+
+        /*
+            ENTER BEHAVIOUR
+
+            Enter creates a new line.
+
+            No Enter-to-send handler.
+
+            The arrow button sends the message.
+        */
+
+
+        /* INITIAL CHAT POSITION */
+
+        UpdateInput();
+
+    </script>
 
 </body>
 </rml>
