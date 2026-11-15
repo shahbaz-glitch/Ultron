@@ -49,6 +49,7 @@
             ) border-box;
 
             box-shadow:
+                #d6faff22 0px 0px 0.27vw 0px inset,
                 #d6faff44 0.27vw 0.27vw 0.53vw 0px inset,
                 #25aaff33 -0.27vw -0.27vw 0.80vw 0px inset;
 
@@ -83,11 +84,10 @@
                 #5bdcff08 100%
             ) border-box;
 
-            /* CONTINUOUS INTERNAL SHADOW */
-
             box-shadow:
-                #d6faff44 0px 0px 0.53vw 0px inset,
-                #25aaff33 0px 0px 0.80vw 0px inset;
+                #d6faff22 0px 0px 0.27vw 0px inset,
+                #d6faff44 0.27vw 0.27vw 0.53vw 0px inset,
+                #25aaff33 -0.27vw -0.27vw 0.80vw 0px inset;
 
             transition:
                 width 0.8s cubic-out,
@@ -275,6 +275,7 @@
                 border-radius: 8.21vh 3.18vh 8.21vh 3.18vh;
 
                 box-shadow:
+                    #d6faff22 0px 0px 0.27vh 0px inset,
                     #d6faff44 0.27vh 0.27vh 0.53vh 0px inset,
                     #25aaff33 -0.27vh -0.27vh 0.80vh 0px inset;
 
@@ -292,11 +293,10 @@
                 border: 0.27vh #65dfff77;
                 border-radius: 8.21vh 3.18vh 8.21vh 3.18vh;
 
-                /* CONTINUOUS INTERNAL SHADOW */
-
                 box-shadow:
-                    #d6faff44 0px 0px 0.53vh 0px inset,
-                    #25aaff33 0px 0px 0.80vh 0px inset;
+                    #d6faff22 0px 0px 0.27vh 0px inset,
+                    #d6faff44 0.27vh 0.27vh 0.53vh 0px inset,
+                    #25aaff33 -0.27vh -0.27vh 0.80vh 0px inset;
             }
 
             /* WING HIT AREA */
@@ -356,7 +356,6 @@
         }
 
     </style>
-
 </head>
 
 <body>
