@@ -1,5 +1,6 @@
 
 <rml>
+
 <head>
     <title>Obsidian Wing Chat</title>
 
@@ -84,13 +85,11 @@
             ) border-box;
 
             box-shadow:
-                #65dfff33 0px 0px 0.80vw 0.20vw,
                 #d6faff44 0.25vw 0.25vw 0.49vw 0px inset,
                 #25aaff33 -0.25vw -0.25vw 0.74vw 0px inset;
 
             transition:
                 width 0.8s cubic-out,
-                height 0.22s linear-in-out,
                 border-radius 0.7s linear-in-out;
         }
 
@@ -186,7 +185,7 @@
         #input-bar.multiline #message-input {
             left: 4.17vw;
             right: 2.45vw;
-            top: 0px;
+            top: 1.5vw;
 
             width: auto;
             margin-top: 0px;
@@ -293,7 +292,6 @@
                 border-radius: 7.60vh 2.94vh 7.60vh 2.94vh;
 
                 box-shadow:
-                    #65dfff33 0px 0px 0.80vh 0.20vh,
                     #d6faff44 0.25vh 0.25vh 0.49vh 0px inset,
                     #25aaff33 -0.25vh -0.25vh 0.74vh 0px inset;
             }
@@ -336,7 +334,7 @@
             #input-bar.multiline #message-input {
                 left: 4.17vh;
                 right: 2.45vh;
-                top: 0px;
+                top: 1.5vh;
 
                 margin-top: 0px;
                 padding: 0.74vh 0px 0.49vh 0px;
@@ -492,4 +490,5 @@
     </div>
 
 </body>
+
 </rml>
