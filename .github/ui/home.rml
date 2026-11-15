@@ -84,7 +84,7 @@
             ) border-box;
 
             box-shadow:
-                #65dfff33 0px 0px 0.80vw 0.24vw,
+                #65dfff33 0px 0px 0.80vw 0.20vw,
                 #d6faff44 0.25vw 0.25vw 0.49vw 0px inset,
                 #25aaff33 -0.25vw -0.25vw 0.74vw 0px inset;
 
@@ -174,7 +174,14 @@
             opacity: 1;
         }
 
-        /* FIRST LINE SHIFT */
+        /*
+            FIRST LINE SHIFT
+
+            First line starts after the wing.
+
+            Once wrapping begins, the textarea
+            moves upward and uses full available width.
+        */
 
         #input-bar.multiline #message-input {
             left: 4.17vw;
@@ -286,7 +293,7 @@
                 border-radius: 7.60vh 2.94vh 7.60vh 2.94vh;
 
                 box-shadow:
-                    #65dfff33 0px 0px 0.80vh 0.24vh,
+                    #65dfff33 0px 0px 0.80vh 0.20vh,
                     #d6faff44 0.25vh 0.25vh 0.49vh 0px inset,
                     #25aaff33 -0.25vh -0.25vh 0.74vh 0px inset;
             }
