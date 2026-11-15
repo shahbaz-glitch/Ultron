@@ -84,7 +84,7 @@
             ) border-box;
 
             box-shadow:
-                #65dfff33 0px 0px 0.80vw 0.12vw,
+                #65dfff33 0px 0px 0.80vw 0.20vw,
                 #d6faff44 0.25vw 0.25vw 0.49vw 0px inset,
                 #25aaff33 -0.25vw -0.25vw 0.74vw 0px inset;
 
@@ -286,7 +286,7 @@
                 border-radius: 7.60vh 2.94vh 7.60vh 2.94vh;
 
                 box-shadow:
-                    #65dfff33 0px 0px 0.80vh 0.12vh,
+                    #65dfff33 0px 0px 0.80vh 0.20vh,
                     #d6faff44 0.25vh 0.25vh 0.49vh 0px inset,
                     #25aaff33 -0.25vh -0.25vh 0.74vh 0px inset;
             }
