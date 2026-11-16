@@ -1,4 +1,3 @@
-
 #include "ultron_api.h"
 
 #include <RmlUi/Core/Element.h>
@@ -8,8 +7,8 @@
 #include <RmlUi/Core/Elements/ElementFormControlTextArea.h>
 
 #include <algorithm>
-#include <cmath>
 #include <cctype>
+#include <cmath>
 #include <string>
 
 namespace
@@ -21,19 +20,21 @@ constexpr char kWingHitId[] = "wing-hit";
 constexpr char kInputId[] = "message-input";
 constexpr char kChatId[] = "chat-area";
 
+// Responsive design units from the existing portrait/landscape RML.
 constexpr float kControlUnits = 14.22f;
+constexpr float kInitialRightUnits = 12.99f;
 constexpr float kArrowSafetyUnits = 3.43f;
 constexpr float kExtraGapUnits = 1.5f;
-
+constexpr float kInputPaddingUnits = 1.23f;
+constexpr float kMaximumTextUnits = 30.15f;
+constexpr float kMaximumInputUnits = 28.92f;
 
 struct InputState
 {
     Rml::ElementDocument* document = nullptr;
-
     Rml::Element* bar = nullptr;
     Rml::Element* wing_hit = nullptr;
     Rml::Element* chat = nullptr;
-
     Rml::ElementFormControlTextArea* input = nullptr;
 
     bool first_line_shifted = false;
@@ -43,10 +44,10 @@ struct InputState
 
     float applied_control_height = -1.0f;
     float applied_input_height = -1.0f;
+    float applied_input_right = -1.0f;
     float applied_bar_height = -1.0f;
     float applied_chat_bottom = -1.0f;
 };
-
 
 InputState& State()
 {
@@ -54,18 +55,16 @@ InputState& State()
     return state;
 }
 
-
-/* ---------------------------------------------------------
-   ELEMENT BINDING
---------------------------------------------------------- */
+// -------------------------------------------------------------
+// Element binding
+// -------------------------------------------------------------
 
 bool BindElements(Rml::Element* source)
 {
     if (!source)
         return false;
 
-    Rml::ElementDocument* document =
-        source->GetOwnerDocument();
+    Rml::ElementDocument* document = source->GetOwnerDocument();
 
     if (!document)
         return false;
@@ -77,38 +76,31 @@ bool BindElements(Rml::Element* source)
         const bool pending = state.update_queued;
 
         state = InputState{};
-
         state.document = document;
         state.update_queued = pending;
     }
 
-    state.bar =
-        document->GetElementById(kBarId);
+    state.bar = document->GetElementById(kBarId);
+    state.wing_hit = document->GetElementById(kWingHitId);
+    state.chat = document->GetElementById(kChatId);
 
-    state.wing_hit =
-        document->GetElementById(kWingHitId);
-
-    state.chat =
-        document->GetElementById(kChatId);
-
-    Rml::Element* input =
-        document->GetElementById(kInputId);
+    Rml::Element* input = document->GetElementById(kInputId);
 
     state.input =
         input && input->GetTagName() == "textarea"
         ? static_cast<Rml::ElementFormControlTextArea*>(input)
         : nullptr;
 
-    return state.bar &&
-           state.wing_hit &&
-           state.chat &&
-           state.input;
+    return
+        state.bar &&
+        state.wing_hit &&
+        state.chat &&
+        state.input;
 }
 
-
-/* ---------------------------------------------------------
-   INTERNAL TEXT ELEMENT
---------------------------------------------------------- */
+// -------------------------------------------------------------
+// RmlUi textarea text element
+// -------------------------------------------------------------
 
 Rml::ElementText* GetTextElement(
     Rml::ElementFormControlTextArea* input)
@@ -116,9 +108,7 @@ Rml::ElementText* GetTextElement(
     if (!input || input->GetNumChildren(true) < 1)
         return nullptr;
 
-    // RmlUi 6.3 creates its primary textarea
-    // ElementText as the first internal child.
-
+    // RmlUi 6.3 stores the primary text widget at child zero.
     Rml::Element* child = input->GetChild(0);
 
     if (!child || child->GetTagName() != "#text")
@@ -127,10 +117,9 @@ Rml::ElementText* GetTextElement(
     return static_cast<Rml::ElementText*>(child);
 }
 
-
-/* ---------------------------------------------------------
-   TEXT STATE
---------------------------------------------------------- */
+// -------------------------------------------------------------
+// Text state
+// -------------------------------------------------------------
 
 bool HasVisibleText(const Rml::String& value)
 {
@@ -143,41 +132,31 @@ bool HasVisibleText(const Rml::String& value)
         });
 }
 
-
-/* ---------------------------------------------------------
-   CLASS API
---------------------------------------------------------- */
+// -------------------------------------------------------------
+// UI helpers
+// -------------------------------------------------------------
 
 void SetClass(
     Rml::Element* element,
-    const char* id,
-    const char* name,
+    const char* element_id,
+    const char* class_name,
     bool enabled)
 {
-    if (element && element->IsClassSet(name) != enabled)
+    if (element && element->IsClassSet(class_name) != enabled)
     {
         Ultron_SetElementClass(
-            id,
-            name,
+            element_id,
+            class_name,
             enabled);
     }
 }
 
-
-/* ---------------------------------------------------------
-   PIXEL VALUE
---------------------------------------------------------- */
-
 std::string Pixels(float value)
 {
-    return std::to_string(
-        std::max(value, 0.0f)) + "px";
+    return
+        std::to_string(std::max(value, 0.0f))
+        + "px";
 }
-
-
-/* ---------------------------------------------------------
-   AVOID UNNECESSARY PROPERTY UPDATES
---------------------------------------------------------- */
 
 bool SetPixelPropertyIfChanged(
     const char* element_id,
@@ -202,10 +181,8 @@ bool SetPixelPropertyIfChanged(
     }
 
     cached_value = value;
-
     return true;
 }
-
 
 void InvalidateAppliedSize(InputState& state)
 {
@@ -213,20 +190,20 @@ void InvalidateAppliedSize(InputState& state)
 
     state.applied_control_height = -1.0f;
     state.applied_input_height = -1.0f;
+    state.applied_input_right = -1.0f;
     state.applied_bar_height = -1.0f;
     state.applied_chat_bottom = -1.0f;
 }
 
-
-/* ---------------------------------------------------------
-   COALESCED UI TASK
---------------------------------------------------------- */
+// -------------------------------------------------------------
+// UI task scheduling
+// -------------------------------------------------------------
 
 void UpdateInputOnUI(void* user_data);
 
-
 void QueueInputUpdate(InputState& state)
 {
+    // Coalesce multiple text changes into one UI update.
     if (state.update_queued)
         return;
 
@@ -240,13 +217,25 @@ void QueueInputUpdate(InputState& state)
     }
 }
 
-
-/* ---------------------------------------------------------
-   RESET MULTILINE
---------------------------------------------------------- */
+// -------------------------------------------------------------
+// Reset
+// -------------------------------------------------------------
 
 void ResetMultiline(InputState& state)
 {
+    const bool needs_reset =
+        state.first_line_shifted ||
+        state.bar->IsClassSet("multiline") ||
+        state.bar->IsClassSet("has-text") ||
+        state.applied_line_count >= 0 ||
+        state.applied_input_height >= 0.0f ||
+        state.applied_input_right >= 0.0f ||
+        state.applied_bar_height >= 0.0f ||
+        state.applied_chat_bottom >= 0.0f;
+
+    if (!needs_reset)
+        return;
+
     state.first_line_shifted = false;
 
     SetClass(
@@ -261,17 +250,19 @@ void ResetMultiline(InputState& state)
         "has-text",
         false);
 
+    // Restore original responsive RML properties.
     state.input->RemoveProperty("height");
+    state.input->RemoveProperty("right");
+
     state.bar->RemoveProperty("height");
     state.chat->RemoveProperty("bottom");
 
     InvalidateAppliedSize(state);
 }
 
-
-/* ---------------------------------------------------------
-   FIRST-LINE ARROW SAFETY DETECTION
---------------------------------------------------------- */
+// -------------------------------------------------------------
+// First-line detection
+// -------------------------------------------------------------
 
 bool FirstLineNearArrow(
     InputState& state,
@@ -281,65 +272,36 @@ bool FirstLineNearArrow(
     const float scale =
         control_height / kControlUnits;
 
-    /*
-        Use the textarea's actual available content width.
-        This avoids measuring the wider parent panel instead.
-    */
+    // Matches RmlUi 6.3 WidgetTextInput::GetAvailableWidth().
+    const float available_width =
+        state.input->GetClientWidth()
+        - state.input->GetBox()
+              .GetFrameSize(Rml::BoxArea::Padding).x;
 
-    const float input_padding_x =
-        state.input->GetBox()
-            .GetFrameSize(Rml::BoxArea::Padding).x;
-
-    const float initial_width =
-        state.input->GetClientWidth() -
-        input_padding_x;
-
-    if (initial_width <= 1.0f)
+    if (available_width <= 1.0f)
         return false;
 
-
-    /*
-        Already wrapped by RmlUi, including
-        manually entered line breaks.
-    */
-
+    // Explicit Enter or natural wrapping also activates multiline.
     if (text_element->GetLines().size() > 1)
         return true;
 
-
-    /*
-        Reserve the space between:
-
-        Textarea right = 12.99vw / vh
-
-        Arrow left = 2.45 + 7.11
-                   = 9.56vw / vh
-
-        Safety gap = 3.43vw / vh
-    */
-
-    const float arrow_safety =
-        scale * kArrowSafetyUnits;
-
+    // Keep enough room before the send-arrow region.
     const float cursor_width = std::round(
         Rml::ElementUtilities::
             GetDensityIndependentPixelRatio(text_element));
 
     const float safe_line_width = std::max(
         1.0f,
-        initial_width - arrow_safety - cursor_width);
-
-
-    /*
-        Use RmlUi's own word-wrapping algorithm.
-        No manual character-width estimation.
-    */
+        available_width
+            - scale * kArrowSafetyUnits
+            - cursor_width);
 
     Rml::String first_line;
 
     int consumed = 0;
     float rendered_width = 0.0f;
 
+    // Use the same line-generation mechanism as RmlUi.
     const bool all_text_fits_first_line =
         text_element->GenerateLine(
             first_line,
@@ -355,46 +317,38 @@ bool FirstLineNearArrow(
     return !all_text_fits_first_line;
 }
 
-
-/* ---------------------------------------------------------
-   STABLE MULTILINE HEIGHT
---------------------------------------------------------- */
+// -------------------------------------------------------------
+// Multiline geometry
+// -------------------------------------------------------------
 
 void ApplyMultilineSize(
     InputState& state,
-    Rml::ElementText* text_element,
+    int line_count,
     float control_height)
 {
-    /*
-        Use the actual formatted RmlUi lines.
-        Do not estimate lines independently.
-    */
+    line_count = std::max(line_count, 1);
 
-    const int line_count = std::max(
-        1,
-        static_cast<int>(
-            text_element->GetLines().size()));
-
+    const float scale =
+        control_height / kControlUnits;
 
     const float line_height =
         std::round(state.input->GetLineHeight());
 
+    if (line_height <= 0.0f)
+        return;
+
     const float padding_height =
-        control_height * (1.23f / kControlUnits);
+        scale * kInputPaddingUnits;
 
     const float maximum_text_height =
-        control_height * (30.15f / kControlUnits);
+        scale * kMaximumTextUnits;
 
     const float extra_gap =
-        control_height * (kExtraGapUnits / kControlUnits);
-
-
-    /* Natural multiline height */
+        scale * kExtraGapUnits;
 
     const float natural_text_height =
-        static_cast<float>(line_count) *
-        line_height +
-        padding_height;
+        static_cast<float>(line_count) * line_height
+        + padding_height;
 
     const float text_height =
         std::min(
@@ -402,60 +356,51 @@ void ApplyMultilineSize(
             maximum_text_height);
 
     const float input_height =
-        std::max(
-            0.0f,
-            text_height - padding_height);
-
-
-    /* Panel height */
+        std::min(
+            std::max(
+                0.0f,
+                text_height - padding_height),
+            scale * kMaximumInputUnits);
 
     const float bar_height =
-        text_height +
-        control_height +
-        extra_gap;
-
-
-    /* Chat area position */
+        text_height + control_height + extra_gap;
 
     const float chat_bottom =
-        bar_height +
-        control_height * (11.52f / kControlUnits);
+        bar_height + scale * 11.52f;
 
+    const float input_right =
+        scale * kInitialRightUnits;
 
-    /*
-        CRITICAL:
-
-        When the current line count and dimensions
-        have not changed, do absolutely nothing.
-
-        This prevents unnecessary textarea relayout,
-        panel flicker and caret repositioning.
-    */
-
+    // Nothing changes when the rendered geometry is unchanged.
     if (line_count == state.applied_line_count &&
         state.applied_control_height >= 0.0f &&
         std::fabs(
-            control_height -
-            state.applied_control_height) < 0.5f &&
-
+            control_height - state.applied_control_height) < 0.5f &&
         state.applied_input_height >= 0.0f &&
         std::fabs(
-            input_height -
-            state.applied_input_height) < 0.5f &&
-
+            input_height - state.applied_input_height) < 0.5f &&
+        state.applied_input_right >= 0.0f &&
+        std::fabs(
+            input_right - state.applied_input_right) < 0.5f &&
         state.applied_bar_height >= 0.0f &&
         std::fabs(
-            bar_height -
-            state.applied_bar_height) < 0.5f &&
-
+            bar_height - state.applied_bar_height) < 0.5f &&
         state.applied_chat_bottom >= 0.0f &&
         std::fabs(
-            chat_bottom -
-            state.applied_chat_bottom) < 0.5f)
+            chat_bottom - state.applied_chat_bottom) < 0.5f)
     {
         return;
     }
 
+    // Important:
+    // Multiline RML uses right: 2.45vw/vh, which overlaps the send arrow.
+    // Override it with the original safe right boundary: 12.99vw/vh.
+    const bool right_ok =
+        SetPixelPropertyIfChanged(
+            kInputId,
+            "right",
+            input_right,
+            state.applied_input_right);
 
     const bool input_ok =
         SetPixelPropertyIfChanged(
@@ -478,20 +423,19 @@ void ApplyMultilineSize(
             chat_bottom,
             state.applied_chat_bottom);
 
-
-    if (input_ok && bar_ok && chat_ok)
+    if (right_ok &&
+        input_ok &&
+        bar_ok &&
+        chat_ok)
     {
         state.applied_line_count = line_count;
-
-        state.applied_control_height =
-            control_height;
+        state.applied_control_height = control_height;
     }
 }
 
-
-/* ---------------------------------------------------------
-   INPUT UPDATE
---------------------------------------------------------- */
+// -------------------------------------------------------------
+// Input update
+// -------------------------------------------------------------
 
 void UpdateInputOnUI(void* user_data)
 {
@@ -511,28 +455,24 @@ void UpdateInputOnUI(void* user_data)
         return;
     }
 
-
     const Rml::String value =
         state->input->GetValue();
 
-
-    /* Pulse -> Arrow */
+    const bool has_text =
+        HasVisibleText(value);
 
     SetClass(
         state->bar,
         kBarId,
         "has-text",
-        HasVisibleText(value));
+        has_text);
 
-
-    /* Empty input */
-
-    if (value.empty())
+    // Empty and whitespace-only values reset multiline state.
+    if (!has_text)
     {
         ResetMultiline(*state);
         return;
     }
-
 
     Rml::ElementText* text_element =
         GetTextElement(state->input);
@@ -540,16 +480,13 @@ void UpdateInputOnUI(void* user_data)
     if (!text_element)
         return;
 
-
     const float control_height =
         state->wing_hit->GetOffsetHeight();
 
     if (control_height <= 0.0f)
         return;
 
-
-    /* FIRST-LINE SHIFT */
-
+    // First transition into multiline mode.
     if (!state->first_line_shifted)
     {
         if (!FirstLineNearArrow(
@@ -560,17 +497,9 @@ void UpdateInputOnUI(void* user_data)
             return;
         }
 
-
         state->first_line_shifted = true;
 
         InvalidateAppliedSize(*state);
-
-
-        /*
-            Switch textarea to full-width position.
-
-            This happens only once until input is empty.
-        */
 
         SetClass(
             state->bar,
@@ -578,36 +507,38 @@ void UpdateInputOnUI(void* user_data)
             "multiline",
             true);
 
+        // Critical fix:
+        // Expand the panel for line one in this same update.
+        // The textarea must never move upward before its panel grows.
+        ApplyMultilineSize(
+            *state,
+            1,
+            control_height);
 
-        /*
-            IMPORTANT:
-
-            Do not measure the new layout here.
-
-            The multiline class has just changed.
-            RmlUi must complete its next layout pass first.
-
-            Queue another UI pass for accurate line count.
-        */
-
+        // Multiline class changes the textarea width.
+        // RmlUi applies that layout in the next Context::Update().
+        // Ultron snapshots its task queue, so this follow-up executes
+        // on the next frame and reads the newly formatted line layout.
         QueueInputUpdate(*state);
 
         return;
     }
 
-
-    /* FULL-WIDTH MULTILINE SIZE */
+    // RmlUi has already formatted the text for this change.
+    const int rendered_line_count = std::max(
+        1,
+        static_cast<int>(
+            text_element->GetLines().size()));
 
     ApplyMultilineSize(
         *state,
-        text_element,
+        rendered_line_count,
         control_height);
 }
 
-
-/* ---------------------------------------------------------
-   SINGLE RML EVENT HANDLER
---------------------------------------------------------- */
+// -------------------------------------------------------------
+// RmlUi events
+// -------------------------------------------------------------
 
 bool HandleRmlEvent(
     Rml::Event* event,
@@ -622,9 +553,7 @@ bool HandleRmlEvent(
     if (!target)
         return false;
 
-
-    /* WING CLICK */
-
+    // Wing click: preserve existing expand/collapse behaviour.
     if (event->GetType() == "click" &&
         target->GetId() == kWingHitId)
     {
@@ -647,45 +576,41 @@ bool HandleRmlEvent(
         return false;
     }
 
-
-    /* TEXTAREA CHANGE */
-
+    // Text changes.
     if (event->GetType() == "change" &&
         target->GetId() == kInputId)
     {
-        if (!BindElements(target))
-            return false;
-
         InputState& state = State();
 
-        const Rml::String value =
-            state.input->GetValue();
+        // Avoid repeated document lookups on every keystroke.
+        if (!state.input ||
+            state.input != target ||
+            state.document != target->GetOwnerDocument())
+        {
+            if (!BindElements(target))
+                return false;
+        }
 
+        const bool has_text =
+            HasVisibleText(state.input->GetValue());
 
-        /*
-            Pulse/arrow updates immediately.
-
-            Geometry updates are deferred because
-            RmlUi completes textarea formatting
-            after dispatching the change event.
-        */
-
+        // Pulse -> arrow remains immediate.
         SetClass(
             state.bar,
             kBarId,
             "has-text",
-            HasVisibleText(value));
+            has_text);
 
+        // Geometry is coalesced into one UI task.
         QueueInputUpdate(state);
     }
 
     return false;
 }
 
-
-/* ---------------------------------------------------------
-   AUTOMATIC MODULE REGISTRATION
---------------------------------------------------------- */
+// -------------------------------------------------------------
+// Automatic module registration
+// -------------------------------------------------------------
 
 bool RegisterObsidianWingChat()
 {
@@ -703,7 +628,6 @@ bool RegisterObsidianWingChat()
 
     return click_registered && change_registered;
 }
-
 
 [[maybe_unused]]
 const bool g_registered =
