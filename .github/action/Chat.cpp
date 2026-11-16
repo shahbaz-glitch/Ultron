@@ -1,4 +1,3 @@
-
 #include "ultron_api.h"
 
 #include <RmlUi/Core/Element.h>
@@ -6,6 +5,7 @@
 #include <RmlUi/Core/ElementText.h>
 #include <RmlUi/Core/ElementUtilities.h>
 #include <RmlUi/Core/Elements/ElementFormControlTextArea.h>
+#include <RmlUi/Core/Log.h>
 
 #include <algorithm>
 #include <cctype>
@@ -110,13 +110,24 @@ bool BindElements(Rml::Element* source)
         Fill each line to its available width.
         RmlUi supports break-all as an inherited
         word-break property.
+
+        If the RmlUi build rejects the property, lines
+        wrap at word boundaries and leave gaps on the
+        right, so make that visible in the log.
     */
 
     if (!state.word_break_configured)
     {
-        state.input->SetProperty(
-            "word-break",
-            "break-all");
+        if (!state.input->SetProperty(
+                "word-break",
+                "break-all"))
+        {
+            Rml::Log::Message(
+                Rml::Log::LT_WARNING,
+                "ObsidianWingChat: 'word-break: break-all' "
+                "was rejected; lines will wrap at word "
+                "boundaries.");
+        }
 
         state.word_break_configured = true;
     }
@@ -240,6 +251,38 @@ bool IsFirstLineReadyToShift(
 
 
 /* ---------------------------------------------------------
+   NATIVE WRAP DETECTION (single-line layout)
+
+   Our width estimate and the real textarea width can
+   differ. If RmlUi has already wrapped the text into a
+   second row in the one-row box, the content is taller
+   than the box. Shift right now instead of waiting for
+   our own estimate to agree.
+--------------------------------------------------------- */
+
+bool HasNativeWrapped(InputState& state)
+{
+    const float line_height =
+        state.input->GetLineHeight();
+
+    if (line_height <= 0.0f)
+        return false;
+
+    // Read client height first: it brings layout up to date.
+    const float client_height =
+        state.input->GetClientHeight();
+
+    // Box still collapsed / animating open: do not guess.
+    if (client_height < line_height * 0.9f)
+        return false;
+
+    return state.input->GetScrollHeight() -
+               client_height >=
+           line_height * 0.75f;
+}
+
+
+/* ---------------------------------------------------------
    RMLUI-NATIVE LINE COUNT
 
    Uses GenerateLine() and RmlUi's own
@@ -347,6 +390,47 @@ int CountWrappedLines(
 
 
 /* ---------------------------------------------------------
+   NATIVE ROW REQUIREMENT (multiline layout)
+
+   If the content is taller than the box, our estimate
+   under-counted. Return how many rows the native layout
+   really needs so the panel is never shorter than the
+   text (that is what pushed the first row out of view).
+
+   Measured as "is something clipped right now", so it
+   cannot feed back on itself: once the box is tall
+   enough this returns 1.
+--------------------------------------------------------- */
+
+int GetNativeRequiredRows(InputState& state)
+{
+    const float line_height =
+        state.input->GetLineHeight();
+
+    if (line_height <= 0.0f)
+        return 1;
+
+    // Read client height first: it brings layout up to date.
+    const float client_height =
+        state.input->GetClientHeight();
+
+    const float scroll_height =
+        state.input->GetScrollHeight();
+
+    if (scroll_height - client_height <
+        line_height * 0.5f)
+    {
+        return 1;
+    }
+
+    return std::max(
+        1,
+        static_cast<int>(
+            std::floor(scroll_height / line_height + 0.5f)));
+}
+
+
+/* ---------------------------------------------------------
    RESPONSIVE TEXT WIDTH
 --------------------------------------------------------- */
 
@@ -372,14 +456,90 @@ float GetTextWidth(
 
 
 /* ---------------------------------------------------------
+   SCROLL SYNC
+
+   RmlUi wraps and scrolls the textarea BEFORE our change
+   handler can grow the panel. For a moment the box is one
+   row too short, RmlUi scrolls the caret row into view
+   and the offset stays stale after the box grows. That is
+   what hid the first row and made text look inserted in
+   the middle.
+
+   force_top : single known-good state, go to the top.
+   follow_end: forward typing, keep the last row in view
+               one whole row at a time.
+--------------------------------------------------------- */
+
+void SyncScroll(
+    InputState& state,
+    bool force_top,
+    bool follow_end)
+{
+    Rml::Element* input = state.input;
+
+    if (force_top)
+    {
+        input->SetScrollTop(0.0f);
+        return;
+    }
+
+    const float line_height = input->GetLineHeight();
+
+    if (line_height <= 0.0f)
+        return;
+
+    // Read client height first: it brings layout up to date.
+    const float client_height =
+        input->GetClientHeight();
+
+    const float scroll_height =
+        input->GetScrollHeight();
+
+    const int hidden_rows = std::max(
+        0,
+        static_cast<int>(
+            std::floor(
+                (scroll_height - client_height) /
+                    line_height +
+                0.5f)));
+
+    const float current_top = input->GetScrollTop();
+
+    // Everything fits: nothing may stay scrolled away.
+    if (hidden_rows == 0)
+    {
+        if (current_top > kGeometryEpsilon)
+            input->SetScrollTop(0.0f);
+
+        return;
+    }
+
+    // Overflow (max height reached): follow the typing
+    // position in whole-row steps.
+    if (follow_end)
+    {
+        const float target =
+            static_cast<float>(hidden_rows) * line_height;
+
+        if (std::fabs(current_top - target) >
+            kGeometryEpsilon)
+        {
+            input->SetScrollTop(target);
+        }
+    }
+}
+
+
+/* ---------------------------------------------------------
    RESET MULTILINE
+
+   Always a full reset. Nothing here depends on what the
+   previous state was, and the scroll offset is cleared as
+   well so old content can never stay scrolled/painted.
 --------------------------------------------------------- */
 
 void ResetMultiline(InputState& state)
 {
-    const bool was_multiline =
-        state.first_line_shifted;
-
     state.first_line_shifted = false;
 
     state.last_line_count = 0;
@@ -398,26 +558,27 @@ void ResetMultiline(InputState& state)
         RmlUi owns the active deletion operation.
     */
 
-    if (was_multiline)
-    {
-        SetClass(
-            state.bar,
-            kBarId,
-            "multiline",
-            false);
+    SetClass(
+        state.bar,
+        kBarId,
+        "multiline",
+        false);
 
-        state.input->RemoveProperty("height");
-        state.bar->RemoveProperty("height");
-        state.chat->RemoveProperty("bottom");
-    }
+    state.input->RemoveProperty("height");
+    state.bar->RemoveProperty("height");
+    state.chat->RemoveProperty("bottom");
+
+    state.input->SetScrollTop(0.0f);
+    state.input->SetScrollLeft(0.0f);
 }
 
 
 /* ---------------------------------------------------------
    APPLY MULTILINE GEOMETRY
 
-   Only actual wrapped lines are counted.
-   No artificial extra row is reserved.
+   The visible height is always a whole number of rows, so
+   once the maximum is reached the text scrolls one row at
+   a time instead of jumping by a fraction of a row.
 --------------------------------------------------------- */
 
 void ApplyMultilineLayout(
@@ -441,21 +602,24 @@ void ApplyMultilineLayout(
     if (line_height <= 0.0f)
         return;
 
-    const float natural_text_height =
-        static_cast<float>(line_count) *
-        line_height +
-        padding_height;
+    // How many whole rows fit into the responsive max height.
+    const int maximum_rows = std::max(
+        1,
+        static_cast<int>(
+            std::floor(
+                (maximum_text_height - padding_height) /
+                    line_height +
+                0.05f)));
 
-    // Respect the existing responsive max-height.
-    const float text_height =
-        std::min(
-            natural_text_height,
-            maximum_text_height);
+    const int visible_rows = std::min(
+        std::max(line_count, 1),
+        maximum_rows);
 
     const float input_content_height =
-        std::max(
-            0.0f,
-            text_height - padding_height);
+        static_cast<float>(visible_rows) * line_height;
+
+    const float text_height =
+        input_content_height + padding_height;
 
     const float bar_height =
         text_height +
@@ -524,6 +688,7 @@ void ApplyMultilineLayout(
    1. Arrow state
    2. First-line shift
    3. Full-width multiline layout
+   4. Scroll sync
 --------------------------------------------------------- */
 
 void UpdateInput(InputState& state)
@@ -584,10 +749,17 @@ void UpdateInput(InputState& state)
                 kFirstLeft,
                 kFirstRight);
 
-        if (!IsFirstLineReadyToShift(
+        const bool reached_width =
+            IsFirstLineReadyToShift(
                 text_element,
                 first_line_width,
-                cursor_width))
+                cursor_width);
+
+        // RmlUi may already have wrapped before our estimate did.
+        const bool already_wrapped =
+            !reached_width && HasNativeWrapped(state);
+
+        if (!reached_width && !already_wrapped)
         {
             state.last_value = value;
             return;
@@ -606,39 +778,31 @@ void UpdateInput(InputState& state)
 
     /* FULL-WIDTH MULTILINE */
 
-    const float full_width =
+    const float estimated_width =
         GetTextWidth(
             state,
             control_height,
             kMultilineLeft,
             kMultilineRight);
 
-    int line_count = 1;
+    float full_width = estimated_width;
 
     /*
-        The first existing row fits in the wider area after
-        automatic shift. Count explicit user newlines immediately.
+        On the shift frame the new class is not laid out yet,
+        so the designed width is the right one. Afterwards the
+        real textarea width is available: never assume more
+        room than the textarea really has.
     */
 
-    if (!just_shifted ||
-        value.find('\n') != Rml::String::npos)
+    if (!just_shifted)
     {
-        line_count = CountWrappedLines(
-            text_element,
-            full_width,
-            cursor_width);
-    }
+        const float real_width =
+            state.input->GetBox()
+                .GetSize(Rml::BoxArea::Content).x;
 
-    // Do not collapse during ordinary forward typing.
-    if (IsAppendOnly(state.last_value, value))
-    {
-        line_count = std::max(
-            line_count,
-            state.last_line_count);
+        if (real_width > 1.0f)
+            full_width = std::min(estimated_width, real_width);
     }
-
-    const bool line_count_changed =
-        line_count != state.last_line_count;
 
     const bool responsive_size_changed =
         std::fabs(
@@ -648,6 +812,33 @@ void UpdateInput(InputState& state)
         std::fabs(
             full_width -
             state.last_panel_width) > kGeometryEpsilon;
+
+    int line_count = CountWrappedLines(
+        text_element,
+        full_width,
+        cursor_width);
+
+    // After the shift frame also respect what RmlUi really laid out.
+    if (!just_shifted)
+    {
+        line_count = std::max(
+            line_count,
+            GetNativeRequiredRows(state));
+    }
+
+    const bool append_only =
+        IsAppendOnly(state.last_value, value);
+
+    // Do not collapse during ordinary forward typing.
+    if (append_only && !responsive_size_changed)
+    {
+        line_count = std::max(
+            line_count,
+            state.last_line_count);
+    }
+
+    const bool line_count_changed =
+        line_count != state.last_line_count;
 
     if (just_shifted ||
         line_count_changed ||
@@ -660,6 +851,13 @@ void UpdateInput(InputState& state)
             full_width);
     }
 
+    // Shift frame with a single row: layout is still settling,
+    // the only correct offset is the top.
+    SyncScroll(
+        state,
+        just_shifted && line_count == 1,
+        append_only);
+
     state.last_value = value;
 }
 
@@ -667,8 +865,9 @@ void UpdateInput(InputState& state)
 /* ---------------------------------------------------------
    SINGLE RML EVENT HANDLER
 
-   click  = Wing expand/collapse
-   change = Textarea updates
+   click         = Wing expand/collapse
+   change        = Textarea updates
+   transitionend = re-sync scroll after an animated resize
 --------------------------------------------------------- */
 
 bool HandleRmlEvent(
@@ -722,6 +921,29 @@ bool HandleRmlEvent(
         return false;
     }
 
+
+    /* ANIMATED RESIZE FINISHED */
+
+    if (event->GetType() == "transitionend")
+    {
+        const Rml::String& id = target->GetId();
+
+        if (id == kInputId ||
+            id == kBarId ||
+            id == kChatId)
+        {
+            if (BindElements(target))
+            {
+                InputState& state = State();
+
+                if (state.first_line_shifted)
+                    SyncScroll(state, false, false);
+            }
+        }
+
+        return false;
+    }
+
     return false;
 }
 
@@ -743,6 +965,16 @@ bool RegisterObsidianWingChat()
             kModuleName,
             "change",
             &HandleRmlEvent);
+
+    /*
+        Best effort only: the module works without it, so the
+        result does not affect registration success.
+    */
+
+    (void)Ultron_RegisterRmlEventHandler(
+        kModuleName,
+        "transitionend",
+        &HandleRmlEvent);
 
     return click_registered && change_registered;
 }
