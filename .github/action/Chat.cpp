@@ -1,4 +1,3 @@
-
 #include "ultron_api.h"
 
 #include <RmlUi/Core/Element.h>
@@ -32,6 +31,13 @@ constexpr float kMultilineRight = 2.45f;
 
 constexpr float kExtraGap = 1.5f;
 constexpr float kGeometryEpsilon = 0.5f;
+
+// First-line shift threshold.
+constexpr float kFirstLineSafetyRatio = 0.025f;
+constexpr float kFirstLineSafetyCursorMultiplier = 2.0f;
+
+// One visual row of extra space.
+constexpr int kVisibleLineBuffer = 1;
 
 
 /* ---------------------------------------------------------
@@ -161,6 +167,54 @@ bool IsAppendOnly(
                previous.begin(),
                previous.end(),
                current.begin());
+}
+
+
+/* ---------------------------------------------------------
+   FIRST-LINE SHIFT THRESHOLD
+
+   Measures actual text width instead of relying on an early
+   GenerateLine() word-wrap result.
+--------------------------------------------------------- */
+
+bool IsFirstLineReadyToShift(
+    Rml::ElementText* text_element,
+    float available_width,
+    float cursor_width)
+{
+    if (!text_element || available_width <= 0.0f)
+        return false;
+
+    const Rml::String& text = text_element->GetText();
+
+    if (text.empty())
+        return false;
+
+    // An explicit newline means the user has started another row.
+    const size_t newline = text.find('\n');
+
+    if (newline != Rml::String::npos)
+        return true;
+
+    const Rml::StringView first_line(
+        text,
+        0,
+        text.size());
+
+    const float occupied_width = static_cast<float>(
+        Rml::ElementUtilities::GetStringWidth(
+            text_element,
+            first_line));
+
+    const float safety_margin = std::max(
+        cursor_width * kFirstLineSafetyCursorMultiplier,
+        available_width * kFirstLineSafetyRatio);
+
+    const float shift_threshold = std::max(
+        0.0f,
+        available_width - safety_margin);
+
+    return occupied_width >= shift_threshold;
 }
 
 
@@ -310,14 +364,6 @@ int CountWrappedLines(
 
 /* ---------------------------------------------------------
    RESPONSIVE TEXT WIDTH
-
-   First line:
-   left 18.63vw/vh
-   right 12.99vw/vh
-
-   Multiline:
-   left 4.17vw/vh
-   right 2.45vw/vh
 --------------------------------------------------------- */
 
 float GetTextWidth(
@@ -334,22 +380,14 @@ float GetTextWidth(
         state.input->GetBox()
             .GetFrameSize(Rml::BoxArea::Padding).x;
 
-    /*
-        Derive width from the parent panel,
-        not the potentially stale textarea width.
-    */
-
     const float panel_width = std::max(
         1.0f,
         state.bar->GetClientWidth() -
         (left_units + right_units) * scale -
         horizontal_frame);
 
-    /*
-        Before shifting, also respect an existing
-        textarea scrollbar if RmlUi has created one.
-    */
-
+    // Before the first shift only, also respect a currently visible
+    // textarea scrollbar if RmlUi has already created one.
     if (clamp_to_current_input)
     {
         const float measured_input_width = std::max(
@@ -372,6 +410,11 @@ float GetTextWidth(
 
 void ResetMultiline(InputState& state)
 {
+    // Reset the empty field's caret so the next typed character
+    // cannot inherit a stale cursor/selection position.
+    if (state.input && state.input->GetValue().empty())
+        state.input->SetSelectionRange(0, 0);
+
     state.first_line_shifted = false;
 
     state.last_line_count = 0;
@@ -407,8 +450,6 @@ void ResetMultiline(InputState& state)
 
 /* ---------------------------------------------------------
    APPLY MULTILINE GEOMETRY
-
-   Called only when actual geometry changes.
 --------------------------------------------------------- */
 
 void ApplyMultilineLayout(
@@ -434,8 +475,13 @@ void ApplyMultilineLayout(
     if (line_height <= 0.0f)
         return;
 
+    // Keep one spare visual row to prevent a newly wrapped line
+    // from being clipped before the next RmlUi layout pass.
+    const int layout_line_count =
+        line_count + kVisibleLineBuffer;
+
     const float natural_text_height =
-        static_cast<float>(line_count) *
+        static_cast<float>(layout_line_count) *
         line_height +
         padding_height;
 
@@ -458,14 +504,6 @@ void ApplyMultilineLayout(
         bar_height +
         control_height * (11.52f / kControlUnits);
 
-
-    /*
-        Compare actual geometry.
-
-        Identical values must not trigger another
-        RmlUi layout/property update.
-    */
-
     const bool geometry_changed =
         std::fabs(
             input_content_height -
@@ -478,7 +516,6 @@ void ApplyMultilineLayout(
         std::fabs(
             chat_bottom -
             state.last_chat_bottom) > kGeometryEpsilon;
-
 
     if (geometry_changed)
     {
@@ -494,13 +531,7 @@ void ApplyMultilineLayout(
             "bottom",
             Pixels(chat_bottom));
 
-
-        /*
-            Restore the original caret/selection.
-            Prevents insertion from jumping into
-            the middle of previously typed text.
-        */
-
+        // Restore caret/selection after native layout changes.
         state.input->SetSelectionRange(
             selection_start,
             selection_end);
@@ -546,17 +577,11 @@ void UpdateInput(InputState& state)
     const Rml::String value =
         state.input->GetValue();
 
-
-    /* PULSE -> ARROW */
-
     SetClass(
         state.bar,
         kBarId,
         "has-text",
         HasVisibleText(value));
-
-
-    /* EMPTY INPUT */
 
     if (value.empty())
     {
@@ -588,16 +613,7 @@ void UpdateInput(InputState& state)
     bool just_shifted = false;
 
 
-    /* -----------------------------------------------------
-       FIRST-LINE SHIFT
-
-       Exact first-line CSS boundary.
-
-       left  = 18.63vw/vh
-       right = 12.99vw/vh
-
-       This prevents text from entering the arrow area.
-    ----------------------------------------------------- */
+    /* FIRST-LINE SHIFT */
 
     if (!state.first_line_shifted)
     {
@@ -609,13 +625,13 @@ void UpdateInput(InputState& state)
                 kFirstRight,
                 true);
 
-        const int first_line_count =
-            CountWrappedLines(
+        const bool first_line_ready =
+            IsFirstLineReadyToShift(
                 text_element,
                 first_line_width,
                 cursor_width);
 
-        if (first_line_count <= 1)
+        if (!first_line_ready)
         {
             state.last_value = value;
             return;
@@ -640,12 +656,7 @@ void UpdateInput(InputState& state)
     }
 
 
-    /* -----------------------------------------------------
-       FULL-WIDTH MULTILINE
-
-       left  = 4.17vw/vh
-       right = 2.45vw/vh
-    ----------------------------------------------------- */
+    /* FULL-WIDTH MULTILINE */
 
     const float full_width =
         GetTextWidth(
@@ -661,32 +672,13 @@ void UpdateInput(InputState& state)
             full_width,
             cursor_width);
 
-
-    /*
-        STABLE FORWARD TYPING
-
-        While characters are appended, do not allow
-        a temporary line-count reduction to collapse
-        the already-expanded panel.
-
-        Backspace/replacement can still shrink it.
-    */
-
+    // Prevent temporary collapse during ordinary forward typing.
     if (IsAppendOnly(state.last_value, value))
     {
         line_count = std::max(
             line_count,
             state.last_line_count);
     }
-
-
-    /*
-        NO PER-CHARACTER GEOMETRY CHANGES
-
-        Only recalculate when:
-        - A visual line is added/removed.
-        - Responsive dimensions change.
-    */
 
     const bool line_count_changed =
         line_count != state.last_line_count;
@@ -699,7 +691,6 @@ void UpdateInput(InputState& state)
         std::fabs(
             full_width -
             state.last_panel_width) > kGeometryEpsilon;
-
 
     if (just_shifted ||
         line_count_changed ||
@@ -746,9 +737,6 @@ bool HandleRmlEvent(
     if (!target)
         return false;
 
-
-    /* WING CLICK */
-
     if (event->GetType() == "click" &&
         target->GetId() == kWingHitId)
     {
@@ -770,9 +758,6 @@ bool HandleRmlEvent(
 
         return false;
     }
-
-
-    /* TEXTAREA CHANGE */
 
     if (event->GetType() == "change" &&
         target->GetId() == kInputId)
