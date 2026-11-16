@@ -3,8 +3,8 @@
 
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
-#include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/ElementText.h>
+#include <RmlUi/Core/ElementUtilities.h>
 #include <RmlUi/Core/Elements/ElementFormControlTextArea.h>
 
 #include <algorithm>
@@ -16,45 +16,31 @@ namespace
 {
 
 constexpr char kModuleName[] = "ObsidianWingChat";
-
 constexpr char kBarId[] = "input-bar";
 constexpr char kWingHitId[] = "wing-hit";
 constexpr char kInputId[] = "message-input";
 constexpr char kChatId[] = "chat-area";
 
 constexpr float kControlUnits = 14.22f;
-
-constexpr float kFirstLeft = 18.63f;
-constexpr float kFirstRight = 12.99f;
-
 constexpr float kMultilineLeft = 4.17f;
 constexpr float kMultilineRight = 2.45f;
-
 constexpr float kExtraGap = 1.5f;
 constexpr float kGeometryEpsilon = 0.5f;
-
-// Keep the shift threshold within a tiny visual margin of the arrow-safe edge.
-constexpr float kFirstLineSafetyRatio = 0.002f;
-constexpr float kMinimumSafetyPixels = 1.0f;
-
 
 struct InputState
 {
     Rml::ElementDocument* document = nullptr;
-
     Rml::Element* bar = nullptr;
     Rml::Element* wing_hit = nullptr;
     Rml::Element* chat = nullptr;
-
     Rml::ElementFormControlTextArea* input = nullptr;
 
+    bool word_break_configured = false;
     bool first_line_shifted = false;
 
     int last_line_count = 0;
-
     float last_control_height = 0.0f;
     float last_panel_width = 0.0f;
-
     float last_input_height = -1.0f;
     float last_bar_height = -1.0f;
     float last_chat_bottom = -1.0f;
@@ -62,13 +48,11 @@ struct InputState
     Rml::String last_value;
 };
 
-
 InputState& State()
 {
     static InputState state;
     return state;
 }
-
 
 /* ---------------------------------------------------------
    ELEMENT BINDING
@@ -96,13 +80,28 @@ bool BindElements(Rml::Element* source)
     state.chat = document->GetElementById(kChatId);
 
     Rml::Element* input = document->GetElementById(kInputId);
+    auto* previous_input = state.input;
+
     state.input = input && input->GetTagName() == "textarea"
         ? static_cast<Rml::ElementFormControlTextArea*>(input)
         : nullptr;
 
-    return state.bar && state.wing_hit && state.chat && state.input;
-}
+    if (!state.bar || !state.wing_hit || !state.chat || !state.input)
+        return false;
 
+    if (state.input != previous_input)
+        state.word_break_configured = false;
+
+    // Fill each visual row instead of leaving a word-sized gap.
+    // This affects only the textarea, not the chat bubbles.
+    if (!state.word_break_configured)
+    {
+        state.input->SetProperty("word-break", "break-all");
+        state.word_break_configured = true;
+    }
+
+    return true;
+}
 
 /* ---------------------------------------------------------
    INTERNAL TEXT ELEMENT
@@ -120,9 +119,8 @@ Rml::ElementText* GetTextElement(Rml::ElementFormControlTextArea* input)
     return static_cast<Rml::ElementText*>(child);
 }
 
-
 /* ---------------------------------------------------------
-   TEXT STATE
+   SMALL HELPERS
 --------------------------------------------------------- */
 
 bool HasVisibleText(const Rml::String& value)
@@ -133,181 +131,139 @@ bool HasVisibleText(const Rml::String& value)
     });
 }
 
-
 bool IsAppendOnly(const Rml::String& previous, const Rml::String& current)
 {
     return current.size() >= previous.size() &&
            std::equal(previous.begin(), previous.end(), current.begin());
 }
 
-
-/* ---------------------------------------------------------
-   EXISTING ULTRON CLASS API
---------------------------------------------------------- */
-
-void SetClass(
-    Rml::Element* element,
-    const char* id,
-    const char* class_name,
-    bool enabled)
+void SetClass(Rml::Element* element, const char* id,
+              const char* class_name, bool enabled)
 {
     if (element && element->IsClassSet(class_name) != enabled)
         Ultron_SetElementClass(id, class_name, enabled);
 }
-
-
-/* ---------------------------------------------------------
-   PIXEL CONVERSION
---------------------------------------------------------- */
 
 Rml::String Pixels(float value)
 {
     return std::to_string(std::max(value, 0.0f)) + "px";
 }
 
-
 /* ---------------------------------------------------------
-   FIRST-LINE WIDTH
+   RMLUI 6.3 LINE COUNT
 
-   GenerateLine with unlimited width measures the first explicit
-   line without introducing an early word-wrap boundary.
+   Uses GenerateLine() and the same trailing-space handling
+   as WidgetTextInput::FormatText().
+
+   No speculative blank row is added.
 --------------------------------------------------------- */
 
-float GetUnwrappedFirstLineWidth(Rml::ElementText* text_element)
-{
-    if (!text_element)
-        return 0.0f;
-
-    Rml::String line;
-    int line_length = 0;
-    float line_width = 0.0f;
-
-    text_element->GenerateLine(
-        line,
-        line_length,
-        line_width,
-        0,
-        -1.0f,
-        0.0f,
-        false);
-
-    return line_width;
-}
-
-
-bool IsFirstLineReadyToShift(
-    Rml::ElementText* text_element,
-    float available_width)
-{
-    if (!text_element || available_width <= 0.0f)
-        return false;
-
-    const Rml::String& text = text_element->GetText();
-    if (text.empty())
-        return false;
-
-    // An explicit newline means the first row was deliberately completed.
-    if (text.find('\n') != Rml::String::npos)
-        return true;
-
-    const float occupied_width = GetUnwrappedFirstLineWidth(text_element);
-
-    const float safety_margin = std::max(
-        kMinimumSafetyPixels,
-        available_width * kFirstLineSafetyRatio);
-
-    return occupied_width >= available_width - safety_margin;
-}
-
-
-/* ---------------------------------------------------------
-   EXACT RMLUI 6.3 LINE COUNT
-
-   Uses the documented seven-argument GenerateLine() API.
-   No spare-row reservation: panel height tracks actual lines only.
---------------------------------------------------------- */
-
-int CountWrappedLines(
-    Rml::ElementText* text_element,
-    float available_width)
+int CountWrappedLines(Rml::ElementText* text_element,
+                      float available_width,
+                      float cursor_width)
 {
     if (!text_element)
         return 1;
 
     const Rml::String& text = text_element->GetText();
     if (text.empty())
+        return 1;
+
+    const float maximum_line_width = available_width - cursor_width;
+    if (maximum_line_width <= 0.0f)
         return 1;
 
     int line_begin = 0;
     int line_count = 0;
     bool last_line = false;
 
-    while (line_begin < static_cast<int>(text.size()) && !last_line)
+    do
     {
-        Rml::String line;
-        int line_length = 0;
+        Rml::String line_content;
+        int line_size = 0;
         float line_width = 0.0f;
 
         last_line = text_element->GenerateLine(
-            line,
-            line_length,
+            line_content,
+            line_size,
             line_width,
             line_begin,
-            available_width,
+            maximum_line_width,
             0.0f,
-            line_begin > 0);
+            false,
+            false,
+            false);
 
-        if (line_length <= 0)
+        int editable_length = static_cast<int>(line_content.size());
+        if (!line_content.empty() && line_content.back() == '\n')
+            --editable_length;
+
+        const size_t space_begin = std::min(
+            text.size(),
+            static_cast<size_t>(line_begin + std::max(editable_length, 0)));
+
+        const size_t found = text.find_first_not_of(' ', space_begin);
+        const size_t space_end = found == Rml::String::npos
+            ? text.size()
+            : found;
+
+        const size_t trailing_spaces = space_end - space_begin;
+
+        if (trailing_spaces > 0)
+        {
+            line_size += static_cast<int>(trailing_spaces);
+
+            if (space_end < text.size() && text[space_end] == '\n')
+                ++line_size;
+
+            if (space_end == text.size())
+                last_line = true;
+        }
+
+        if (line_size <= 0)
+        {
+            // Count the empty visual row after a trailing newline.
+            ++line_count;
             break;
+        }
 
-        line_begin += line_length;
+        line_begin += line_size;
         ++line_count;
-    }
 
-    // A trailing explicit newline creates a final empty visual row.
-    if (!text.empty() && text.back() == '\n')
-        ++line_count;
+    } while (!last_line);
 
     return std::max(line_count, 1);
 }
 
-
 /* ---------------------------------------------------------
-   RESPONSIVE TEXT WIDTH
-
-   The expanded width is calculated from the containing block,
-   not the currently animated width of the panel. This prevents
-   the 0.8s width transition from making the first line shift early.
+   RESPONSIVE WIDTH
 --------------------------------------------------------- */
 
-float GetTextWidth(
-    InputState& state,
-    float control_height,
-    float left_units,
-    float right_units)
+float GetFirstLineWidth(InputState& state)
+{
+    // Actual wing-side textarea width.
+    // Matches WidgetTextInput::GetAvailableWidth().
+    const float frame = state.input->GetBox()
+        .GetFrameSize(Rml::BoxArea::Padding).x;
+
+    return std::max(1.0f, state.input->GetClientWidth() - frame);
+}
+
+float GetMultilineWidth(InputState& state, float control_height)
 {
     const float scale = control_height / kControlUnits;
-
-    Rml::Element* containing_element = state.bar->GetParentNode();
-    if (!containing_element)
-        return 1.0f;
-
-    // input-bar is an absolutely positioned child of body. Measure the
-    // containing block, not the panel's animated current width.
-    const float expanded_panel_width =
-        containing_element->GetClientWidth() * 0.88f;
+    const float frame = state.input->GetBox()
+        .GetFrameSize(Rml::BoxArea::Padding).x;
 
     return std::max(
         1.0f,
-        expanded_panel_width - (left_units + right_units) * scale);
+        state.bar->GetClientWidth() -
+        (kMultilineLeft + kMultilineRight) * scale -
+        frame);
 }
 
-
 /* ---------------------------------------------------------
-   RESET MULTILINE
-
-   Leave caret and scroll ownership to RmlUi's native textarea.
-   No manual selection rewrite is needed after deletion.
+   RESET
 --------------------------------------------------------- */
 
 void ResetMultiline(InputState& state)
@@ -332,81 +288,60 @@ void ResetMultiline(InputState& state)
     state.chat->RemoveProperty("bottom");
 }
 
-
 /* ---------------------------------------------------------
-   APPLY MULTILINE GEOMETRY
+   MULTILINE GEOMETRY
 
-   No selection rewrite and no extra blank row. The native
-   RmlUi textarea keeps its caret and scroll position.
+   At max-height, RmlUi's existing overflow-y:auto and
+   MoveToCursor() handle internal scrolling.
 --------------------------------------------------------- */
 
-void ApplyMultilineLayout(
-    InputState& state,
-    int line_count,
-    float control_height,
-    float full_text_width)
+void ApplyMultilineLayout(InputState& state,
+                          int line_count,
+                          float control_height,
+                          float full_width)
 {
-    const float padding_height =
-        control_height * (1.23f / kControlUnits);
+    const float padding_height = control_height * (1.23f / kControlUnits);
+    const float maximum_text_height = control_height * (30.15f / kControlUnits);
+    const float extra_gap = control_height * (1.5f / kControlUnits);
 
-    const float maximum_text_height =
-        control_height * (30.15f / kControlUnits);
-
-    const float extra_gap =
-        control_height * (kExtraGap / kControlUnits);
-
-    const float line_height =
-        std::round(state.input->GetLineHeight());
-
+    const float line_height = std::round(state.input->GetLineHeight());
     if (line_height <= 0.0f)
         return;
 
+    // Exact line count. No extra blank row.
     const float natural_text_height =
         static_cast<float>(line_count) * line_height + padding_height;
 
-    const float text_height = std::min(
-        natural_text_height,
-        maximum_text_height);
-
-    const float input_content_height = std::max(
-        0.0f,
-        text_height - padding_height);
-
-    const float bar_height =
-        text_height + control_height + extra_gap;
+    const float text_height = std::min(natural_text_height, maximum_text_height);
+    const float input_height = std::max(0.0f, text_height - padding_height);
+    const float bar_height = text_height + control_height + extra_gap;
 
     const float chat_bottom =
         bar_height + control_height * (11.52f / kControlUnits);
 
     const bool geometry_changed =
-        std::fabs(input_content_height - state.last_input_height) > kGeometryEpsilon ||
+        std::fabs(input_height - state.last_input_height) > kGeometryEpsilon ||
         std::fabs(bar_height - state.last_bar_height) > kGeometryEpsilon ||
         std::fabs(chat_bottom - state.last_chat_bottom) > kGeometryEpsilon;
 
     if (geometry_changed)
     {
-        state.input->SetProperty("height", Pixels(input_content_height));
+        state.input->SetProperty("height", Pixels(input_height));
         state.bar->SetProperty("height", Pixels(bar_height));
         state.chat->SetProperty("bottom", Pixels(chat_bottom));
 
-        state.last_input_height = input_content_height;
+        state.last_input_height = input_height;
         state.last_bar_height = bar_height;
         state.last_chat_bottom = chat_bottom;
     }
 
     state.last_line_count = line_count;
     state.last_control_height = control_height;
-    state.last_panel_width = full_text_width;
+    state.last_panel_width = full_width;
 }
-
 
 /* ---------------------------------------------------------
    INPUT UPDATE
-
-   1. Read the textarea's current value and its RmlUi text node.
-   2. Shift only when the first row reaches its arrow-safe edge.
-   3. Resize to the exact line count (no blank-row buffer).
-   4. Leave scrolling/caret movement to RmlUi's native textarea.
 --------------------------------------------------------- */
 
 void UpdateInput(InputState& state)
@@ -415,13 +350,8 @@ void UpdateInput(InputState& state)
         return;
 
     const Rml::String value = state.input->GetValue();
-    Rml::ElementText* text_element = GetTextElement(state.input);
 
-    SetClass(
-        state.bar,
-        kBarId,
-        "has-text",
-        HasVisibleText(value));
+    SetClass(state.bar, kBarId, "has-text", HasVisibleText(value));
 
     if (value.empty())
     {
@@ -429,6 +359,7 @@ void UpdateInput(InputState& state)
         return;
     }
 
+    Rml::ElementText* text_element = GetTextElement(state.input);
     if (!text_element)
         return;
 
@@ -436,42 +367,38 @@ void UpdateInput(InputState& state)
     if (control_height <= 0.0f)
         return;
 
-    /* FIRST-LINE SHIFT */
+    const float cursor_width = std::round(
+        Rml::ElementUtilities::GetDensityIndependentPixelRatio(text_element));
+
+    /* FIRST LINE: shift when actual wrapping creates row two. */
 
     if (!state.first_line_shifted)
     {
-        const float first_line_width = GetTextWidth(
-            state,
-            control_height,
-            kFirstLeft,
-            kFirstRight);
+        const int first_line_count = CountWrappedLines(
+            text_element,
+            GetFirstLineWidth(state),
+            cursor_width);
 
-        if (!IsFirstLineReadyToShift(text_element, first_line_width))
+        if (first_line_count <= 1)
         {
             state.last_value = value;
             return;
         }
 
         state.first_line_shifted = true;
-
-        SetClass(
-            state.bar,
-            kBarId,
-            "multiline",
-            true);
+        SetClass(state.bar, kBarId, "multiline", true);
     }
 
-    /* FULL-WIDTH MULTILINE */
+    /* Recalculate against the new full-width input area. */
 
-    const float full_width = GetTextWidth(
-        state,
-        control_height,
-        kMultilineLeft,
-        kMultilineRight);
+    const float full_width = GetMultilineWidth(state, control_height);
 
-    int line_count = CountWrappedLines(text_element, full_width);
+    int line_count = CountWrappedLines(
+        text_element,
+        full_width,
+        cursor_width);
 
-    // Prevent temporary collapse during forward typing; deletion can shrink it.
+    // Appending text grows the panel; deleting/replacing may shrink it.
     if (IsAppendOnly(state.last_value, value))
         line_count = std::max(line_count, state.last_line_count);
 
@@ -482,7 +409,9 @@ void UpdateInput(InputState& state)
         std::fabs(control_height - state.last_control_height) > kGeometryEpsilon ||
         std::fabs(full_width - state.last_panel_width) > kGeometryEpsilon;
 
-    if (line_count_changed || responsive_size_changed || state.last_bar_height < 0.0f)
+    if (line_count_changed ||
+        responsive_size_changed ||
+        state.last_input_height < 0.0f)
     {
         ApplyMultilineLayout(
             state,
@@ -494,12 +423,8 @@ void UpdateInput(InputState& state)
     state.last_value = value;
 }
 
-
 /* ---------------------------------------------------------
    SINGLE RML EVENT HANDLER
-
-   click  = Wing expand/collapse
-   change = Textarea updates
 --------------------------------------------------------- */
 
 bool HandleRmlEvent(Rml::Event* event, void*)
@@ -539,7 +464,6 @@ bool HandleRmlEvent(Rml::Event* event, void*)
     return false;
 }
 
-
 /* ---------------------------------------------------------
    AUTOMATIC REGISTRATION
 --------------------------------------------------------- */
@@ -547,14 +471,10 @@ bool HandleRmlEvent(Rml::Event* event, void*)
 bool RegisterObsidianWingChat()
 {
     const bool click_registered = Ultron_RegisterRmlEventHandler(
-        kModuleName,
-        "click",
-        &HandleRmlEvent);
+        kModuleName, "click", &HandleRmlEvent);
 
     const bool change_registered = Ultron_RegisterRmlEventHandler(
-        kModuleName,
-        "change",
-        &HandleRmlEvent);
+        kModuleName, "change", &HandleRmlEvent);
 
     return click_registered && change_registered;
 }
