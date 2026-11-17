@@ -1,4 +1,3 @@
-
 #include "ultron_api.h"
 
 #include <RmlUi/Core/Element.h>
@@ -391,47 +390,6 @@ int CountWrappedLines(
 
 
 /* ---------------------------------------------------------
-   NATIVE ROW REQUIREMENT (multiline layout)
-
-   If the content is taller than the box, our estimate
-   under-counted. Return how many rows the native layout
-   really needs so the panel is never shorter than the
-   text (that is what pushed the first row out of view).
-
-   Measured as "is something clipped right now", so it
-   cannot feed back on itself: once the box is tall
-   enough this returns 1.
---------------------------------------------------------- */
-
-int GetNativeRequiredRows(InputState& state)
-{
-    const float line_height =
-        state.input->GetLineHeight();
-
-    if (line_height <= 0.0f)
-        return 1;
-
-    // Read client height first: it brings layout up to date.
-    const float client_height =
-        state.input->GetClientHeight();
-
-    const float scroll_height =
-        state.input->GetScrollHeight();
-
-    if (scroll_height - client_height <
-        line_height * 0.5f)
-    {
-        return 1;
-    }
-
-    return std::max(
-        1,
-        static_cast<int>(
-            std::floor(scroll_height / line_height + 0.5f)));
-}
-
-
-/* ---------------------------------------------------------
    RESPONSIVE TEXT WIDTH
 --------------------------------------------------------- */
 
@@ -453,89 +411,6 @@ float GetTextWidth(
         state.bar->GetClientWidth() -
         (left_units + right_units) * scale -
         horizontal_frame);
-}
-
-
-/* ---------------------------------------------------------
-   SCROLL SYNC
-
-   Scroll position is calculated from the logical row
-   count and the input height assigned by our layout.
-
-   This avoids using temporary client-height measurements
-   while the panel is expanding.
-
-   force_top : single known-good state, go to the top.
-   follow_end: keep the latest typing row in view,
-               scrolling one complete row at a time.
---------------------------------------------------------- */
-
-void SyncScroll(
-    InputState& state,
-    bool force_top,
-    bool follow_end)
-{
-    Rml::Element* input = state.input;
-
-    if (force_top)
-    {
-        input->SetScrollTop(0.0f);
-        return;
-    }
-
-    const float line_height =
-        input->GetLineHeight();
-
-    if (line_height <= 0.0f ||
-        state.last_input_height <= 0.0f)
-    {
-        return;
-    }
-
-    /*
-        Use our own assigned input height rather than
-        GetClientHeight(), which can be temporarily stale
-        during an animated resize.
-    */
-
-    const int visible_rows = std::max(
-        1,
-        static_cast<int>(
-            std::floor(
-                state.last_input_height / line_height + 0.5f)));
-
-    const int total_rows = std::max(
-        state.last_line_count,
-        visible_rows);
-
-    const int hidden_rows = std::max(
-        0,
-        total_rows - visible_rows);
-
-    const float current_top =
-        input->GetScrollTop();
-
-    // Everything fits: keep the first row visible.
-    if (hidden_rows == 0)
-    {
-        if (current_top > kGeometryEpsilon)
-            input->SetScrollTop(0.0f);
-
-        return;
-    }
-
-    // Overflow: follow the typing position row by row.
-    if (follow_end)
-    {
-        const float target =
-            static_cast<float>(hidden_rows) * line_height;
-
-        if (std::fabs(current_top - target) >
-            kGeometryEpsilon)
-        {
-            input->SetScrollTop(target);
-        }
-    }
 }
 
 
@@ -577,6 +452,7 @@ void ResetMultiline(InputState& state)
     state.bar->RemoveProperty("height");
     state.chat->RemoveProperty("bottom");
 
+    // Reset only when the input becomes empty.
     state.input->SetScrollTop(0.0f);
     state.input->SetScrollLeft(0.0f);
 }
@@ -585,9 +461,9 @@ void ResetMultiline(InputState& state)
 /* ---------------------------------------------------------
    APPLY MULTILINE GEOMETRY
 
-   The visible height is always a whole number of rows, so
-   once the maximum is reached the text scrolls one row at
-   a time instead of jumping by a fraction of a row.
+   The visible height is always a whole number of rows.
+   Once the maximum is reached, the textarea keeps that
+   height and RmlUi handles the internal scrolling.
 --------------------------------------------------------- */
 
 void ApplyMultilineLayout(
@@ -697,7 +573,7 @@ void ApplyMultilineLayout(
    1. Arrow state
    2. First-line shift
    3. Full-width multiline layout
-   4. Scroll sync
+   4. RmlUi native textarea scrolling
 --------------------------------------------------------- */
 
 void UpdateInput(InputState& state)
@@ -827,14 +703,6 @@ void UpdateInput(InputState& state)
         full_width,
         cursor_width);
 
-    // After the shift frame also respect what RmlUi really laid out.
-    if (!just_shifted)
-    {
-        line_count = std::max(
-            line_count,
-            GetNativeRequiredRows(state));
-    }
-
     const bool append_only =
         IsAppendOnly(state.last_value, value);
 
@@ -860,12 +728,16 @@ void UpdateInput(InputState& state)
             full_width);
     }
 
-    // Shift frame with a single row: layout is still settling,
-    // the only correct offset is the top.
-    SyncScroll(
-        state,
-        just_shifted && line_count == 1,
-        append_only);
+    /*
+        IMPORTANT:
+
+        Do not set ScrollTop here.
+
+        RmlUi 6.3's native textarea widget manages its
+        scroll position and keeps the caret visible as
+        the user types. Manual scrolling here would
+        override that behaviour.
+    */
 
     state.last_value = value;
 }
@@ -874,9 +746,10 @@ void UpdateInput(InputState& state)
 /* ---------------------------------------------------------
    SINGLE RML EVENT HANDLER
 
-   click         = Wing expand/collapse
-   change        = Textarea updates
-   transitionend = re-sync scroll after an animated resize
+   click  = Wing expand/collapse
+   change = Textarea updates
+
+   Native textarea scrolling is managed by RmlUi.
 --------------------------------------------------------- */
 
 bool HandleRmlEvent(
@@ -930,29 +803,6 @@ bool HandleRmlEvent(
         return false;
     }
 
-
-    /* ANIMATED RESIZE FINISHED */
-
-    if (event->GetType() == "transitionend")
-    {
-        const Rml::String& id = target->GetId();
-
-        if (id == kInputId ||
-            id == kBarId ||
-            id == kChatId)
-        {
-            if (BindElements(target))
-            {
-                InputState& state = State();
-
-                if (state.first_line_shifted)
-                    SyncScroll(state, false, true);
-            }
-        }
-
-        return false;
-    }
-
     return false;
 }
 
@@ -974,16 +824,6 @@ bool RegisterObsidianWingChat()
             kModuleName,
             "change",
             &HandleRmlEvent);
-
-    /*
-        Best effort only: the module works without it, so the
-        result does not affect registration success.
-    */
-
-    (void)Ultron_RegisterRmlEventHandler(
-        kModuleName,
-        "transitionend",
-        &HandleRmlEvent);
 
     return click_registered && change_registered;
 }
