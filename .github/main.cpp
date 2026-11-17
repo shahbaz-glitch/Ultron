@@ -1,3 +1,4 @@
+
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #include <SDL3/SDL_filesystem.h>
@@ -61,6 +62,16 @@ std::unordered_map<std::string, Rml::ElementDocument*> g_documents;
 std::string g_active_document_name;
 std::vector<std::string> g_document_history;
 std::thread::id g_ui_thread_id{};
+
+// -------------------------------------------------------------
+// SDL3 / RmlUi IME integration
+//
+// The object must remain alive until after Rml::Shutdown().
+// The SDL backend header provides this implementation.
+// -------------------------------------------------------------
+
+TextInputMethodEditor_SDL g_text_input_method_editor;
+
 
 // -------------------------------------------------------------
 // Robust touch identity
@@ -1631,6 +1642,18 @@ void HandleInputEvent(
             HandleTouchEvent(event);
             return;
 
+        // -----------------------------------------------------
+        // IME COMPOSITION EVENT
+        // Forward Android/SDL editing text to RmlUi.
+        // -----------------------------------------------------
+
+        case SDL_EVENT_TEXT_EDITING:
+        {
+            g_text_input_method_editor.HandleEdit(
+                event.edit);
+            return;
+        }
+
         default:
             RmlSDL::InputEventHandler(
                 g_context,
@@ -2353,6 +2376,14 @@ int main(int argc, char** argv)
         Rml::SetRenderInterface(&render_interface);
         Rml::SetFileInterface(&file_interface);
 
+        // -----------------------------------------------------
+        // Register SDL3 IME handler BEFORE Rml::Initialise().
+        // The global editor remains alive until after Shutdown.
+        // -----------------------------------------------------
+
+        Rml::SetTextInputHandler(
+            &g_text_input_method_editor);
+
         const bool rml_initialized = Rml::Initialise();
 
         if (!rml_initialized)
@@ -2469,6 +2500,7 @@ int main(int argc, char** argv)
                     SDL_Log("Ultron: automatic TTF/OTF font loader initialized.");
                     SDL_Log("Ultron: shared RML event bridge initialized.");
                     SDL_Log("Ultron: universal SDL event dispatcher initialized.");
+                    SDL_Log("Ultron: SDL3 IME text editing handler initialized.");
 
                     while (g_running.load(std::memory_order_relaxed))
                     {
