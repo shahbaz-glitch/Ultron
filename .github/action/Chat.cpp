@@ -156,14 +156,16 @@ bool HandleRmlEvent(
         const Rml::String value =
             input->GetValue();
 
-        // Log current value and its length.
+        // Prepare diagnostic message.
         const Rml::String log =
             "Textarea value [" +
             std::to_string(value.size()) +
             "]: " + value;
 
+        // FIX: Explicit format string.
         Rml::Log::Message(
             Rml::Log::LT_INFO,
+            "%s",
             log.c_str());
 
         // Preserve original arrow behaviour.
