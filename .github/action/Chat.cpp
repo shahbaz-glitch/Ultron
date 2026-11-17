@@ -1,9 +1,11 @@
+
 #include "ultron_api.h"
 
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/Elements/ElementFormControlTextArea.h>
+#include <RmlUi/Core/Log.h>
 
 #include <algorithm>
 #include <cctype>
@@ -137,7 +139,7 @@ bool HandleRmlEvent(
     }
 
 
-    /* TEXTAREA CHANGE: PULSE / ARROW */
+    /* TEXTAREA CHANGE: DIAGNOSTIC + PULSE / ARROW */
 
     if (event->GetType() == "change" &&
         target->GetId() == kInputId)
@@ -149,6 +151,17 @@ bool HandleRmlEvent(
         if (!BindElements(target, bar, input))
             return false;
 
+        // Read the actual current textarea value.
+        const Rml::String value =
+            input->GetValue();
+
+        // Diagnostic logging.
+        Rml::Log::Message(
+            Rml::Log::LT_INFO,
+            "Textarea value: %s",
+            value.c_str());
+
+        // Preserve original arrow behaviour.
         UpdateArrowState(bar, input);
 
         return false;
