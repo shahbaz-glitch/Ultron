@@ -1,3 +1,4 @@
+
 #include "ultron_api.h"
 
 #include <RmlUi/Core/Element.h>
@@ -458,16 +459,15 @@ float GetTextWidth(
 /* ---------------------------------------------------------
    SCROLL SYNC
 
-   RmlUi wraps and scrolls the textarea BEFORE our change
-   handler can grow the panel. For a moment the box is one
-   row too short, RmlUi scrolls the caret row into view
-   and the offset stays stale after the box grows. That is
-   what hid the first row and made text look inserted in
-   the middle.
+   Scroll position is calculated from the logical row
+   count and the input height assigned by our layout.
+
+   This avoids using temporary client-height measurements
+   while the panel is expanding.
 
    force_top : single known-good state, go to the top.
-   follow_end: forward typing, keep the last row in view
-               one whole row at a time.
+   follow_end: keep the latest typing row in view,
+               scrolling one complete row at a time.
 --------------------------------------------------------- */
 
 void SyncScroll(
@@ -483,29 +483,39 @@ void SyncScroll(
         return;
     }
 
-    const float line_height = input->GetLineHeight();
+    const float line_height =
+        input->GetLineHeight();
 
-    if (line_height <= 0.0f)
+    if (line_height <= 0.0f ||
+        state.last_input_height <= 0.0f)
+    {
         return;
+    }
 
-    // Read client height first: it brings layout up to date.
-    const float client_height =
-        input->GetClientHeight();
+    /*
+        Use our own assigned input height rather than
+        GetClientHeight(), which can be temporarily stale
+        during an animated resize.
+    */
 
-    const float scroll_height =
-        input->GetScrollHeight();
+    const int visible_rows = std::max(
+        1,
+        static_cast<int>(
+            std::floor(
+                state.last_input_height / line_height + 0.5f)));
+
+    const int total_rows = std::max(
+        state.last_line_count,
+        visible_rows);
 
     const int hidden_rows = std::max(
         0,
-        static_cast<int>(
-            std::floor(
-                (scroll_height - client_height) /
-                    line_height +
-                0.5f)));
+        total_rows - visible_rows);
 
-    const float current_top = input->GetScrollTop();
+    const float current_top =
+        input->GetScrollTop();
 
-    // Everything fits: nothing may stay scrolled away.
+    // Everything fits: keep the first row visible.
     if (hidden_rows == 0)
     {
         if (current_top > kGeometryEpsilon)
@@ -514,8 +524,7 @@ void SyncScroll(
         return;
     }
 
-    // Overflow (max height reached): follow the typing
-    // position in whole-row steps.
+    // Overflow: follow the typing position row by row.
     if (follow_end)
     {
         const float target =
@@ -937,7 +946,7 @@ bool HandleRmlEvent(
                 InputState& state = State();
 
                 if (state.first_line_shifted)
-                    SyncScroll(state, false, false);
+                    SyncScroll(state, false, true);
             }
         }
 
