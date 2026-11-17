@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <string>
 
 namespace
 {
@@ -151,15 +152,19 @@ bool HandleRmlEvent(
         if (!BindElements(target, bar, input))
             return false;
 
-        // Read the actual current textarea value.
+        // Read actual textarea value.
         const Rml::String value =
             input->GetValue();
 
-        // Diagnostic logging.
+        // Log current value and its length.
+        const Rml::String log =
+            "Textarea value [" +
+            std::to_string(value.size()) +
+            "]: " + value;
+
         Rml::Log::Message(
             Rml::Log::LT_INFO,
-            "Textarea value: %s",
-            value.c_str());
+            log.c_str());
 
         // Preserve original arrow behaviour.
         UpdateArrowState(bar, input);
