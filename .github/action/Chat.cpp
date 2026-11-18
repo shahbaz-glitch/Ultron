@@ -112,31 +112,6 @@ bool BindElements(Rml::Element* source)
 
 
 /* ---------------------------------------------------------
-   MULTILINE WORD BREAK
-
-   Activated ONLY after the first line shifts.
---------------------------------------------------------- */
-
-void ConfigureMultilineWordBreak(InputState& state)
-{
-    if (state.word_break_configured || !state.input)
-        return;
-
-    if (!state.input->SetProperty(
-            "word-break",
-            "break-all"))
-    {
-        Rml::Log::Message(
-            Rml::Log::LT_WARNING,
-            "ObsidianWingChat: 'word-break: break-all' "
-            "was rejected; lines will wrap at word boundaries.");
-    }
-
-    state.word_break_configured = true;
-}
-
-
-/* ---------------------------------------------------------
    INTERNAL TEXT ELEMENT
 --------------------------------------------------------- */
 
@@ -152,6 +127,50 @@ Rml::ElementText* GetTextElement(
         return nullptr;
 
     return static_cast<Rml::ElementText*>(child);
+}
+
+
+/* ---------------------------------------------------------
+   MULTILINE WORD BREAK
+
+   Apply break-all to BOTH the textarea and its internal
+   text element.
+
+   RmlUi's GenerateLine() reads word-break from the
+   ElementText's own computed values.
+--------------------------------------------------------- */
+
+void ConfigureMultilineWordBreak(
+    InputState& state,
+    Rml::ElementText* text_element)
+{
+    if (state.word_break_configured ||
+        !state.input ||
+        !text_element)
+    {
+        return;
+    }
+
+    const bool input_configured =
+        state.input->SetProperty(
+            "word-break",
+            "break-all");
+
+    const bool text_configured =
+        text_element->SetProperty(
+            "word-break",
+            "break-all");
+
+    if (!input_configured || !text_configured)
+    {
+        Rml::Log::Message(
+            Rml::Log::LT_WARNING,
+            "ObsidianWingChat: Failed to configure "
+            "multiline word-break on textarea or text node.");
+    }
+
+    state.word_break_configured =
+        input_configured && text_configured;
 }
 
 
@@ -279,12 +298,11 @@ bool HasNativeWrapped(InputState& state)
 /* ---------------------------------------------------------
    RMLUI-NATIVE LINE COUNT
 
-   Mirrors RmlUi 6.3 native textarea formatting:
-
-   - Reserves caret width from each line.
-   - Uses GenerateLine() consumed source length.
-   - Preserves trailing whitespace correctly.
-   - Handles explicit newlines and empty final rows.
+   Matches the native textarea formatting algorithm:
+   - Full actual available width.
+   - Native caret-width reservation.
+   - Native GenerateLine() consumed length.
+   - Native trailing-space handling.
 --------------------------------------------------------- */
 
 int CountWrappedLines(
@@ -301,7 +319,7 @@ int CountWrappedLines(
     if (text.empty())
         return 1;
 
-    // Match RmlUi's native FormatText() calculation.
+    // Match WidgetTextInput::FormatText().
     const float maximum_line_width =
         available_width - cursor_width;
 
@@ -331,7 +349,6 @@ int CountWrappedLines(
             false,
             false);
 
-        // Match native editable-length handling.
         int editable_length =
             static_cast<int>(line_content.size());
 
@@ -341,7 +358,7 @@ int CountWrappedLines(
             --editable_length;
         }
 
-        // Preserve trailing spaces exactly as native layout does.
+        // Match native trailing-space handling.
         const size_t space_begin = std::min(
             text.size(),
             static_cast<size_t>(
@@ -363,27 +380,22 @@ int CountWrappedLines(
             line_size +=
                 static_cast<int>(trailing_spaces);
 
-            // Consume a hard newline after trailing spaces.
             if (space_end < text.size() &&
                 text[space_end] == '\n')
             {
                 ++line_size;
             }
 
-            // All remaining whitespace belongs to this row.
             if (space_end == text.size())
                 last_line = true;
         }
 
         if (line_size <= 0)
         {
-            // Final empty visual row after trailing newline.
             ++line_count;
             break;
         }
 
-        // Advance using actual consumed source length,
-        // not the generated display-string length.
         line_begin += line_size;
         ++line_count;
 
@@ -534,6 +546,20 @@ void ResetMultiline(InputState& state)
 
     state.last_value.clear();
 
+    // Restore RmlUi's normal textarea word-break behaviour.
+    if (state.word_break_configured)
+    {
+        if (Rml::ElementText* text_element =
+                GetTextElement(state.input))
+        {
+            text_element->RemoveProperty("word-break");
+        }
+
+        state.input->SetProperty(
+            "word-break",
+            "break-word");
+    }
+
     state.word_break_configured = false;
 
     SetClass(
@@ -542,7 +568,6 @@ void ResetMultiline(InputState& state)
         "multiline",
         false);
 
-    state.input->RemoveProperty("word-break");
     state.input->RemoveProperty("height");
 
     state.bar->RemoveProperty("height");
@@ -619,8 +644,11 @@ void ApplyMultilineLayout(
             chat_bottom -
             state.last_chat_bottom) > kGeometryEpsilon;
 
-    // Do not rewrite layout when typing within the same row
-    // or after the maximum height has been reached.
+    /*
+        Do not rewrite layout when typing within the same row
+        or after the maximum height has been reached.
+    */
+
     if (geometry_changed)
     {
         state.input->SetProperty(
@@ -660,8 +688,8 @@ void ApplyMultilineLayout(
 
    1. Arrow state
    2. First-line shift
-   3. Activate word breaking AFTER shift
-   4. Read actual multiline width
+   3. Activate break-all AFTER shift
+   4. Native available-width calculation
    5. Native-compatible line counting
    6. Scroll sync
 --------------------------------------------------------- */
@@ -749,9 +777,10 @@ void UpdateInput(InputState& state)
             "multiline",
             true);
 
-        // Enable character-level wrapping only AFTER
-        // the first line has shifted.
-        ConfigureMultilineWordBreak(state);
+        // Apply break-all directly to the internal text node.
+        ConfigureMultilineWordBreak(
+            state,
+            text_element);
     }
 
 
@@ -770,9 +799,8 @@ void UpdateInput(InputState& state)
         On the shift frame the new class is not laid out yet,
         so use the designed width.
 
-        Afterwards use RmlUi's exact native available-width
-        calculation. Do not use min(), as that can preserve
-        an unnecessarily narrow estimated width.
+        Afterwards use RmlUi's actual native available width:
+        GetClientWidth() - Padding frame.
     */
 
     if (!just_shifted)
@@ -795,7 +823,7 @@ void UpdateInput(InputState& state)
             full_width -
             state.last_panel_width) > kGeometryEpsilon;
 
-    // Count lines using native width and caret reservation.
+    // Match RmlUi's native caret-width reservation.
     const int line_count = CountWrappedLines(
         text_element,
         full_width,
