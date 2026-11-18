@@ -1,358 +1,355 @@
 <rml>
-
 <head>
     <title>Obsidian Wing Chat</title>
-
     <style>
 
-        body {
-            width: 100%;
-            height: 100%;
-            margin: 0px;
-            padding: 0px;
-            overflow: hidden;
-            font-family: "Roboto Flex";
-        }
+    body {
+        width: 100%;
+        height: 100%;
+        margin: 0px;
+        padding: 0px;
+        overflow: hidden;
+        font-family: "Roboto Flex";
+    }
+
+    /* CHAT AREA */
+
+    #chat-area {
+        position: absolute;
+        left: 6%;
+        right: 6%;
+        bottom: 25.74vw;
+        height: 75%;
+        display: block;
+        overflow-y: auto;
+        padding: 1.96vw 0px;
+    }
+
+    /* CHAT BUBBLE */
+
+    .chat-message {
+        display: block;
+        width: auto;
+        max-width: 88%;
+        margin-left: auto;
+        margin-bottom: 2.45vw;
+        padding: 2.94vw 3.92vw;
+
+        border: 0.25vw #65dfff77;
+        border-radius: 7.60vw 2.94vw 7.60vw 2.94vw;
+
+        decorator: linear-gradient(
+            125deg,
+            #a9f2ff08 0%,
+            #0878b51c 27%,
+            #061a2b88 52%,
+            #5bdcff08 100%
+        ) border-box;
+
+        box-shadow:
+            #d6faff44 0.25vw 0.25vw 0.49vw 0px inset,
+            #25aaff33 -0.25vw -0.25vw 0.74vw 0px inset;
+
+        color: #dffaff;
+        font-size: 3.92vw;
+        line-height: 1.45;
+        white-space: pre-wrap;
+    }
+
+    /* INPUT BAR */
+
+    #input-bar {
+        position: absolute;
+        display: block;
+
+        left: 6%;
+        bottom: 7.35vw;
+
+        width: 14.22vw;
+        height: 14.22vw;
+
+        border: 0.25vw #65dfff77;
+        border-radius: 7.60vw 2.94vw 7.60vw 2.94vw;
+
+        overflow: hidden;
+
+        decorator: linear-gradient(
+            125deg,
+            #a9f2ff08 0%,
+            #0878b51c 27%,
+            #061a2b88 52%,
+            #5bdcff08 100%
+        ) border-box;
+
+        box-shadow:
+            #d6faff44 0.25vw 0.25vw 0.49vw 0px inset,
+            #25aaff33 -0.25vw -0.25vw 0.74vw 0px inset;
+
+        transition:
+            width 0.8s cubic-out,
+            border-radius 0.7s linear-in-out;
+    }
+
+    #input-bar.expanded {
+        width: 88%;
+    }
+
+    /* MULTILINE INPUT BAR */
+
+    #input-bar.multiline {
+        /* Height controlled by UpdateInput(). */
+    }
+
+    /* WING HIT AREA */
+
+    #wing-hit {
+        position: absolute;
+        left: 0px;
+        bottom: 0px;
+
+        width: 14.22vw;
+        height: 14.22vw;
+
+        z-index: 2;
+    }
+
+    /* WING DESIGN */
+
+    #wing-button {
+        position: absolute;
+        left: 1.23vw;
+        bottom: 1.72vw;
+
+        width: 11.76vw;
+        height: 10.29vw;
+
+        pointer-events: none;
+
+        transition: left 0.8s cubic-out;
+    }
+
+    #input-bar.expanded #wing-button {
+        left: 4.2%;
+    }
+
+    /* MESSAGE INPUT */
+
+    #message-input {
+        position: absolute;
+
+        left: 18.63vw;
+        right: 12.99vw;
+        top: 50%;
+
+        width: auto;
+        height: 7.35vw;
+        max-height: 28.92vw;
+
+        margin-top: -3.68vw;
+        padding: 0.74vw 0px 0.49vw 0px;
+
+        font-size: 4.17vw;
+        line-height: 5.88vw;
+
+        color: #dffaff;
+        background-color: transparent;
+
+        border-width: 0px;
+        border-color: transparent;
+
+        overflow-y: auto;
+
+        caret-color: #65dfff;
+
+        opacity: 0;
+
+        transition: opacity 0.15s linear-in-out;
+    }
+
+    #input-bar.expanded #message-input {
+        opacity: 1;
+    }
+
+    /*
+        FIRST LINE SHIFT
+
+        First line starts after the wing.
+
+        Once wrapping begins, the textarea
+        moves upward and uses full available width.
+    */
+
+    #input-bar.multiline #message-input {
+        left: 4.17vw;
+        right: 2.45vw;
+        top: 1.5vw;
+
+        width: auto;
+        margin-top: 0px;
+
+        padding: 0.74vw 0px 0.49vw 0px;
+    }
+
+    /* SEND BUTTON */
+
+    #send-button {
+        position: absolute;
+
+        display: none;
+
+        right: 2.45vw;
+        bottom: 3.55vw;
+
+        width: 7.11vw;
+        height: 7.11vw;
+
+        opacity: 0;
+    }
+
+    #input-bar.expanded #send-button {
+        display: block;
+        opacity: 1;
+    }
+
+    /* PULSE AND ARROW WRAPPERS */
+
+    #send-button .pulse-icon,
+    #send-button .arrow-icon {
+        position: absolute;
+
+        left: 0px;
+        top: 0px;
+
+        width: 100%;
+        height: 100%;
+
+        transition: opacity 0.15s linear-in-out;
+    }
+
+    #send-button .pulse-icon svg,
+    #send-button .arrow-icon svg {
+        width: 100%;
+        height: 100%;
+        display: block;
+    }
+
+    .pulse-icon {
+        opacity: 1;
+    }
+
+    .arrow-icon {
+        opacity: 0;
+    }
+
+    #input-bar.has-text .pulse-icon {
+        opacity: 0;
+    }
+
+    #input-bar.has-text .arrow-icon {
+        opacity: 1;
+    }
+
+
+    /* LANDSCAPE RESPONSIVE SCALING */
+
+    @media (orientation: landscape) {
 
         /* CHAT AREA */
 
         #chat-area {
-            position: absolute;
-            left: 6%;
-            right: 6%;
-            bottom: 25.74vw;
-            height: 75%;
-            display: block;
-            overflow-y: auto;
-            padding: 1.96vw 0px;
+            bottom: 25.74vh;
+            padding: 1.96vh 0px;
         }
 
         /* CHAT BUBBLE */
 
         .chat-message {
-            display: block;
-            width: auto;
-            max-width: 88%;
-            margin-left: auto;
-            margin-bottom: 2.45vw;
-            padding: 2.94vw 3.92vw;
+            margin-bottom: 2.45vh;
+            padding: 2.94vh 3.92vh;
 
-            border: 0.25vw #65dfff77;
-            border-radius: 7.60vw 2.94vw 7.60vw 2.94vw;
-
-            decorator: linear-gradient(
-                125deg,
-                #a9f2ff08 0%,
-                #0878b51c 27%,
-                #061a2b88 52%,
-                #5bdcff08 100%
-            ) border-box;
+            border: 0.25vh #65dfff77;
+            border-radius: 7.60vh 2.94vh 7.60vh 2.94vh;
 
             box-shadow:
-                #d6faff44 0.25vw 0.25vw 0.49vw 0px inset,
-                #25aaff33 -0.25vw -0.25vw 0.74vw 0px inset;
+                #d6faff44 0.25vh 0.25vh 0.49vh 0px inset,
+                #25aaff33 -0.25vh -0.25vh 0.74vh 0px inset;
 
-            color: #dffaff;
-            font-size: 3.92vw;
-            line-height: 1.45;
-            white-space: pre-wrap;
+            font-size: 3.92vh;
         }
 
         /* INPUT BAR */
 
         #input-bar {
-            position: absolute;
-            display: block;
+            bottom: 7.35vh;
 
-            left: 6%;
-            bottom: 7.35vw;
+            width: 14.22vh;
+            height: 14.22vh;
 
-            width: 14.22vw;
-            height: 14.22vw;
-
-            border: 0.25vw #65dfff77;
-            border-radius: 7.60vw 2.94vw 7.60vw 2.94vw;
-
-            overflow: hidden;
-
-            decorator: linear-gradient(
-                125deg,
-                #a9f2ff08 0%,
-                #0878b51c 27%,
-                #061a2b88 52%,
-                #5bdcff08 100%
-            ) border-box;
+            border: 0.25vh #65dfff77;
+            border-radius: 7.60vh 2.94vh 7.60vh 2.94vh;
 
             box-shadow:
-                #d6faff44 0.25vw 0.25vw 0.49vw 0px inset,
-                #25aaff33 -0.25vw -0.25vw 0.74vw 0px inset;
-
-            transition:
-                width 0.8s cubic-out,
-                border-radius 0.7s linear-in-out;
-        }
-
-        #input-bar.expanded {
-            width: 88%;
-        }
-
-        /* MULTILINE INPUT BAR */
-
-        #input-bar.multiline {
-            /* Height controlled by UpdateInput(). */
+                #d6faff44 0.25vh 0.25vh 0.49vh 0px inset,
+                #25aaff33 -0.25vh -0.25vh 0.74vh 0px inset;
         }
 
         /* WING HIT AREA */
 
         #wing-hit {
-            position: absolute;
-            left: 0px;
-            bottom: 0px;
-
-            width: 14.22vw;
-            height: 14.22vw;
-
-            z-index: 2;
+            width: 14.22vh;
+            height: 14.22vh;
         }
 
         /* WING DESIGN */
 
         #wing-button {
-            position: absolute;
-            left: 1.23vw;
-            bottom: 1.72vw;
+            left: 1.23vh;
+            bottom: 1.72vh;
 
-            width: 11.76vw;
-            height: 10.29vw;
-
-            pointer-events: none;
-
-            transition: left 0.8s cubic-out;
-        }
-
-        #input-bar.expanded #wing-button {
-            left: 4.2%;
+            width: 11.76vh;
+            height: 10.29vh;
         }
 
         /* MESSAGE INPUT */
 
         #message-input {
-            position: absolute;
+            left: 18.63vh;
+            right: 12.99vh;
 
-            left: 18.63vw;
-            right: 12.99vw;
-            top: 50%;
+            height: 7.35vh;
+            max-height: 28.92vh;
 
-            width: auto;
-            height: 7.35vw;
-            max-height: 23.52vw;
+            margin-top: -3.68vh;
+            padding: 0.74vh 0px 0.49vh 0px;
 
-            margin-top: -3.68vw;
-            padding: 0.74vw 0px 0.49vw 0px;
-
-            font-size: 4.17vw;
-            line-height: 5.88vw;
-
-            color: #dffaff;
-            background-color: transparent;
-
-            border-width: 0px;
-            border-color: transparent;
-
-            overflow-y: auto;
-
-            caret-color: #65dfff;
-
-            opacity: 0;
-
-            transition: opacity 0.15s linear-in-out;
+            font-size: 4.17vh;
+            line-height: 5.88vh;
         }
 
-        #input-bar.expanded #message-input {
-            opacity: 1;
-        }
-
-        /*
-            FIRST LINE SHIFT
-
-            First line starts after the wing.
-
-            Once wrapping begins, the textarea
-            moves upward and uses full available width.
-        */
+        /* MULTILINE INPUT */
 
         #input-bar.multiline #message-input {
-            left: 4.17vw;
-            right: 2.45vw;
-            top: 1.5vw;
+            left: 4.17vh;
+            right: 2.45vh;
+            top: 1.5vh;
 
-            width: auto;
             margin-top: 0px;
-
-            padding: 0.74vw 0px 0.49vw 0px;
+            padding: 0.74vh 0px 0.49vh 0px;
         }
 
         /* SEND BUTTON */
 
         #send-button {
-            position: absolute;
+            right: 2.45vh;
+            bottom: 3.55vh;
 
-            display: none;
-
-            right: 2.45vw;
-            bottom: 3.55vw;
-
-            width: 7.11vw;
-            height: 7.11vw;
-
-            opacity: 0;
+            width: 7.11vh;
+            height: 7.11vh;
         }
 
-        #input-bar.expanded #send-button {
-            display: block;
-            opacity: 1;
-        }
-
-        /* PULSE AND ARROW WRAPPERS */
-
-        #send-button .pulse-icon,
-        #send-button .arrow-icon {
-            position: absolute;
-
-            left: 0px;
-            top: 0px;
-
-            width: 100%;
-            height: 100%;
-
-            transition: opacity 0.15s linear-in-out;
-        }
-
-        #send-button .pulse-icon svg,
-        #send-button .arrow-icon svg {
-            width: 100%;
-            height: 100%;
-            display: block;
-        }
-
-        .pulse-icon {
-            opacity: 1;
-        }
-
-        .arrow-icon {
-            opacity: 0;
-        }
-
-        #input-bar.has-text .pulse-icon {
-            opacity: 0;
-        }
-
-        #input-bar.has-text .arrow-icon {
-            opacity: 1;
-        }
-
-
-        /* LANDSCAPE RESPONSIVE SCALING */
-
-        @media (orientation: landscape) {
-
-            /* CHAT AREA */
-
-            #chat-area {
-                bottom: 25.74vh;
-                padding: 1.96vh 0px;
-            }
-
-            /* CHAT BUBBLE */
-
-            .chat-message {
-                margin-bottom: 2.45vh;
-                padding: 2.94vh 3.92vh;
-
-                border: 0.25vh #65dfff77;
-                border-radius: 7.60vh 2.94vh 7.60vh 2.94vh;
-
-                box-shadow:
-                    #d6faff44 0.25vh 0.25vh 0.49vh 0px inset,
-                    #25aaff33 -0.25vh -0.25vh 0.74vh 0px inset;
-
-                font-size: 3.92vh;
-            }
-
-            /* INPUT BAR */
-
-            #input-bar {
-                bottom: 7.35vh;
-
-                width: 14.22vh;
-                height: 14.22vh;
-
-                border: 0.25vh #65dfff77;
-                border-radius: 7.60vh 2.94vh 7.60vh 2.94vh;
-
-                box-shadow:
-                    #d6faff44 0.25vh 0.25vh 0.49vh 0px inset,
-                    #25aaff33 -0.25vh -0.25vh 0.74vh 0px inset;
-            }
-
-            /* WING HIT AREA */
-
-            #wing-hit {
-                width: 14.22vh;
-                height: 14.22vh;
-            }
-
-            /* WING DESIGN */
-
-            #wing-button {
-                left: 1.23vh;
-                bottom: 1.72vh;
-
-                width: 11.76vh;
-                height: 10.29vh;
-            }
-
-            /* MESSAGE INPUT */
-
-            #message-input {
-                left: 18.63vh;
-                right: 12.99vh;
-
-                height: 7.35vh;
-                max-height: 23.52vh;
-
-                margin-top: -3.68vh;
-                padding: 0.74vh 0px 0.49vh 0px;
-
-                font-size: 4.17vh;
-                line-height: 5.88vh;
-            }
-
-            /* MULTILINE INPUT */
-
-            #input-bar.multiline #message-input {
-                left: 4.17vh;
-                right: 2.45vh;
-                top: 1.5vh;
-
-                margin-top: 0px;
-                padding: 0.74vh 0px 0.49vh 0px;
-            }
-
-            /* SEND BUTTON */
-
-            #send-button {
-                right: 2.45vh;
-                bottom: 3.55vh;
-
-                width: 7.11vh;
-                height: 7.11vh;
-            }
-
-        }
+    }
 
     </style>
-
 </head>
 
 <body>
@@ -489,5 +486,4 @@
     </div>
 
 </body>
-
 </rml>
