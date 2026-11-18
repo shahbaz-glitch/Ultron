@@ -1,4 +1,3 @@
-
 <rml>
 
 <head>
@@ -146,7 +145,7 @@
 
             width: auto;
             height: 7.35vw;
-            max-height: 28.92vw;
+            max-height: 23.52vw;
 
             margin-top: -3.68vw;
             padding: 0.74vw 0px 0.49vw 0px;
@@ -320,7 +319,7 @@
                 right: 12.99vh;
 
                 height: 7.35vh;
-                max-height: 28.92vh;
+                max-height: 23.52vh;
 
                 margin-top: -3.68vh;
                 padding: 0.74vh 0px 0.49vh 0px;
