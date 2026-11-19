@@ -133,15 +133,16 @@ Rml::ElementText* GetTextElement(
 /* ---------------------------------------------------------
    MULTILINE WORD BREAK
 
-   Remove the textarea's local BreakWord override.
+   Original state:
+       word-break: break-word
 
-   The RML selector:
-   #input-bar.multiline #message-input
+   After first-line shift:
+       word-break: break-all
 
-   will provide break-all only after the first-line shift.
+   The property is set directly on the textarea.
+   ElementText inherits this property from its parent.
 
-   The internal text element also has any local override
-   removed so it inherits the textarea's computed property.
+   No direct DirtyLayout() call is needed.
 --------------------------------------------------------- */
 
 void ConfigureMultilineWordBreak(InputState& state)
@@ -149,12 +150,19 @@ void ConfigureMultilineWordBreak(InputState& state)
     if (state.word_break_configured || !state.input)
         return;
 
-    state.input->RemoveProperty("word-break");
+    const bool configured =
+        state.input->SetProperty(
+            "word-break",
+            "break-all");
 
-    if (Rml::ElementText* text_element =
-            GetTextElement(state.input))
+    if (!configured)
     {
-        text_element->RemoveProperty("word-break");
+        Rml::Log::Message(
+            Rml::Log::LT_WARNING,
+            "ObsidianWingChat: Failed to set "
+            "word-break: break-all.");
+        
+        return;
     }
 
     state.word_break_configured = true;
@@ -520,7 +528,7 @@ void SyncScroll(
 /* ---------------------------------------------------------
    RESET MULTILINE
 
-   Restore the native BreakWord behaviour after clearing.
+   Restore the original RmlUi BreakWord behaviour.
 --------------------------------------------------------- */
 
 void ResetMultiline(InputState& state)
@@ -540,12 +548,6 @@ void ResetMultiline(InputState& state)
 
     if (state.word_break_configured)
     {
-        if (Rml::ElementText* text_element =
-                GetTextElement(state.input))
-        {
-            text_element->RemoveProperty("word-break");
-        }
-
         state.input->SetProperty(
             "word-break",
             "break-word");
@@ -679,11 +681,10 @@ void ApplyMultilineLayout(
 
    1. Arrow state
    2. First-line shift
-   3. Remove BreakWord local override AFTER shift
-   4. Use RML multiline BreakAll rule
-   5. Native available-width calculation
-   6. Native-compatible line counting
-   7. Scroll sync
+   3. Set BreakAll AFTER shift
+   4. Native available-width calculation
+   5. Native-compatible line counting
+   6. Scroll sync
 --------------------------------------------------------- */
 
 void UpdateInput(InputState& state)
@@ -769,8 +770,7 @@ void UpdateInput(InputState& state)
             "multiline",
             true);
 
-        // Remove the local BreakWord override.
-        // The multiline RML selector now controls wrapping.
+        // Change word breaking only AFTER first-line shift.
         ConfigureMultilineWordBreak(state);
     }
 
