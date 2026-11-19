@@ -137,10 +137,12 @@ Rml::ElementText* GetTextElement(
        break-word
 
    After first-line shift:
-       break-all
+       break-word
 
-   WordBreak is inherited and forces native text
-   formatting through RmlUi's property update path.
+   Preserve complete words when they cannot fit
+   in the remaining space of the current line.
+
+   A word moves to the next line as a whole.
 --------------------------------------------------------- */
 
 void ConfigureMultilineWordBreak(InputState& state)
@@ -150,12 +152,12 @@ void ConfigureMultilineWordBreak(InputState& state)
 
     if (!state.input->SetProperty(
             "word-break",
-            "break-all"))
+            "break-word"))
     {
         Rml::Log::Message(
             Rml::Log::LT_WARNING,
             "ObsidianWingChat: Failed to configure "
-            "word-break: break-all.");
+            "word-break: break-word.");
 
         return;
     }
@@ -433,9 +435,6 @@ int GetNativeRequiredRows(InputState& state)
 
 /* ---------------------------------------------------------
    RESPONSIVE TEXT WIDTH
-
-   Calculates the desired textarea content width
-   from the actual input-bar width and multiline offsets.
 --------------------------------------------------------- */
 
 float GetTextWidth(
@@ -526,8 +525,7 @@ void SyncScroll(
 /* ---------------------------------------------------------
    RESET MULTILINE
 
-   Restore the original responsive auto-width and
-   native BreakWord behaviour after clearing.
+   Restore the native BreakWord behaviour after clearing.
 --------------------------------------------------------- */
 
 void ResetMultiline(InputState& state)
@@ -545,7 +543,6 @@ void ResetMultiline(InputState& state)
 
     state.last_value.clear();
 
-    // Restore RmlUi's original word-breaking behaviour.
     if (state.word_break_configured)
     {
         state.input->SetProperty(
@@ -561,9 +558,8 @@ void ResetMultiline(InputState& state)
         "multiline",
         false);
 
-    // Remove the explicit multiline width.
+    // Remove explicit multiline sizing.
     state.input->RemoveProperty("width");
-
     state.input->RemoveProperty("height");
 
     state.bar->RemoveProperty("height");
@@ -577,14 +573,10 @@ void ResetMultiline(InputState& state)
 /* ---------------------------------------------------------
    APPLY MULTILINE GEOMETRY
 
-   WIDTH FIX:
+   Explicitly synchronize textarea width and height.
 
-   Explicitly synchronize textarea width with the
-   complete available width after first-line shift.
-
-   Width is also tracked in geometry_changed so that
-   an animated input-bar resize cannot leave the
-   textarea stuck at an earlier narrow width.
+   Width is also tracked so parent-bar resizing
+   cannot leave the textarea at an outdated width.
 --------------------------------------------------------- */
 
 void ApplyMultilineLayout(
@@ -636,14 +628,6 @@ void ApplyMultilineLayout(
         bar_height +
         control_height * (11.52f / kControlUnits);
 
-    /*
-        IMPORTANT:
-        Width is now part of the geometry comparison.
-
-        If the parent bar expands, full_text_width changes
-        and the textarea width will be updated too.
-    */
-
     const bool width_changed =
         std::fabs(
             full_text_width -
@@ -671,7 +655,6 @@ void ApplyMultilineLayout(
 
     if (geometry_changed)
     {
-        // Force the textarea to occupy the full calculated width.
         state.input->SetProperty(
             "width",
             Pixels(full_text_width));
@@ -713,7 +696,7 @@ void ApplyMultilineLayout(
 
    1. Arrow state
    2. First-line shift
-   3. Activate BreakAll AFTER shift
+   3. Preserve complete words
    4. Calculate full responsive textarea width
    5. Explicitly synchronize textarea width
    6. Native-compatible line counting
@@ -803,7 +786,7 @@ void UpdateInput(InputState& state)
             "multiline",
             true);
 
-        // Change word breaking only AFTER first-line shift.
+        // Apply complete-word wrapping AFTER first-line shift.
         ConfigureMultilineWordBreak(state);
     }
 
@@ -950,8 +933,7 @@ bool HandleRmlEvent(
 
     if (event->GetType() == "transitionend")
     {
-        const Rml::String& id =
-            target->GetId();
+        const Rml::String& id = target->GetId();
 
         if (id == kInputId ||
             id == kBarId ||
@@ -963,13 +945,6 @@ bool HandleRmlEvent(
 
                 if (state.first_line_shifted)
                 {
-                    /*
-                        The input-bar width transition has
-                        finished. Recalculate the final
-                        desired width instead of retaining
-                        the intermediate animation width.
-                    */
-
                     if (id == kBarId)
                     {
                         UpdateInput(state);
