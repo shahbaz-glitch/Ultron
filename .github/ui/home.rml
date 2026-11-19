@@ -1,3 +1,4 @@
+
 <rml>
 <head>
     <title>Obsidian Wing Chat</title>
@@ -188,6 +189,8 @@
         margin-top: 0px;
 
         padding: 0.74vw 0px 0.49vw 0px;
+
+        word-break: break-all;
     }
 
     /* SEND BUTTON */
