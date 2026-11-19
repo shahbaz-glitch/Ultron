@@ -133,16 +133,18 @@ Rml::ElementText* GetTextElement(
 /* ---------------------------------------------------------
    MULTILINE WORD BREAK
 
-   Original state:
+   RmlUi WidgetTextInput constructor sets:
+
        word-break: break-word
 
-   After first-line shift:
+   We explicitly replace that local property with:
+
        word-break: break-all
 
-   The property is set directly on the textarea.
-   ElementText inherits this property from its parent.
+   ONLY after the first-line shift.
 
-   No direct DirtyLayout() call is needed.
+   WordBreak is inherited and forces layout formatting,
+   so the internal ElementText receives the updated value.
 --------------------------------------------------------- */
 
 void ConfigureMultilineWordBreak(InputState& state)
@@ -150,18 +152,15 @@ void ConfigureMultilineWordBreak(InputState& state)
     if (state.word_break_configured || !state.input)
         return;
 
-    const bool configured =
-        state.input->SetProperty(
+    if (!state.input->SetProperty(
             "word-break",
-            "break-all");
-
-    if (!configured)
+            "break-all"))
     {
         Rml::Log::Message(
             Rml::Log::LT_WARNING,
-            "ObsidianWingChat: Failed to set "
+            "ObsidianWingChat: Failed to configure "
             "word-break: break-all.");
-        
+
         return;
     }
 
@@ -528,7 +527,7 @@ void SyncScroll(
 /* ---------------------------------------------------------
    RESET MULTILINE
 
-   Restore the original RmlUi BreakWord behaviour.
+   Restore the native BreakWord behaviour after clearing.
 --------------------------------------------------------- */
 
 void ResetMultiline(InputState& state)
@@ -681,7 +680,7 @@ void ApplyMultilineLayout(
 
    1. Arrow state
    2. First-line shift
-   3. Set BreakAll AFTER shift
+   3. Activate BreakAll AFTER shift
    4. Native available-width calculation
    5. Native-compatible line counting
    6. Scroll sync
@@ -770,7 +769,8 @@ void UpdateInput(InputState& state)
             "multiline",
             true);
 
-        // Change word breaking only AFTER first-line shift.
+        // Replace RmlUi's local BreakWord property.
+        // This happens only after the first-line shift.
         ConfigureMultilineWordBreak(state);
     }
 
