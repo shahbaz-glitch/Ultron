@@ -107,28 +107,6 @@ bool BindElements(Rml::Element* source)
         !state.chat || !state.input)
         return false;
 
-    /*
-        Fill each line to its available width.
-        RmlUi supports break-all as an inherited
-        word-break property.
-    */
-
-    if (!state.word_break_configured)
-    {
-        if (!state.input->SetProperty(
-                "word-break",
-                "break-all"))
-        {
-            Rml::Log::Message(
-                Rml::Log::LT_WARNING,
-                "ObsidianWingChat: 'word-break: break-all' "
-                "was rejected; lines will wrap at word "
-                "boundaries.");
-        }
-
-        state.word_break_configured = true;
-    }
-
     return true;
 }
 
@@ -149,6 +127,37 @@ Rml::ElementText* GetTextElement(
         return nullptr;
 
     return static_cast<Rml::ElementText*>(child);
+}
+
+
+/* ---------------------------------------------------------
+   MULTILINE WORD BREAK
+
+   Remove the textarea's local BreakWord override.
+
+   The RML selector:
+   #input-bar.multiline #message-input
+
+   will provide break-all only after the first-line shift.
+
+   The internal text element also has any local override
+   removed so it inherits the textarea's computed property.
+--------------------------------------------------------- */
+
+void ConfigureMultilineWordBreak(InputState& state)
+{
+    if (state.word_break_configured || !state.input)
+        return;
+
+    state.input->RemoveProperty("word-break");
+
+    if (Rml::ElementText* text_element =
+            GetTextElement(state.input))
+    {
+        text_element->RemoveProperty("word-break");
+    }
+
+    state.word_break_configured = true;
 }
 
 
@@ -249,8 +258,6 @@ bool IsFirstLineReadyToShift(
 
 /* ---------------------------------------------------------
    NATIVE WRAP DETECTION (single-line layout)
-
-   Uses RmlUi's real scrollable height to detect wrapping.
 --------------------------------------------------------- */
 
 bool HasNativeWrapped(InputState& state)
@@ -261,6 +268,7 @@ bool HasNativeWrapped(InputState& state)
     if (line_height <= 0.0f)
         return false;
 
+    // Read client height first: it brings layout up to date.
     const float client_height =
         state.input->GetClientHeight();
 
@@ -275,10 +283,13 @@ bool HasNativeWrapped(InputState& state)
 
 
 /* ---------------------------------------------------------
-   NATIVE RMLUI LINE COUNT
+   RMLUI-NATIVE LINE COUNT
 
-   Uses GenerateLine() and RmlUi's own
-   trailing-whitespace handling.
+   Matches the native textarea formatting algorithm:
+   - Actual available width.
+   - Native caret-width reservation.
+   - Native GenerateLine() consumed length.
+   - Native trailing-space handling.
 --------------------------------------------------------- */
 
 int CountWrappedLines(
@@ -295,6 +306,7 @@ int CountWrappedLines(
     if (text.empty())
         return 1;
 
+    // Match WidgetTextInput::FormatText().
     const float maximum_line_width =
         available_width - cursor_width;
 
@@ -324,6 +336,7 @@ int CountWrappedLines(
             false,
             false);
 
+        // Match native editable-length handling.
         int editable_length =
             static_cast<int>(line_content.size());
 
@@ -333,6 +346,7 @@ int CountWrappedLines(
             --editable_length;
         }
 
+        // Match native trailing-space handling.
         const size_t space_begin = std::min(
             text.size(),
             static_cast<size_t>(
@@ -366,10 +380,12 @@ int CountWrappedLines(
 
         if (line_size <= 0)
         {
+            // Final empty visual row after trailing newline.
             ++line_count;
             break;
         }
 
+        // Advance using actual consumed source length.
         line_begin += line_size;
         ++line_count;
 
@@ -381,150 +397,7 @@ int CountWrappedLines(
 
 
 /* ---------------------------------------------------------
-   CARET VISUAL ROW
-
-   Wollix-style caret tracking.
-
-   Resolves the visual row containing the current caret
-   using RmlUi's own GenerateLine() text layout.
-
-   This avoids estimating the caret position from
-   character count or average character width.
---------------------------------------------------------- */
-
-int GetCaretVisualRow(
-    Rml::ElementText* text_element,
-    float available_width,
-    float cursor_width,
-    int caret_position)
-{
-    if (!text_element)
-        return 0;
-
-    const Rml::String& text =
-        text_element->GetText();
-
-    if (text.empty())
-        return 0;
-
-    const float maximum_line_width =
-        available_width - cursor_width;
-
-    if (maximum_line_width <= 0.0f)
-        return 0;
-
-    caret_position = std::clamp(
-        caret_position,
-        0,
-        static_cast<int>(text.size()));
-
-    int line_begin = 0;
-    int line_count = 0;
-
-    while (line_begin < static_cast<int>(text.size()))
-    {
-        Rml::String line_content;
-
-        int line_size = 0;
-        float line_width = 0.0f;
-
-        bool last_line = text_element->GenerateLine(
-            line_content,
-            line_size,
-            line_width,
-            line_begin,
-            maximum_line_width,
-            0.0f,
-            false,
-            false,
-            false);
-
-        int editable_length =
-            static_cast<int>(line_content.size());
-
-        if (!line_content.empty() &&
-            line_content.back() == '\n')
-        {
-            --editable_length;
-        }
-
-        const size_t space_begin = std::min(
-            text.size(),
-            static_cast<size_t>(
-                line_begin + std::max(editable_length, 0)));
-
-        const size_t found =
-            text.find_first_not_of(' ', space_begin);
-
-        const size_t space_end =
-            found == Rml::String::npos
-            ? text.size()
-            : found;
-
-        const size_t trailing_spaces =
-            space_end - space_begin;
-
-        if (trailing_spaces > 0)
-        {
-            line_size +=
-                static_cast<int>(trailing_spaces);
-
-            if (space_end < text.size() &&
-                text[space_end] == '\n')
-            {
-                ++line_size;
-            }
-
-            if (space_end == text.size())
-                last_line = true;
-        }
-
-        if (line_size <= 0)
-            return line_count;
-
-        const int next_line_begin = std::clamp(
-            line_begin + line_size,
-            line_begin,
-            static_cast<int>(text.size()));
-
-        const bool explicit_newline =
-            next_line_begin > line_begin &&
-            text[static_cast<size_t>(next_line_begin - 1)] == '\n';
-
-        // Caret lies inside this visual line.
-        if (caret_position < next_line_begin)
-            return line_count;
-
-        // Caret is exactly at the visual line boundary.
-        if (caret_position == next_line_begin)
-        {
-            // After an explicit newline, the caret belongs
-            // to the next visual row.
-            if (explicit_newline)
-                return line_count + 1;
-
-            // A soft-wrap boundary remains at the end
-            // of the preceding visual row.
-            return line_count;
-        }
-
-        line_begin = next_line_begin;
-        ++line_count;
-
-        if (last_line)
-            break;
-    }
-
-    return line_count;
-}
-
-
-/* ---------------------------------------------------------
    NATIVE ROW REQUIREMENT (multiline layout)
-
-   If the content is taller than the box, our estimate
-   under-counted. Return how many rows the native layout
-   really needs so the panel is never shorter than the text.
 --------------------------------------------------------- */
 
 int GetNativeRequiredRows(InputState& state)
@@ -535,6 +408,7 @@ int GetNativeRequiredRows(InputState& state)
     if (line_height <= 0.0f)
         return 1;
 
+    // Read client height first: it brings layout up to date.
     const float client_height =
         state.input->GetClientHeight();
 
@@ -580,28 +454,15 @@ float GetTextWidth(
 
 
 /* ---------------------------------------------------------
-   WOLLIX-STYLE INTERNAL SCROLL SYNC
-
-   1. Read the actual caret selection position.
-   2. Resolve its visual row using RmlUi line layout.
-   3. Calculate the caret's vertical content position.
-   4. Keep the caret visible with the minimum scroll
-      adjustment required.
-   5. Clamp scrolling to the native scroll boundaries.
-
-   RmlUi remains responsible for actual scrolling,
-   clipping, mouse-wheel input and scrollbar rendering.
+   SCROLL SYNC
 --------------------------------------------------------- */
 
 void SyncScroll(
     InputState& state,
     bool force_top,
-    bool follow_caret)
+    bool follow_end)
 {
     Rml::Element* input = state.input;
-
-    if (!input)
-        return;
 
     if (force_top)
     {
@@ -609,151 +470,49 @@ void SyncScroll(
         return;
     }
 
-    // Read client height first to update layout.
+    const float line_height = input->GetLineHeight();
+
+    if (line_height <= 0.0f)
+        return;
+
+    // Read client height first: it brings layout up to date.
     const float client_height =
         input->GetClientHeight();
 
     const float scroll_height =
         input->GetScrollHeight();
 
-    const float line_height =
-        input->GetLineHeight();
+    const int hidden_rows = std::max(
+        0,
+        static_cast<int>(
+            std::floor(
+                (scroll_height - client_height) /
+                    line_height +
+                0.5f)));
 
-    if (client_height <= 0.0f ||
-        line_height <= 0.0f)
+    const float current_top = input->GetScrollTop();
+
+    // Everything fits: nothing may stay scrolled away.
+    if (hidden_rows == 0)
     {
+        if (current_top > kGeometryEpsilon)
+            input->SetScrollTop(0.0f);
+
         return;
     }
 
-    // Native maximum scroll boundary.
-    const float max_scroll = std::max(
-        0.0f,
-        scroll_height - client_height);
-
-    // Keep the current native scroll position valid.
-    float current_top = std::clamp(
-        input->GetScrollTop(),
-        0.0f,
-        max_scroll);
-
-    if (std::fabs(
-            input->GetScrollTop() - current_top) >
-        kGeometryEpsilon)
+    // Overflow (max height reached): follow typing
+    // position in whole-row steps.
+    if (follow_end)
     {
-        input->SetScrollTop(current_top);
-    }
+        const float target =
+            static_cast<float>(hidden_rows) * line_height;
 
-    if (!follow_caret || max_scroll <= 0.0f)
-        return;
-
-    Rml::ElementText* text_element =
-        GetTextElement(state.input);
-
-    if (!text_element)
-        return;
-
-    // Retrieve the current caret/selection range.
-    int selection_start = 0;
-    int selection_end = 0;
-
-    Rml::String selected_text;
-
-    state.input->GetSelection(
-        &selection_start,
-        &selection_end,
-        &selected_text);
-
-    /*
-        Do not interfere with active text selection.
-        Normal typing leaves start == end.
-    */
-
-    if (selection_start != selection_end)
-        return;
-
-    const int caret_position =
-        std::clamp(
-            selection_end,
-            0,
-            static_cast<int>(
-                text_element->GetText().size()));
-
-    const float cursor_width =
-        std::round(
-            Rml::ElementUtilities::
-                GetDensityIndependentPixelRatio(text_element));
-
-    const float text_width =
-        state.last_panel_width > 1.0f
-        ? state.last_panel_width
-        : input->GetClientWidth();
-
-    // Find the visual line occupied by the caret.
-    const int caret_row = GetCaretVisualRow(
-        text_element,
-        text_width,
-        cursor_width,
-        caret_position);
-
-    /*
-        ElementText is positioned within the textarea.
-        Include its top offset so the caret position
-        matches the actual content coordinate system.
-    */
-
-    const float text_origin_top =
-        text_element->GetOffsetParent() == input
-        ? text_element->GetOffsetTop()
-        : 0.0f;
-
-    const float caret_top =
-        text_origin_top +
-        static_cast<float>(caret_row) * line_height;
-
-    const float caret_bottom =
-        caret_top + line_height;
-
-    const float viewport_top =
-        current_top;
-
-    const float viewport_bottom =
-        current_top + client_height;
-
-    float target_scroll = current_top;
-
-    /*
-        Wollix-style minimal adjustment:
-
-        If caret is above viewport:
-            Scroll upward only enough to reveal it.
-
-        If caret is below viewport:
-            Scroll downward only enough to reveal it.
-
-        If caret is already visible:
-            Keep the current scroll position.
-    */
-
-    if (caret_top < viewport_top)
-    {
-        target_scroll = caret_top;
-    }
-    else if (caret_bottom > viewport_bottom)
-    {
-        target_scroll =
-            caret_bottom - client_height;
-    }
-
-    target_scroll = std::clamp(
-        target_scroll,
-        0.0f,
-        max_scroll);
-
-    if (std::fabs(
-            target_scroll - current_top) >
-        kGeometryEpsilon)
-    {
-        input->SetScrollTop(target_scroll);
+        if (std::fabs(current_top - target) >
+            kGeometryEpsilon)
+        {
+            input->SetScrollTop(target);
+        }
     }
 }
 
@@ -761,7 +520,7 @@ void SyncScroll(
 /* ---------------------------------------------------------
    RESET MULTILINE
 
-   Always a full reset.
+   Restore the native BreakWord behaviour after clearing.
 --------------------------------------------------------- */
 
 void ResetMultiline(InputState& state)
@@ -779,10 +538,20 @@ void ResetMultiline(InputState& state)
 
     state.last_value.clear();
 
-    /*
-        Do not change the native caret/selection here.
-        RmlUi owns the active deletion operation.
-    */
+    if (state.word_break_configured)
+    {
+        if (Rml::ElementText* text_element =
+                GetTextElement(state.input))
+        {
+            text_element->RemoveProperty("word-break");
+        }
+
+        state.input->SetProperty(
+            "word-break",
+            "break-word");
+    }
+
+    state.word_break_configured = false;
 
     SetClass(
         state.bar,
@@ -791,6 +560,7 @@ void ResetMultiline(InputState& state)
         false);
 
     state.input->RemoveProperty("height");
+
     state.bar->RemoveProperty("height");
     state.chat->RemoveProperty("bottom");
 
@@ -801,8 +571,6 @@ void ResetMultiline(InputState& state)
 
 /* ---------------------------------------------------------
    APPLY MULTILINE GEOMETRY
-
-   The visible height is always a whole number of rows.
 --------------------------------------------------------- */
 
 void ApplyMultilineLayout(
@@ -826,6 +594,7 @@ void ApplyMultilineLayout(
     if (line_height <= 0.0f)
         return;
 
+    // How many whole rows fit into the responsive max height.
     const int maximum_rows = std::max(
         1,
         static_cast<int>(
@@ -866,6 +635,11 @@ void ApplyMultilineLayout(
             chat_bottom -
             state.last_chat_bottom) > kGeometryEpsilon;
 
+    /*
+        Do not rewrite layout when typing within the same row
+        or after the maximum height has been reached.
+    */
+
     if (geometry_changed)
     {
         state.input->SetProperty(
@@ -905,8 +679,11 @@ void ApplyMultilineLayout(
 
    1. Arrow state
    2. First-line shift
-   3. Full-width multiline layout
-   4. Caret-aware internal scrolling
+   3. Remove BreakWord local override AFTER shift
+   4. Use RML multiline BreakAll rule
+   5. Native available-width calculation
+   6. Native-compatible line counting
+   7. Scroll sync
 --------------------------------------------------------- */
 
 void UpdateInput(InputState& state)
@@ -973,6 +750,7 @@ void UpdateInput(InputState& state)
                 first_line_width,
                 cursor_width);
 
+        // RmlUi may already have wrapped before our estimate did.
         const bool already_wrapped =
             !reached_width && HasNativeWrapped(state);
 
@@ -990,6 +768,10 @@ void UpdateInput(InputState& state)
             kBarId,
             "multiline",
             true);
+
+        // Remove the local BreakWord override.
+        // The multiline RML selector now controls wrapping.
+        ConfigureMultilineWordBreak(state);
     }
 
 
@@ -1004,14 +786,23 @@ void UpdateInput(InputState& state)
 
     float full_width = estimated_width;
 
+    /*
+        On the shift frame the new class is not laid out yet,
+        so use the designed width.
+
+        Afterwards use RmlUi's actual native available width:
+        GetClientWidth() - Padding frame.
+    */
+
     if (!just_shifted)
     {
         const float real_width =
+            state.input->GetClientWidth() -
             state.input->GetBox()
-                .GetSize(Rml::BoxArea::Content).x;
+                .GetFrameSize(Rml::BoxArea::Padding).x;
 
         if (real_width > 1.0f)
-            full_width = std::min(estimated_width, real_width);
+            full_width = real_width;
     }
 
     const bool responsive_size_changed =
@@ -1023,30 +814,35 @@ void UpdateInput(InputState& state)
             full_width -
             state.last_panel_width) > kGeometryEpsilon;
 
-    int line_count = CountWrappedLines(
+    // Match RmlUi's native caret-width reservation.
+    const int line_count = CountWrappedLines(
         text_element,
         full_width,
         cursor_width);
 
+    int corrected_line_count = line_count;
+
+    // After the shift frame also respect what RmlUi really laid out.
     if (!just_shifted)
     {
-        line_count = std::max(
-            line_count,
+        corrected_line_count = std::max(
+            corrected_line_count,
             GetNativeRequiredRows(state));
     }
 
     const bool append_only =
         IsAppendOnly(state.last_value, value);
 
+    // Do not collapse during ordinary forward typing.
     if (append_only && !responsive_size_changed)
     {
-        line_count = std::max(
-            line_count,
+        corrected_line_count = std::max(
+            corrected_line_count,
             state.last_line_count);
     }
 
     const bool line_count_changed =
-        line_count != state.last_line_count;
+        corrected_line_count != state.last_line_count;
 
     if (just_shifted ||
         line_count_changed ||
@@ -1054,23 +850,17 @@ void UpdateInput(InputState& state)
     {
         ApplyMultilineLayout(
             state,
-            line_count,
+            corrected_line_count,
             control_height,
             full_width);
     }
 
-    /*
-        Keep the caret visible after every text change,
-        not only while appending at the end.
-
-        The actual scroll adjustment is performed by
-        SyncScroll() using the current caret position.
-    */
-
+    // Shift frame with a single row: layout is still settling,
+    // the only correct offset is the top.
     SyncScroll(
         state,
-        just_shifted && line_count == 1,
-        true);
+        just_shifted && corrected_line_count == 1,
+        append_only);
 
     state.last_value = value;
 }
@@ -1081,7 +871,7 @@ void UpdateInput(InputState& state)
 
    click         = Wing expand/collapse
    change        = Textarea updates
-   transitionend = Re-sync after animated resize
+   transitionend = Re-sync scroll after animated resize
 --------------------------------------------------------- */
 
 bool HandleRmlEvent(
@@ -1151,7 +941,7 @@ bool HandleRmlEvent(
                 InputState& state = State();
 
                 if (state.first_line_shifted)
-                    SyncScroll(state, false, true);
+                    SyncScroll(state, false, false);
             }
         }
 
@@ -1179,6 +969,11 @@ bool RegisterObsidianWingChat()
             kModuleName,
             "change",
             &HandleRmlEvent);
+
+    /*
+        Best effort only: the module works without it,
+        so the result does not affect registration success.
+    */
 
     (void)Ultron_RegisterRmlEventHandler(
         kModuleName,
