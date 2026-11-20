@@ -443,13 +443,6 @@ float GetTextWidth(
 
    Uses logical hidden rows, but clamps to the actual
    native scroll range after document layout is updated.
-
-   Example with four visible rows:
-
-       4 lines -> 0 hidden
-       5 lines -> 1 hidden
-       6 lines -> 2 hidden
-       7 lines -> 3 hidden
 --------------------------------------------------------- */
 
 void SyncScroll(
@@ -566,11 +559,6 @@ void ResetMultiline(InputState& state)
 
 /* ---------------------------------------------------------
    APPLY MULTILINE GEOMETRY
-
-   Explicitly synchronize textarea width and height.
-
-   Save maximum_rows even after maximum panel height
-   has been reached.
 --------------------------------------------------------- */
 
 void ApplyMultilineLayout(
@@ -642,12 +630,6 @@ void ApplyMultilineLayout(
             chat_bottom -
             state.last_chat_bottom) > kGeometryEpsilon;
 
-    /*
-        Do not rewrite layout when nothing changed.
-
-        Width, height and panel geometry are updated together.
-    */
-
     if (geometry_changed)
     {
         state.input->SetProperty(
@@ -680,7 +662,6 @@ void ApplyMultilineLayout(
     }
 
     // Always update logical rows and visible-row limit.
-    // This must also happen after the panel reaches max height.
     state.last_line_count = line_count;
     state.last_max_rows = maximum_rows;
 
@@ -701,7 +682,7 @@ void ApplyMultilineLayout(
    7. Count actual wrapped lines.
    8. Apply panel geometry.
    9. Update document layout.
-  10. Synchronize scroll.
+  10. TEST 1: Manual SyncScroll disabled.
 --------------------------------------------------------- */
 
 void UpdateInput(InputState& state)
@@ -815,14 +796,7 @@ void UpdateInput(InputState& state)
 
     /* FULL-WIDTH MULTILINE */
 
-    /*
-        Use the desired width from the parent bar.
-
-        Do not read the textarea's old explicit width here,
-        because that would prevent it from growing while
-        the parent is still animating its expansion.
-    */
-
+    // Calculate the desired width from the parent input bar.
     const float full_width =
         GetTextWidth(
             state,
@@ -875,11 +849,8 @@ void UpdateInput(InputState& state)
     }
 
     /*
-        IMPORTANT RmlUi 6.3 TIMING FIX
-
-        Update panel/input dimensions first.
-        Then synchronously update document layout.
-        Only afterwards read the scroll geometry.
+        Update the document layout before scrolling.
+        Kept enabled for Test 1.
     */
 
     if (state.document)
@@ -887,12 +858,18 @@ void UpdateInput(InputState& state)
         state.document->UpdateDocument();
     }
 
-    // The document update can make the latest textarea
-    // content and scroll range available to SyncScroll().
-    SyncScroll(
-        state,
-        just_shifted && final_line_count == 1,
-        append_only);
+    /*
+        TEST 1:
+        Temporarily disable manual scrolling.
+
+        This lets RmlUi's native textarea scrolling
+        operate without our explicit SyncScroll call.
+    */
+
+    // SyncScroll(
+    //     state,
+    //     just_shifted && final_line_count == 1,
+    //     append_only);
 
     state.last_value = value;
 }
