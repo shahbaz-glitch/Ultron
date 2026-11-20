@@ -48,6 +48,9 @@ struct InputState
     bool word_break_configured = false;
     bool first_line_shifted = false;
 
+    // Prevent recursive event handling during document update.
+    bool document_update_in_progress = false;
+
     int last_line_count = 0;
 
     float last_control_height = 0.0f;
@@ -133,14 +136,7 @@ Rml::ElementText* GetTextElement(
 /* ---------------------------------------------------------
    MULTILINE WORD BREAK
 
-   Original:
-       break-word
-
-   After first-line shift:
-       break-all
-
-   WordBreak is inherited and forces native text
-   formatting through RmlUi's property update path.
+   Preserve complete words after first-line shift.
 --------------------------------------------------------- */
 
 void ConfigureMultilineWordBreak(InputState& state)
@@ -150,12 +146,12 @@ void ConfigureMultilineWordBreak(InputState& state)
 
     if (!state.input->SetProperty(
             "word-break",
-            "break-all"))
+            "break-word"))
     {
         Rml::Log::Message(
             Rml::Log::LT_WARNING,
             "ObsidianWingChat: Failed to configure "
-            "word-break: break-all.");
+            "word-break: break-word.");
 
         return;
     }
@@ -271,7 +267,7 @@ bool HasNativeWrapped(InputState& state)
     if (line_height <= 0.0f)
         return false;
 
-    // Read client height first: it brings layout up to date.
+    // Read client height first.
     const float client_height =
         state.input->GetClientHeight();
 
@@ -288,10 +284,10 @@ bool HasNativeWrapped(InputState& state)
 /* ---------------------------------------------------------
    RMLUI-NATIVE LINE COUNT
 
-   Matches the native textarea formatting algorithm:
+   Matches native textarea formatting:
    - Actual available width.
    - Native caret-width reservation.
-   - Native GenerateLine() consumed length.
+   - GenerateLine() consumed source length.
    - Native trailing-space handling.
 --------------------------------------------------------- */
 
@@ -309,7 +305,6 @@ int CountWrappedLines(
     if (text.empty())
         return 1;
 
-    // Match WidgetTextInput::FormatText().
     const float maximum_line_width =
         available_width - cursor_width;
 
@@ -339,7 +334,6 @@ int CountWrappedLines(
             false,
             false);
 
-        // Match native editable-length handling.
         int editable_length =
             static_cast<int>(line_content.size());
 
@@ -349,7 +343,6 @@ int CountWrappedLines(
             --editable_length;
         }
 
-        // Match native trailing-space handling.
         const size_t space_begin = std::min(
             text.size(),
             static_cast<size_t>(
@@ -388,7 +381,6 @@ int CountWrappedLines(
             break;
         }
 
-        // Advance using actual consumed source length.
         line_begin += line_size;
         ++line_count;
 
@@ -400,42 +392,7 @@ int CountWrappedLines(
 
 
 /* ---------------------------------------------------------
-   NATIVE ROW REQUIREMENT (multiline layout)
---------------------------------------------------------- */
-
-int GetNativeRequiredRows(InputState& state)
-{
-    const float line_height =
-        state.input->GetLineHeight();
-
-    if (line_height <= 0.0f)
-        return 1;
-
-    // Read client height first: it brings layout up to date.
-    const float client_height =
-        state.input->GetClientHeight();
-
-    const float scroll_height =
-        state.input->GetScrollHeight();
-
-    if (scroll_height - client_height <
-        line_height * 0.5f)
-    {
-        return 1;
-    }
-
-    return std::max(
-        1,
-        static_cast<int>(
-            std::floor(scroll_height / line_height + 0.5f)));
-}
-
-
-/* ---------------------------------------------------------
    RESPONSIVE TEXT WIDTH
-
-   Calculates the desired textarea content width
-   from the actual input-bar width and multiline offsets.
 --------------------------------------------------------- */
 
 float GetTextWidth(
@@ -461,6 +418,13 @@ float GetTextWidth(
 
 /* ---------------------------------------------------------
    SCROLL SYNC
+
+   IMPORTANT:
+   This function runs AFTER ElementDocument::UpdateDocument().
+   RmlUi's native scrollable overflow is therefore current.
+
+   hidden_rows is measured from the actual formatted
+   textarea content and viewport.
 --------------------------------------------------------- */
 
 void SyncScroll(
@@ -476,12 +440,13 @@ void SyncScroll(
         return;
     }
 
-    const float line_height = input->GetLineHeight();
+    const float line_height =
+        input->GetLineHeight();
 
     if (line_height <= 0.0f)
         return;
 
-    // Read client height first: it brings layout up to date.
+    // Document layout has already been refreshed.
     const float client_height =
         input->GetClientHeight();
 
@@ -496,9 +461,10 @@ void SyncScroll(
                     line_height +
                 0.5f)));
 
-    const float current_top = input->GetScrollTop();
+    const float current_top =
+        input->GetScrollTop();
 
-    // Everything fits: nothing may stay scrolled away.
+    // Everything fits: stay at the top.
     if (hidden_rows == 0)
     {
         if (current_top > kGeometryEpsilon)
@@ -507,8 +473,7 @@ void SyncScroll(
         return;
     }
 
-    // Overflow (max height reached): follow typing
-    // position in whole-row steps.
+    // Follow the caret one native row at a time.
     if (follow_end)
     {
         const float target =
@@ -525,9 +490,6 @@ void SyncScroll(
 
 /* ---------------------------------------------------------
    RESET MULTILINE
-
-   Restore the original responsive auto-width and
-   native BreakWord behaviour after clearing.
 --------------------------------------------------------- */
 
 void ResetMultiline(InputState& state)
@@ -545,7 +507,6 @@ void ResetMultiline(InputState& state)
 
     state.last_value.clear();
 
-    // Restore RmlUi's original word-breaking behaviour.
     if (state.word_break_configured)
     {
         state.input->SetProperty(
@@ -561,9 +522,7 @@ void ResetMultiline(InputState& state)
         "multiline",
         false);
 
-    // Remove the explicit multiline width.
     state.input->RemoveProperty("width");
-
     state.input->RemoveProperty("height");
 
     state.bar->RemoveProperty("height");
@@ -576,15 +535,6 @@ void ResetMultiline(InputState& state)
 
 /* ---------------------------------------------------------
    APPLY MULTILINE GEOMETRY
-
-   WIDTH FIX:
-
-   Explicitly synchronize textarea width with the
-   complete available width after first-line shift.
-
-   Width is also tracked in geometry_changed so that
-   an animated input-bar resize cannot leave the
-   textarea stuck at an earlier narrow width.
 --------------------------------------------------------- */
 
 void ApplyMultilineLayout(
@@ -608,7 +558,6 @@ void ApplyMultilineLayout(
     if (line_height <= 0.0f)
         return;
 
-    // How many whole rows fit into the responsive max height.
     const int maximum_rows = std::max(
         1,
         static_cast<int>(
@@ -636,14 +585,6 @@ void ApplyMultilineLayout(
         bar_height +
         control_height * (11.52f / kControlUnits);
 
-    /*
-        IMPORTANT:
-        Width is now part of the geometry comparison.
-
-        If the parent bar expands, full_text_width changes
-        and the textarea width will be updated too.
-    */
-
     const bool width_changed =
         std::fabs(
             full_text_width -
@@ -664,14 +605,8 @@ void ApplyMultilineLayout(
             chat_bottom -
             state.last_chat_bottom) > kGeometryEpsilon;
 
-    /*
-        Do not rewrite layout when nothing changed.
-        Width, height and panel geometry are updated together.
-    */
-
     if (geometry_changed)
     {
-        // Force the textarea to occupy the full calculated width.
         state.input->SetProperty(
             "width",
             Pixels(full_text_width));
@@ -702,9 +637,7 @@ void ApplyMultilineLayout(
     }
 
     state.last_line_count = line_count;
-
-    state.last_control_height =
-        control_height;
+    state.last_control_height = control_height;
 }
 
 
@@ -713,11 +646,11 @@ void ApplyMultilineLayout(
 
    1. Arrow state
    2. First-line shift
-   3. Activate BreakAll AFTER shift
-   4. Calculate full responsive textarea width
-   5. Explicitly synchronize textarea width
-   6. Native-compatible line counting
-   7. Scroll sync
+   3. Preserve complete words
+   4. Calculate responsive textarea width
+   5. Apply multiline geometry
+   6. Force RmlUi document layout update
+   7. Synchronize native scroll range
 --------------------------------------------------------- */
 
 void UpdateInput(InputState& state)
@@ -725,10 +658,15 @@ void UpdateInput(InputState& state)
     if (!state.input ||
         !state.bar ||
         !state.wing_hit ||
-        !state.chat)
+        !state.chat ||
+        !state.document)
     {
         return;
     }
+
+    // Do not recursively update the document during layout.
+    if (state.document_update_in_progress)
+        return;
 
     const Rml::String value =
         state.input->GetValue();
@@ -784,7 +722,6 @@ void UpdateInput(InputState& state)
                 first_line_width,
                 cursor_width);
 
-        // RmlUi may already have wrapped before our estimate did.
         const bool already_wrapped =
             !reached_width && HasNativeWrapped(state);
 
@@ -803,20 +740,11 @@ void UpdateInput(InputState& state)
             "multiline",
             true);
 
-        // Change word breaking only AFTER first-line shift.
         ConfigureMultilineWordBreak(state);
     }
 
 
     /* FULL-WIDTH MULTILINE */
-
-    /*
-        Use the desired width from the parent bar.
-
-        Do not read the textarea's old explicit width here,
-        because that would prevent it from growing when the
-        parent is still animating its expansion.
-    */
 
     const float full_width =
         GetTextWidth(
@@ -834,35 +762,27 @@ void UpdateInput(InputState& state)
             full_width -
             state.last_panel_width) > kGeometryEpsilon;
 
-    // Match RmlUi's native caret-width reservation.
-    const int line_count = CountWrappedLines(
-        text_element,
-        full_width,
-        cursor_width);
-
-    int corrected_line_count = line_count;
-
-    // After the shift frame also respect what RmlUi really laid out.
-    if (!just_shifted)
-    {
-        corrected_line_count = std::max(
-            corrected_line_count,
-            GetNativeRequiredRows(state));
-    }
+    const int line_count =
+        CountWrappedLines(
+            text_element,
+            full_width,
+            cursor_width);
 
     const bool append_only =
         IsAppendOnly(state.last_value, value);
 
+    int final_line_count = line_count;
+
     // Do not collapse during ordinary forward typing.
     if (append_only && !responsive_size_changed)
     {
-        corrected_line_count = std::max(
-            corrected_line_count,
+        final_line_count = std::max(
+            final_line_count,
             state.last_line_count);
     }
 
     const bool line_count_changed =
-        corrected_line_count != state.last_line_count;
+        final_line_count != state.last_line_count;
 
     if (just_shifted ||
         line_count_changed ||
@@ -870,16 +790,37 @@ void UpdateInput(InputState& state)
     {
         ApplyMultilineLayout(
             state,
-            corrected_line_count,
+            final_line_count,
             control_height,
             full_width);
     }
 
-    // Shift frame with a single row: layout is still settling,
-    // the only correct offset is the top.
+
+    /* NATIVE RMLUI LAYOUT REFRESH */
+
+    /*
+        Critical ordering fix:
+
+        The change event is dispatched from AddCharacters()
+        BEFORE WidgetTextInput finishes its normal layout.
+
+        UpdateDocument() now processes the changed textarea
+        dimensions and recalculates its native scrollable
+        overflow rectangle before SyncScroll() runs.
+    */
+
+    state.document_update_in_progress = true;
+
+    state.document->UpdateDocument();
+
+    state.document_update_in_progress = false;
+
+
+    /* SCROLL SYNC */
+
     SyncScroll(
         state,
-        just_shifted && corrected_line_count == 1,
+        just_shifted && final_line_count == 1,
         append_only);
 
     state.last_value = value;
@@ -891,7 +832,7 @@ void UpdateInput(InputState& state)
 
    click         = Wing expand/collapse
    change        = Textarea updates
-   transitionend = Re-sync width and scroll after animation
+   transitionend = Re-sync after animated resize
 --------------------------------------------------------- */
 
 bool HandleRmlEvent(
@@ -899,6 +840,12 @@ bool HandleRmlEvent(
     void*)
 {
     if (!event)
+        return false;
+
+    InputState& current_state = State();
+
+    // Ignore recursive events dispatched during manual layout.
+    if (current_state.document_update_in_progress)
         return false;
 
     Rml::Element* target =
@@ -963,13 +910,6 @@ bool HandleRmlEvent(
 
                 if (state.first_line_shifted)
                 {
-                    /*
-                        The input-bar width transition has
-                        finished. Recalculate the final
-                        desired width instead of retaining
-                        the intermediate animation width.
-                    */
-
                     if (id == kBarId)
                     {
                         UpdateInput(state);
