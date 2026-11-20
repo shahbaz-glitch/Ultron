@@ -1,484 +1,494 @@
-<rml>  
-<head>  
-    <title>Obsidian Wing Chat</title>  
-    <style>  body {  
-    width: 100%;  
-    height: 100%;  
-    margin: 0px;  
-    padding: 0px;  
-    overflow: hidden;  
-    font-family: "Roboto Flex";  
-}  
-
-/* CHAT AREA */  
-
-#chat-area {  
-    position: absolute;  
-    left: 6%;  
-    right: 6%;  
-    bottom: 25.74vw;  
-    height: 75%;  
-    display: block;  
-    overflow-y: auto;  
-    padding: 1.96vw 0px;  
-}  
-
-/* CHAT BUBBLE */  
-
-.chat-message {  
-    display: block;  
-    width: auto;  
-    max-width: 88%;  
-    margin-left: auto;  
-    margin-bottom: 2.45vw;  
-    padding: 2.94vw 3.92vw;  
-
-    border: 0.25vw #65dfff77;  
-    border-radius: 7.60vw 2.94vw 7.60vw 2.94vw;  
-
-    decorator: linear-gradient(  
-        125deg,  
-        #a9f2ff08 0%,  
-        #0878b51c 27%,  
-        #061a2b88 52%,  
-        #5bdcff08 100%  
-    ) border-box;  
-
-    box-shadow:  
-        #d6faff44 0.25vw 0.25vw 0.49vw 0px inset,  
-        #25aaff33 -0.25vw -0.25vw 0.74vw 0px inset;  
-
-    color: #dffaff;  
-    font-size: 3.92vw;  
-    line-height: 1.45;  
-    white-space: pre-wrap;  
-}  
-
-/* INPUT BAR */  
-
-#input-bar {  
-    position: absolute;  
-    display: block;  
 
-    left: 6%;  
-    bottom: 7.35vw;  
+<rml>
+<head>
+    <title>Obsidian Wing Chat</title>
+    <style>
+
+    body {
+        width: 100%;
+        height: 100%;
+        margin: 0px;
+        padding: 0px;
+        overflow: hidden;
+        font-family: "Roboto Flex";
+    }
+
+    /* CHAT AREA */
+
+    #chat-area {
+        position: absolute;
+        left: 6%;
+        right: 6%;
+        bottom: 25.74vw;
+        height: 75%;
+        display: block;
+        overflow-y: auto;
+        padding: 1.96vw 0px;
+    }
+
+    /* CHAT BUBBLE */
+
+    .chat-message {
+        display: block;
+        width: auto;
+        max-width: 88%;
+        margin-left: auto;
+        margin-bottom: 2.45vw;
+        padding: 2.94vw 3.92vw;
+
+        border: 0.25vw #65dfff77;
+        border-radius: 7.60vw 2.94vw 7.60vw 2.94vw;
 
-    width: 14.22vw;  
-    height: 14.22vw;  
+        decorator: linear-gradient(
+            125deg,
+            #a9f2ff08 0%,
+            #0878b51c 27%,
+            #061a2b88 52%,
+            #5bdcff08 100%
+        ) border-box;
 
-    border: 0.25vw #65dfff77;  
-    border-radius: 7.60vw 2.94vw 7.60vw 2.94vw;  
+        box-shadow:
+            #d6faff44 0.25vw 0.25vw 0.49vw 0px inset,
+            #25aaff33 -0.25vw -0.25vw 0.74vw 0px inset;
 
-    overflow: hidden;  
+        color: #dffaff;
+        font-size: 3.92vw;
+        line-height: 1.45;
+        white-space: pre-wrap;
+    }
 
-    decorator: linear-gradient(  
-        125deg,  
-        #a9f2ff08 0%,  
-        #0878b51c 27%,  
-        #061a2b88 52%,  
-        #5bdcff08 100%  
-    ) border-box;  
+    /* INPUT BAR */
 
-    box-shadow:  
-        #d6faff44 0.25vw 0.25vw 0.49vw 0px inset,  
-        #25aaff33 -0.25vw -0.25vw 0.74vw 0px inset;  
+    #input-bar {
+        position: absolute;
+        display: block;
 
-    transition:  
-        width 0.8s cubic-out,  
-        border-radius 0.7s linear-in-out;  
-}  
+        left: 6%;
+        bottom: 7.35vw;
 
-#input-bar.expanded {  
-    width: 88%;  
-}  
+        width: 14.22vw;
+        height: 14.22vw;
 
-/* MULTILINE INPUT BAR */  
+        border: 0.25vw #65dfff77;
+        border-radius: 7.60vw 2.94vw 7.60vw 2.94vw;
 
-#input-bar.multiline {  
-    /* Height controlled by UpdateInput(). */  
-}  
+        overflow: hidden;
 
-/* WING HIT AREA */  
+        decorator: linear-gradient(
+            125deg,
+            #a9f2ff08 0%,
+            #0878b51c 27%,
+            #061a2b88 52%,
+            #5bdcff08 100%
+        ) border-box;
 
-#wing-hit {  
-    position: absolute;  
-    left: 0px;  
-    bottom: 0px;  
+        box-shadow:
+            #d6faff44 0.25vw 0.25vw 0.49vw 0px inset,
+            #25aaff33 -0.25vw -0.25vw 0.74vw 0px inset;
 
-    width: 14.22vw;  
-    height: 14.22vw;  
+        transition:
+            width 0.8s cubic-out,
+            border-radius 0.7s linear-in-out;
+    }
 
-    z-index: 2;  
-}  
+    #input-bar.expanded {
+        width: 88%;
+    }
 
-/* WING DESIGN */  
+    /* MULTILINE INPUT BAR */
 
-#wing-button {  
-    position: absolute;  
-    left: 1.23vw;  
-    bottom: 1.72vw;  
+    #input-bar.multiline {
+        /* Height controlled by UpdateInput(). */
+    }
 
-    width: 11.76vw;  
-    height: 10.29vw;  
+    /* WING HIT AREA */
 
-    pointer-events: none;  
+    #wing-hit {
+        position: absolute;
+        left: 0px;
+        bottom: 0px;
 
-    transition: left 0.8s cubic-out;  
-}  
+        width: 14.22vw;
+        height: 14.22vw;
 
-#input-bar.expanded #wing-button {  
-    left: 4.2%;  
-}  
+        z-index: 2;
+    }
 
-/* MESSAGE INPUT */  
+    /* WING DESIGN */
 
-#message-input {  
-    position: absolute;  
+    #wing-button {
+        position: absolute;
+        left: 1.23vw;
+        bottom: 1.72vw;
 
-    left: 18.63vw;  
-    right: 12.99vw;  
-    top: 50%;  
+        width: 11.76vw;
+        height: 10.29vw;
 
-    width: auto;  
-    height: 7.35vw;  
-    max-height: 28.92vw;  
+        pointer-events: none;
 
-    margin-top: -3.68vw;  
-    padding: 0.74vw 0px 0.49vw 0px;  
+        transition: left 0.8s cubic-out;
+    }
 
-    font-size: 4.17vw;  
-    line-height: 5.88vw;  
+    #input-bar.expanded #wing-button {
+        left: 4.2%;
+    }
 
-    color: #dffaff;  
-    background-color: transparent;  
+    /* MESSAGE INPUT */
 
-    border-width: 0px;  
-    border-color: transparent;  
+    #message-input {
+        position: absolute;
 
-    overflow-y: auto;  
+        left: 18.63vw;
+        right: 12.99vw;
+        top: 50%;
 
-    caret-color: #65dfff;  
+        width: auto;
+        height: 7.35vw;
+        max-height: 28.92vw;
 
-    opacity: 0;  
+        margin-top: -3.68vw;
+        padding: 0.74vw 0px 0.49vw 0px;
 
-    transition: opacity 0.15s linear-in-out;  
-}  
+        font-size: 4.17vw;
+        line-height: 5.88vw;
 
-#input-bar.expanded #message-input {  
-    opacity: 1;  
-}  
+        color: #dffaff;
+        background-color: transparent;
 
-/*  
-    FIRST LINE SHIFT  
+        border-width: 0px;
+        border-color: transparent;
 
-    First line starts after the wing.  
+        overflow-y: auto;
 
-    Once wrapping begins, the textarea  
-    moves upward and uses full available width.  
-*/  
+        caret-color: #65dfff;
 
-#input-bar.multiline #message-input {  
-    left: 4.17vw;  
-    right: 2.45vw;  
-    top: 1.5vw;  
+        opacity: 0;
 
-    width: auto;  
-    margin-top: 0px;  
+        transition: opacity 0.15s linear-in-out;
+    }
 
-    padding: 0.74vw 0px 0.49vw 0px;  
-}  
+    #input-bar.expanded #message-input {
+        opacity: 1;
+    }
 
-/* SEND BUTTON */  
+    /*
+        FIRST LINE SHIFT
 
-#send-button {  
-    position: absolute;  
+        First line starts after the wing.
 
-    display: none;  
+        Once wrapping begins, the textarea
+        moves upward and uses full available width.
+    */
 
-    right: 2.45vw;  
-    bottom: 3.55vw;  
+    #input-bar.multiline #message-input {
+        left: 4.17vw;
+        right: 2.45vw;
+        top: 2.24vw;
 
-    width: 7.11vw;  
-    height: 7.11vw;  
+        width: auto;
+        max-height: none;
+        margin-top: 0px;
 
-    opacity: 0;  
-}  
+        padding: 0px;
+        overflow-x: hidden;
+        overflow-y: auto;
+    }
 
-#input-bar.expanded #send-button {  
-    display: block;  
-    opacity: 1;  
-}  
+    /* SEND BUTTON */
 
-/* PULSE AND ARROW WRAPPERS */  
+    #send-button {
+        position: absolute;
 
-#send-button .pulse-icon,  
-#send-button .arrow-icon {  
-    position: absolute;  
+        display: none;
 
-    left: 0px;  
-    top: 0px;  
+        right: 2.45vw;
+        bottom: 3.55vw;
 
-    width: 100%;  
-    height: 100%;  
+        width: 7.11vw;
+        height: 7.11vw;
 
-    transition: opacity 0.15s linear-in-out;  
-}  
+        opacity: 0;
+    }
 
-#send-button .pulse-icon svg,  
-#send-button .arrow-icon svg {  
-    width: 100%;  
-    height: 100%;  
-    display: block;  
-}  
+    #input-bar.expanded #send-button {
+        display: block;
+        opacity: 1;
+    }
 
-.pulse-icon {  
-    opacity: 1;  
-}  
+    /* PULSE AND ARROW WRAPPERS */
 
-.arrow-icon {  
-    opacity: 0;  
-}  
+    #send-button .pulse-icon,
+    #send-button .arrow-icon {
+        position: absolute;
 
-#input-bar.has-text .pulse-icon {  
-    opacity: 0;  
-}  
+        left: 0px;
+        top: 0px;
 
-#input-bar.has-text .arrow-icon {  
-    opacity: 1;  
-}  
+        width: 100%;
+        height: 100%;
 
+        transition: opacity 0.15s linear-in-out;
+    }
 
-/* LANDSCAPE RESPONSIVE SCALING */  
+    #send-button .pulse-icon svg,
+    #send-button .arrow-icon svg {
+        width: 100%;
+        height: 100%;
+        display: block;
+    }
 
-@media (orientation: landscape) {  
+    .pulse-icon {
+        opacity: 1;
+    }
 
-    /* CHAT AREA */  
+    .arrow-icon {
+        opacity: 0;
+    }
 
-    #chat-area {  
-        bottom: 25.74vh;  
-        padding: 1.96vh 0px;  
-    }  
+    #input-bar.has-text .pulse-icon {
+        opacity: 0;
+    }
 
-    /* CHAT BUBBLE */  
+    #input-bar.has-text .arrow-icon {
+        opacity: 1;
+    }
 
-    .chat-message {  
-        margin-bottom: 2.45vh;  
-        padding: 2.94vh 3.92vh;  
 
-        border: 0.25vh #65dfff77;  
-        border-radius: 7.60vh 2.94vh 7.60vh 2.94vh;  
+    /* LANDSCAPE RESPONSIVE SCALING */
 
-        box-shadow:  
-            #d6faff44 0.25vh 0.25vh 0.49vh 0px inset,  
-            #25aaff33 -0.25vh -0.25vh 0.74vh 0px inset;  
+    @media (orientation: landscape) {
 
-        font-size: 3.92vh;  
-    }  
+        /* CHAT AREA */
 
-    /* INPUT BAR */  
+        #chat-area {
+            bottom: 25.74vh;
+            padding: 1.96vh 0px;
+        }
 
-    #input-bar {  
-        bottom: 7.35vh;  
+        /* CHAT BUBBLE */
 
-        width: 14.22vh;  
-        height: 14.22vh;  
+        .chat-message {
+            margin-bottom: 2.45vh;
+            padding: 2.94vh 3.92vh;
 
-        border: 0.25vh #65dfff77;  
-        border-radius: 7.60vh 2.94vh 7.60vh 2.94vh;  
+            border: 0.25vh #65dfff77;
+            border-radius: 7.60vh 2.94vh 7.60vh 2.94vh;
 
-        box-shadow:  
-            #d6faff44 0.25vh 0.25vh 0.49vh 0px inset,  
-            #25aaff33 -0.25vh -0.25vh 0.74vh 0px inset;  
-    }  
+            box-shadow:
+                #d6faff44 0.25vh 0.25vh 0.49vh 0px inset,
+                #25aaff33 -0.25vh -0.25vh 0.74vh 0px inset;
 
-    /* WING HIT AREA */  
+            font-size: 3.92vh;
+        }
 
-    #wing-hit {  
-        width: 14.22vh;  
-        height: 14.22vh;  
-    }  
+        /* INPUT BAR */
 
-    /* WING DESIGN */  
+        #input-bar {
+            bottom: 7.35vh;
 
-    #wing-button {  
-        left: 1.23vh;  
-        bottom: 1.72vh;  
+            width: 14.22vh;
+            height: 14.22vh;
 
-        width: 11.76vh;  
-        height: 10.29vh;  
-    }  
+            border: 0.25vh #65dfff77;
+            border-radius: 7.60vh 2.94vh 7.60vh 2.94vh;
 
-    /* MESSAGE INPUT */  
+            box-shadow:
+                #d6faff44 0.25vh 0.25vh 0.49vh 0px inset,
+                #25aaff33 -0.25vh -0.25vh 0.74vh 0px inset;
+        }
 
-    #message-input {  
-        left: 18.63vh;  
-        right: 12.99vh;  
+        /* WING HIT AREA */
 
-        height: 7.35vh;  
-        max-height: 28.92vh;  
+        #wing-hit {
+            width: 14.22vh;
+            height: 14.22vh;
+        }
 
-        margin-top: -3.68vh;  
-        padding: 0.74vh 0px 0.49vh 0px;  
+        /* WING DESIGN */
 
-        font-size: 4.17vh;  
-        line-height: 5.88vh;  
-    }  
+        #wing-button {
+            left: 1.23vh;
+            bottom: 1.72vh;
 
-    /* MULTILINE INPUT */  
+            width: 11.76vh;
+            height: 10.29vh;
+        }
 
-    #input-bar.multiline #message-input {  
-        left: 4.17vh;  
-        right: 2.45vh;  
-        top: 1.5vh;  
+        /* MESSAGE INPUT */
 
-        margin-top: 0px;  
-        padding: 0.74vh 0px 0.49vh 0px;  
-    }  
+        #message-input {
+            left: 18.63vh;
+            right: 12.99vh;
 
-    /* SEND BUTTON */  
+            height: 7.35vh;
+            max-height: 28.92vh;
 
-    #send-button {  
-        right: 2.45vh;  
-        bottom: 3.55vh;  
+            margin-top: -3.68vh;
+            padding: 0.74vh 0px 0.49vh 0px;
 
-        width: 7.11vh;  
-        height: 7.11vh;  
-    }  
+            font-size: 4.17vh;
+            line-height: 5.88vh;
+        }
 
-}  
+        /* MULTILINE INPUT */
 
-</style>
+        #input-bar.multiline #message-input {
+            left: 4.17vh;
+            right: 2.45vh;
+            top: 2.24vh;
 
-</head>  <body>  <!-- CHAT AREA -->  
+            max-height: none;
+            margin-top: 0px;
+            padding: 0px;
+        }
 
-<div id="chat-area"></div>  
+        /* SEND BUTTON */
 
-<!-- INPUT BAR -->  
+        #send-button {
+            right: 2.45vh;
+            bottom: 3.55vh;
 
-<div id="input-bar">  
+            width: 7.11vh;
+            height: 7.11vh;
+        }
 
-    <!-- WING HIT AREA -->  
+    }
 
-    <div id="wing-hit"></div>  
+    </style>
+</head>
 
-    <!-- WING SVG -->  
+<body>
 
-    <svg id="wing-button"  
-         viewBox="0 0 54 44"  
-         xmlns="http://www.w3.org/2000/svg">  
+    <!-- CHAT AREA -->
 
-        <path  
-            d="M3 22L14 5H39L51 15L42 39H15L3 22Z"  
-            fill="#07131E"  
-            stroke="#5EDFF1"  
-            stroke-width="1.2"  
-            stroke-linejoin="round"/>  
+    <div id="chat-area"></div>
 
-        <path  
-            d="M10 22L18 10H36L44 16L37 34H18L10 22Z"  
-            fill="none"  
-            stroke="#6ADCF0"  
-            stroke-opacity=".55"  
-            stroke-width=".8"/>  
+    <!-- INPUT BAR -->
 
-        <path  
-            d="M18 30L31 11L35 15L23 33Z"  
-            fill="#8BF1FF"  
-            fill-opacity=".16"  
-            stroke="#A4F6FF"  
-            stroke-width="1.1"/>  
+    <div id="input-bar">
 
-        <path  
-            d="M23 29L32 15"  
-            fill="none"  
-            stroke="#C0FCFF"  
-            stroke-width="2"  
-            stroke-linecap="round"/>  
+        <!-- WING HIT AREA -->
 
-        <path  
-            d="M7 22H14M40 22H47"  
-            fill="none"  
-            stroke="#78E8F8"  
-            stroke-width="1"  
-            stroke-linecap="round"/>  
+        <div id="wing-hit"></div>
 
-    </svg>  
+        <!-- WING SVG -->
 
-    <!-- TEXT INPUT -->  
+        <svg id="wing-button"
+             viewBox="0 0 54 44"
+             xmlns="http://www.w3.org/2000/svg">
 
-    <textarea id="message-input" rows="1"></textarea>  
+            <path
+                d="M3 22L14 5H39L51 15L42 39H15L3 22Z"
+                fill="#07131E"
+                stroke="#5EDFF1"
+                stroke-width="1.2"
+                stroke-linejoin="round"/>
 
-    <!-- SEND BUTTON CONTAINER -->  
+            <path
+                d="M10 22L18 10H36L44 16L37 34H18L10 22Z"
+                fill="none"
+                stroke="#6ADCF0"
+                stroke-opacity=".55"
+                stroke-width=".8"/>
 
-    <div id="send-button">  
+            <path
+                d="M18 30L31 11L35 15L23 33Z"
+                fill="#8BF1FF"
+                fill-opacity=".16"
+                stroke="#A4F6FF"
+                stroke-width="1.1"/>
 
-        <!-- PULSE ICON -->  
+            <path
+                d="M23 29L32 15"
+                fill="none"
+                stroke="#C0FCFF"
+                stroke-width="2"
+                stroke-linecap="round"/>
 
-        <div class="pulse-icon">  
+            <path
+                d="M7 22H14M40 22H47"
+                fill="none"
+                stroke="#78E8F8"
+                stroke-width="1"
+                stroke-linecap="round"/>
 
-            <svg  
-                viewBox="0 0 38 38"  
-                xmlns="http://www.w3.org/2000/svg">  
+        </svg>
 
-                <path  
-                    d="M9 12L13 9V31L9 28Z"  
-                    fill="#16495C"  
-                    stroke="#65DFF2"  
-                    stroke-width=".8"  
-                    stroke-linejoin="round"/>  
+        <!-- TEXT INPUT -->
 
-                <path  
-                    d="M18 6L22 4V36L18 34Z"  
-                    fill="#247B96"  
-                    stroke="#9CEFFF"  
-                    stroke-width=".9"  
-                    stroke-linejoin="round"/>  
+        <textarea id="message-input" rows="1"></textarea>
 
-                <path  
-                    d="M27 12L31 9V31L27 28Z"  
-                    fill="#16495C"  
-                    stroke="#65DFF2"  
-                    stroke-width=".8"  
-                    stroke-linejoin="round"/>  
+        <!-- SEND BUTTON CONTAINER -->
 
-                <path  
-                    d="M13 10L13 30M22 5V35M31 10V30"  
-                    stroke="#D0FAFF"  
-                    stroke-opacity=".4"  
-                    stroke-width=".7"/>  
+        <div id="send-button">
 
-            </svg>  
+            <!-- PULSE ICON -->
 
-        </div>  
+            <div class="pulse-icon">
 
-        <!-- ARROW ICON -->  
+                <svg
+                    viewBox="0 0 38 38"
+                    xmlns="http://www.w3.org/2000/svg">
 
-        <div class="arrow-icon">  
+                    <path
+                        d="M9 12L13 9V31L9 28Z"
+                        fill="#16495C"
+                        stroke="#65DFF2"
+                        stroke-width=".8"
+                        stroke-linejoin="round"/>
 
-            <svg  
-                viewBox="0 0 38 38"  
-                xmlns="http://www.w3.org/2000/svg">  
+                    <path
+                        d="M18 6L22 4V36L18 34Z"
+                        fill="#247B96"
+                        stroke="#9CEFFF"
+                        stroke-width=".9"
+                        stroke-linejoin="round"/>
 
-                <path  
-                    d="M6 19.5L33 6L24.5 34L18.5 23L6 19.5Z"  
-                    fill="#16495C"  
-                    stroke="#83EDFF"  
-                    stroke-width="1.5"  
-                    stroke-linejoin="round"/>  
+                    <path
+                        d="M27 12L31 9V31L27 28Z"
+                        fill="#16495C"
+                        stroke="#65DFF2"
+                        stroke-width=".8"
+                        stroke-linejoin="round"/>
 
-                <path  
-                    d="M18.5 23L33 6"  
-                    stroke="#D0FAFF"  
-                    stroke-width="1.3"  
-                    stroke-linecap="round"/>  
+                    <path
+                        d="M13 10L13 30M22 5V35M31 10V30"
+                        stroke="#D0FAFF"
+                        stroke-opacity=".4"
+                        stroke-width=".7"/>
 
-            </svg>  
+                </svg>
 
-        </div>  
+            </div>
 
-    </div>  
+            <!-- ARROW ICON -->
 
-</div>
+            <div class="arrow-icon">
 
-</body>  
-</rml>  
+                <svg
+                    viewBox="0 0 38 38"
+                    xmlns="http://www.w3.org/2000/svg">
+
+                    <path
+                        d="M6 19.5L33 6L24.5 34L18.5 23L6 19.5Z"
+                        fill="#16495C"
+                        stroke="#83EDFF"
+                        stroke-width="1.5"
+                        stroke-linejoin="round"/>
+
+                    <path
+                        d="M18.5 23L33 6"
+                        stroke="#D0FAFF"
+                        stroke-width="1.3"
+                        stroke-linecap="round"/>
+
+                </svg>
+
+            </div>
+
+        </div>
+
+    </div>
+
+</body>
+</rml>
