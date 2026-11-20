@@ -683,6 +683,7 @@ void ApplyMultilineLayout(
    8. Apply panel geometry.
    9. Update document layout.
   10. TEST 1: Manual SyncScroll disabled.
+  11. TEST 2: Log exact fifth-line geometry.
 --------------------------------------------------------- */
 
 void UpdateInput(InputState& state)
@@ -850,7 +851,7 @@ void UpdateInput(InputState& state)
 
     /*
         Update the document layout before scrolling.
-        Kept enabled for Test 1.
+        Kept enabled for Test 1 and Test 2.
     */
 
     if (state.document)
@@ -859,11 +860,27 @@ void UpdateInput(InputState& state)
     }
 
     /*
+        TEST 2:
+        Capture actual textarea geometry after UpdateDocument().
+    */
+
+    Rml::Log::Message(
+        Rml::Log::LT_INFO,
+        "WING lines=%d max_rows=%d lh=%.1f ch=%.1f sh=%.1f top=%.1f append=%d",
+        final_line_count,
+        state.last_max_rows,
+        state.input->GetLineHeight(),
+        state.input->GetClientHeight(),
+        state.input->GetScrollHeight(),
+        state.input->GetScrollTop(),
+        append_only ? 1 : 0);
+
+    /*
         TEST 1:
         Temporarily disable manual scrolling.
 
-        This lets RmlUi's native textarea scrolling
-        operate without our explicit SyncScroll call.
+        RmlUi's native textarea scrolling is allowed
+        to operate without this explicit SyncScroll call.
     */
 
     // SyncScroll(
