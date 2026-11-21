@@ -149,6 +149,316 @@ jobs:
           echo "ANDROID_PROJECT=${ANDROID_PROJECT}" >> "${GITHUB_ENV}"
 
       # ============================================================
+      # PATCH SDL3 ANDROID IME (FIX GHOST TEXT & MID-LINE INSERTION)
+      # ============================================================
+
+      - name: Patch SDL3 Android IME (SDLInputConnection)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TARGET="${ANDROID_PROJECT}/app/src/main/java/org/libsdl/app/SDLInputConnection.java"
+          test -f "${TARGET}"
+
+          python3 - "${TARGET}" <<'PYEOF'
+          import re
+          import sys
+          from pathlib import Path
+
+          target = Path(sys.argv[1])
+          original = target.read_text(encoding="utf-8")
+
+          # Preserve every JNI native method declaration verbatim so
+          # SDL_android.c RegisterNatives always matches SDL_VERSION.
+          native_decls = re.findall(
+              r'^[ \t]*(?:(?:public|protected|private|static|final)\s+)*native\s+[^;]+;',
+              original,
+              flags=re.MULTILINE,
+          )
+
+          if not native_decls or not any("nativeCommitText" in d for d in native_decls):
+              raise RuntimeError(
+                  "Expected nativeCommitText declaration not found in SDLInputConnection.java"
+              )
+
+          native_block = "\n".join("    " + d.strip() for d in native_decls)
+
+          patched = f"""package org.libsdl.app;
+
+          import android.text.Editable;
+          import android.view.KeyCharacterMap;
+          import android.view.KeyEvent;
+          import android.view.View;
+          import android.view.inputmethod.BaseInputConnection;
+          import android.view.inputmethod.ExtractedText;
+          import android.view.inputmethod.ExtractedTextRequest;
+
+          class SDLInputConnection extends BaseInputConnection {{
+
+              protected String mCommittedText = "";
+              private String mComposingText = "";
+
+          {native_block}
+
+              public SDLInputConnection(View targetView, boolean fullEditor) {{
+                  // Always run in stateless mode (no hidden Editable shadow buffer)
+                  // so external text controls (RmlUi) remain the single source of truth.
+                  super(targetView, false);
+              }}
+
+              public void reset() {{
+                  mComposingText = "";
+                  mCommittedText = "";
+              }}
+
+              @Override
+              public Editable getEditable() {{
+                  return null;
+              }}
+
+              @Override
+              public CharSequence getTextBeforeCursor(int n, int flags) {{
+                  return "";
+              }}
+
+              @Override
+              public CharSequence getTextAfterCursor(int n, int flags) {{
+                  return "";
+              }}
+
+              @Override
+              public CharSequence getSelectedText(int flags) {{
+                  return null;
+              }}
+
+              @Override
+              public ExtractedText getExtractedText(ExtractedTextRequest request, int flags) {{
+                  return null;
+              }}
+
+              @Override
+              public boolean setComposingRegion(int start, int end) {{
+                  return true;
+              }}
+
+              private void sendKeyPress(int keyCode) {{
+                  SDLActivity.onNativeKeyDown(keyCode);
+                  SDLActivity.onNativeKeyUp(keyCode);
+              }}
+
+              private void commitUtf8Text(String text) {{
+                  if (text == null || text.isEmpty()) {{
+                      return;
+                  }}
+
+                  int start = 0;
+                  final int len = text.length();
+                  for (int i = 0; i < len; ++i) {{
+                      final char ch = text.charAt(i);
+                      if (ch == '\\n' || ch == '\\r') {{
+                          if (i > start) {{
+                              nativeCommitText(text.substring(start, i), 1);
+                          }}
+                          if (ch == '\\n') {{
+                              sendKeyPress(KeyEvent.KEYCODE_ENTER);
+                          }}
+                          start = i + 1;
+                      }}
+                  }}
+
+                  if (start < len) {{
+                      nativeCommitText(text.substring(start), 1);
+                  }}
+              }}
+
+              private static int commonCodePointPrefixLength(String a, String b) {{
+                  final int maxLen = Math.min(a.length(), b.length());
+                  int i = 0;
+                  while (i < maxLen) {{
+                      final int cpA = a.codePointAt(i);
+                      final int cpB = b.codePointAt(i);
+                      if (cpA != cpB) {{
+                          break;
+                      }}
+                      i += Character.charCount(cpA);
+                  }}
+                  return i;
+              }}
+
+              private void replaceComposing(String nextText, boolean finish) {{
+                  final String safeNext = (nextText != null) ? nextText : "";
+                  final int prefixLen = commonCodePointPrefixLength(mComposingText, safeNext);
+                  final int deleteCodePoints =
+                      mComposingText.codePointCount(prefixLen, mComposingText.length());
+
+                  for (int i = 0; i < deleteCodePoints; ++i) {{
+                      sendKeyPress(KeyEvent.KEYCODE_DEL);
+                  }}
+
+                  if (prefixLen < safeNext.length()) {{
+                      commitUtf8Text(safeNext.substring(prefixLen));
+                  }}
+
+                  mComposingText = finish ? "" : safeNext;
+                  mCommittedText = "";
+              }}
+
+              @Override
+              public boolean setComposingText(CharSequence text, int newCursorPosition) {{
+                  replaceComposing(text != null ? text.toString() : "", false);
+                  return true;
+              }}
+
+              @Override
+              public boolean commitText(CharSequence text, int newCursorPosition) {{
+                  replaceComposing(text != null ? text.toString() : "", true);
+                  return true;
+              }}
+
+              @Override
+              public boolean finishComposingText() {{
+                  mComposingText = "";
+                  mCommittedText = "";
+                  return true;
+              }}
+
+              @Override
+              public boolean deleteSurroundingText(int beforeLength, int afterLength) {{
+                  int deleteCodePoints = 0;
+                  int remaining = Math.max(beforeLength, 0);
+
+                  while (remaining > 0 && !mComposingText.isEmpty()) {{
+                      final int cp = mComposingText.codePointBefore(mComposingText.length());
+                      final int charCount = Character.charCount(cp);
+                      mComposingText = mComposingText.substring(
+                          0, mComposingText.length() - charCount);
+                      remaining = Math.max(0, remaining - charCount);
+                      ++deleteCodePoints;
+                  }}
+
+                  deleteCodePoints += remaining;
+
+                  for (int i = 0; i < deleteCodePoints; ++i) {{
+                      sendKeyPress(KeyEvent.KEYCODE_DEL);
+                  }}
+
+                  for (int i = 0; i < Math.max(afterLength, 0); ++i) {{
+                      sendKeyPress(KeyEvent.KEYCODE_FORWARD_DEL);
+                  }}
+
+                  return true;
+              }}
+
+              @Override
+              public boolean deleteSurroundingTextInCodePoints(int beforeLength, int afterLength) {{
+                  int deleteCodePoints = 0;
+                  int remaining = Math.max(beforeLength, 0);
+
+                  while (remaining > 0 && !mComposingText.isEmpty()) {{
+                      final int cp = mComposingText.codePointBefore(mComposingText.length());
+                      final int charCount = Character.charCount(cp);
+                      mComposingText = mComposingText.substring(
+                          0, mComposingText.length() - charCount);
+                      --remaining;
+                      ++deleteCodePoints;
+                  }}
+
+                  deleteCodePoints += remaining;
+
+                  for (int i = 0; i < deleteCodePoints; ++i) {{
+                      sendKeyPress(KeyEvent.KEYCODE_DEL);
+                  }}
+
+                  for (int i = 0; i < Math.max(afterLength, 0); ++i) {{
+                      sendKeyPress(KeyEvent.KEYCODE_FORWARD_DEL);
+                  }}
+
+                  return true;
+              }}
+
+              @Override
+              public boolean sendKeyEvent(KeyEvent event) {{
+                  if (event == null) {{
+                      return false;
+                  }}
+
+                  final int action = event.getAction();
+                  final int keyCode = event.getKeyCode();
+
+                  if (keyCode == KeyEvent.KEYCODE_BACK) {{
+                      return super.sendKeyEvent(event);
+                  }}
+
+                  if (action == KeyEvent.ACTION_MULTIPLE) {{
+                      final String chars = event.getCharacters();
+                      if (chars != null && !chars.isEmpty()) {{
+                          commitText(chars, 1);
+                      }}
+                      return true;
+                  }}
+
+                  if (keyCode == KeyEvent.KEYCODE_DEL) {{
+                      if (action == KeyEvent.ACTION_DOWN) {{
+                          if (!mComposingText.isEmpty()) {{
+                              final int cp = mComposingText.codePointBefore(mComposingText.length());
+                              mComposingText = mComposingText.substring(
+                                  0, mComposingText.length() - Character.charCount(cp));
+                          }}
+                          SDLActivity.onNativeKeyDown(keyCode);
+                      }} else if (action == KeyEvent.ACTION_UP) {{
+                          SDLActivity.onNativeKeyUp(keyCode);
+                      }}
+                      return true;
+                  }}
+
+                  if (keyCode == KeyEvent.KEYCODE_ENTER) {{
+                      if (action == KeyEvent.ACTION_DOWN) {{
+                          mComposingText = "";
+                          SDLActivity.onNativeKeyDown(keyCode);
+                      }} else if (action == KeyEvent.ACTION_UP) {{
+                          SDLActivity.onNativeKeyUp(keyCode);
+                      }}
+                      return true;
+                  }}
+
+                  if (action == KeyEvent.ACTION_DOWN) {{
+                      final int unicode = event.getUnicodeChar();
+                      if (unicode != 0 &&
+                          (unicode & KeyCharacterMap.COMBINING_ACCENT) == 0 &&
+                          (event.isPrintingKey() || keyCode == KeyEvent.KEYCODE_SPACE)) {{
+                          mComposingText = "";
+                          commitUtf8Text(new String(Character.toChars(unicode)));
+                          return true;
+                      }}
+                      SDLActivity.onNativeKeyDown(keyCode);
+                      return true;
+                  }}
+
+                  if (action == KeyEvent.ACTION_UP) {{
+                      SDLActivity.onNativeKeyUp(keyCode);
+                      return true;
+                  }}
+
+                  return super.sendKeyEvent(event);
+              }}
+
+              @Override
+              public void closeConnection() {{
+                  mComposingText = "";
+                  mCommittedText = "";
+                  super.closeConnection();
+              }}
+          }}
+          """
+
+          target.write_text(patched, encoding="utf-8")
+          print("Preserved native declarations:")
+          for decl in native_decls:
+              print("  " + decl.strip())
+          print("SDLInputConnection IME patch: PASSED")
+          PYEOF
+
+      # ============================================================
       # BUILD LUNASVG FOR THE TARGET ANDROID ABI
       # ============================================================
 
