@@ -1,5 +1,6 @@
 #include "ultron_api.h"
 
+#include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/ElementText.h>
@@ -61,6 +62,18 @@ struct InputState
     float last_bar_height = -1.0f;
     float last_chat_bottom = -1.0f;
 
+    // Manual finger-drag scroll state for #input-scroll.
+    bool touch_active = false;
+    bool is_scrolling = false;
+    SDL_TouchID touch_id = 0;
+    SDL_FingerID finger_id = 0;
+    float touch_start_y = 0.0f;
+    float touch_start_scroll_top = 0.0f;
+
+    bool has_pending_cancel = false;
+    SDL_TouchID cancel_touch_id = 0;
+    SDL_FingerID cancel_finger_id = 0;
+
     Rml::String last_value;
 };
 
@@ -69,6 +82,17 @@ InputState& State()
 {
     static InputState state;
     return state;
+}
+
+
+void ResetTouchScroll(InputState& state)
+{
+    state.touch_active = false;
+    state.is_scrolling = false;
+    state.touch_id = 0;
+    state.finger_id = 0;
+    state.touch_start_y = 0.0f;
+    state.touch_start_scroll_top = 0.0f;
 }
 
 
@@ -410,6 +434,43 @@ float GetTextWidth(
 
 
 /* ---------------------------------------------------------
+   MANUAL SCROLL RANGE
+
+   Caps manual finger scroll at the real hidden rows so the
+   extra bottom buffer row is never exposed.
+--------------------------------------------------------- */
+
+float GetMaxManualScroll(const InputState& state)
+{
+    if (!state.input || !state.scroll)
+        return 0.0f;
+
+    const float line_height =
+        state.input->GetLineHeight();
+
+    if (line_height <= 0.0f)
+        return 0.0f;
+
+    const int hidden_rows = std::max(
+        0,
+        state.last_line_count - state.last_max_rows);
+
+    if (hidden_rows <= 0)
+        return 0.0f;
+
+    const float logical_max =
+        static_cast<float>(hidden_rows) * line_height;
+
+    const float native_max = std::max(
+        0.0f,
+        state.scroll->GetScrollHeight() -
+        state.scroll->GetClientHeight());
+
+    return std::min(logical_max, native_max);
+}
+
+
+/* ---------------------------------------------------------
    SCROLL SYNC
 
    Textarea itself stays pinned at (0, 0).
@@ -463,8 +524,6 @@ void SyncScroll(
 
     if (follow_end)
     {
-        // Only force a synchronous layout update if pasting jumped
-        // multiple lines ahead of the pre-allocated buffer row.
         const float max_scroll = std::max(
             0.0f,
             state.scroll->GetScrollHeight() -
@@ -483,7 +542,6 @@ void SyncScroll(
     }
     else if (current_top > target + kGeometryEpsilon)
     {
-        // Prevent staying scrolled into the extra buffer row after deleting lines.
         state.scroll->SetScrollTop(target);
     }
 }
@@ -495,6 +553,8 @@ void SyncScroll(
 
 void ResetMultiline(InputState& state)
 {
+    ResetTouchScroll(state);
+
     state.first_line_shifted = false;
 
     state.last_line_count = 0;
@@ -585,8 +645,6 @@ void ApplyMultilineLayout(
         clamped_lines,
         maximum_rows);
 
-    // Keep 1 extra buffer row once max height is reached so
-    // the textarea never hits internal vertical overflow.
     const int textarea_rows =
         clamped_lines >= maximum_rows
         ? clamped_lines + 1
@@ -856,6 +914,178 @@ void UpdateInput(InputState& state)
 
 
 /* ---------------------------------------------------------
+   MANUAL FINGER TOUCH SCROLL (#input-scroll)
+
+   - Quick tap passes through to RmlUi (focus / cursor placement).
+   - Vertical finger drag scrolls #input-scroll smoothly 1:1
+     and cancels RmlUi's pending touch so text is not selected.
+--------------------------------------------------------- */
+
+bool HandleTouchScrollEvent(
+    const SDL_Event* event,
+    void*)
+{
+    if (!event)
+        return false;
+
+    InputState& state = State();
+
+    if (event->type == SDL_EVENT_FINGER_CANCELED)
+    {
+        if (state.has_pending_cancel &&
+            event->tfinger.touchID == state.cancel_touch_id &&
+            event->tfinger.fingerID == state.cancel_finger_id)
+        {
+            state.has_pending_cancel = false;
+            return false;
+        }
+
+        if (state.touch_active &&
+            event->tfinger.touchID == state.touch_id &&
+            event->tfinger.fingerID == state.finger_id)
+        {
+            ResetTouchScroll(state);
+        }
+
+        return false;
+    }
+
+    if (!state.document ||
+        !state.document->IsVisible() ||
+        !state.bar ||
+        !state.scroll ||
+        !state.input)
+    {
+        return false;
+    }
+
+    Rml::Context* context = state.document->GetContext();
+
+    if (!context)
+        return false;
+
+    const Rml::Vector2i dims = context->GetDimensions();
+
+    if (dims.x <= 0 || dims.y <= 0)
+        return false;
+
+    const float x =
+        event->tfinger.x * static_cast<float>(dims.x);
+
+    const float y =
+        event->tfinger.y * static_cast<float>(dims.y);
+
+    if (event->type == SDL_EVENT_FINGER_DOWN)
+    {
+        if (state.touch_active ||
+            !state.first_line_shifted ||
+            !state.bar->IsClassSet("expanded"))
+        {
+            return false;
+        }
+
+        if (GetMaxManualScroll(state) <= kGeometryEpsilon)
+            return false;
+
+        const Rml::Vector2f box_pos =
+            state.scroll->GetAbsoluteOffset(Rml::BoxArea::Border);
+
+        const Rml::Vector2f box_size =
+            state.scroll->GetBox().GetSize(Rml::BoxArea::Border);
+
+        const bool inside =
+            x >= box_pos.x &&
+            x <= box_pos.x + box_size.x &&
+            y >= box_pos.y &&
+            y <= box_pos.y + box_size.y;
+
+        if (inside)
+        {
+            state.touch_active = true;
+            state.is_scrolling = false;
+            state.touch_id = event->tfinger.touchID;
+            state.finger_id = event->tfinger.fingerID;
+            state.touch_start_y = y;
+            state.touch_start_scroll_top =
+                state.scroll->GetScrollTop();
+        }
+
+        // Let RmlUi receive FINGER_DOWN so normal taps still work.
+        return false;
+    }
+
+    if (!state.touch_active ||
+        event->tfinger.touchID != state.touch_id ||
+        event->tfinger.fingerID != state.finger_id)
+    {
+        return false;
+    }
+
+    if (event->type == SDL_EVENT_FINGER_MOTION)
+    {
+        const float max_scroll = GetMaxManualScroll(state);
+
+        if (max_scroll <= kGeometryEpsilon)
+        {
+            ResetTouchScroll(state);
+            return false;
+        }
+
+        if (!state.is_scrolling)
+        {
+            const float drag_threshold = std::max(
+                8.0f,
+                state.last_control_height * 0.12f);
+
+            if (std::fabs(y - state.touch_start_y) < drag_threshold)
+                return false;
+
+            state.is_scrolling = true;
+            state.touch_start_y = y;
+            state.touch_start_scroll_top =
+                state.scroll->GetScrollTop();
+
+            // Cancel the active touch in main.cpp / RmlUi cleanly so
+            // dragging does not select text or leave a stale touch ID.
+            state.has_pending_cancel = true;
+            state.cancel_touch_id = event->tfinger.touchID;
+            state.cancel_finger_id = event->tfinger.fingerID;
+
+            SDL_Event cancel{};
+            cancel.type = SDL_EVENT_FINGER_CANCELED;
+            cancel.tfinger.touchID = event->tfinger.touchID;
+            cancel.tfinger.fingerID = event->tfinger.fingerID;
+            cancel.tfinger.x = event->tfinger.x;
+            cancel.tfinger.y = event->tfinger.y;
+            cancel.tfinger.windowID = event->tfinger.windowID;
+            SDL_PushEvent(&cancel);
+
+            return true;
+        }
+
+        const float delta_y = y - state.touch_start_y;
+        const float target = std::clamp(
+            state.touch_start_scroll_top - delta_y,
+            0.0f,
+            max_scroll);
+
+        state.scroll->SetScrollTop(target);
+        state.input->SetScrollTop(0.0f);
+        return true;
+    }
+
+    if (event->type == SDL_EVENT_FINGER_UP)
+    {
+        const bool was_scrolling = state.is_scrolling;
+        ResetTouchScroll(state);
+        return was_scrolling;
+    }
+
+    return false;
+}
+
+
+/* ---------------------------------------------------------
    SINGLE RML EVENT HANDLER
 --------------------------------------------------------- */
 
@@ -891,7 +1121,13 @@ bool HandleRmlEvent(
             expand);
 
         if (expand)
+        {
             state.input->Focus();
+        }
+        else
+        {
+            ResetTouchScroll(state);
+        }
 
         return false;
     }
@@ -967,6 +1203,26 @@ bool RegisterObsidianWingChat()
         kModuleName,
         "transitionend",
         &HandleRmlEvent);
+
+    (void)Ultron_RegisterEventHandler(
+        kModuleName,
+        SDL_EVENT_FINGER_DOWN,
+        &HandleTouchScrollEvent);
+
+    (void)Ultron_RegisterEventHandler(
+        kModuleName,
+        SDL_EVENT_FINGER_MOTION,
+        &HandleTouchScrollEvent);
+
+    (void)Ultron_RegisterEventHandler(
+        kModuleName,
+        SDL_EVENT_FINGER_UP,
+        &HandleTouchScrollEvent);
+
+    (void)Ultron_RegisterEventHandler(
+        kModuleName,
+        SDL_EVENT_FINGER_CANCELED,
+        &HandleTouchScrollEvent);
 
     return click_registered && change_registered;
 }
