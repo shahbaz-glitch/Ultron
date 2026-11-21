@@ -1,4 +1,3 @@
-
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #include <SDL3/SDL_filesystem.h>
@@ -9,6 +8,7 @@
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Elements/ElementFormControl.h>
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/FileInterface.h>
@@ -66,11 +66,97 @@ std::thread::id g_ui_thread_id{};
 // -------------------------------------------------------------
 // SDL3 / RmlUi IME integration
 //
-// The object must remain alive until after Rml::Shutdown().
-// The SDL backend header provides this implementation.
+// Desktop platforms use RmlUi's SDL IME editor directly.
+// Android uses direct non-composing SDL text input properties
+// to prevent Gboard / SDLInputConnection buffer desync.
 // -------------------------------------------------------------
 
+#if !defined(__ANDROID__)
 TextInputMethodEditor_SDL g_text_input_method_editor;
+#endif
+
+class UltronSystemInterface_SDL final : public SystemInterface_SDL
+{
+public:
+    explicit UltronSystemInterface_SDL(SDL_Window* window)
+        : SystemInterface_SDL(window),
+          window_(window)
+    {
+    }
+
+    void ActivateKeyboard(
+        Rml::Vector2f caret_position,
+        float line_height) override
+    {
+#if defined(__ANDROID__)
+        if (window_ != nullptr)
+        {
+            const SDL_Rect area{
+                static_cast<int>(caret_position.x),
+                static_cast<int>(caret_position.y),
+                1,
+                static_cast<int>(std::max(line_height, 1.0f))
+            };
+
+            SDL_SetTextInputArea(window_, &area, 0);
+
+            if (!SDL_TextInputActive(window_))
+            {
+                SDL_PropertiesID props = SDL_CreateProperties();
+
+                if (props != 0)
+                {
+                    // android.text.InputType flags:
+                    // Disable IME composing/autocorrect buffer while keeping
+                    // visible characters and multiline support intact.
+                    constexpr Sint64 kTypeClassText = 0x00000001;
+                    constexpr Sint64 kTypeTextVariationVisiblePassword = 0x00000090;
+                    constexpr Sint64 kTypeTextFlagMultiLine = 0x00020000;
+                    constexpr Sint64 kTypeTextFlagNoSuggestions = 0x00080000;
+
+                    SDL_SetNumberProperty(
+                        props,
+                        SDL_PROP_TEXTINPUT_TYPE_NUMBER,
+                        SDL_TEXTINPUT_TYPE_TEXT);
+
+                    SDL_SetBooleanProperty(
+                        props,
+                        SDL_PROP_TEXTINPUT_AUTOCORRECT_BOOLEAN,
+                        false);
+
+                    SDL_SetBooleanProperty(
+                        props,
+                        SDL_PROP_TEXTINPUT_MULTILINE_BOOLEAN,
+                        true);
+
+                    SDL_SetNumberProperty(
+                        props,
+                        SDL_PROP_TEXTINPUT_ANDROID_INPUTTYPE_NUMBER,
+                        kTypeClassText |
+                        kTypeTextFlagMultiLine |
+                        kTypeTextFlagNoSuggestions |
+                        kTypeTextVariationVisiblePassword);
+
+                    SDL_StartTextInputWithProperties(window_, props);
+                    SDL_DestroyProperties(props);
+                }
+                else
+                {
+                    SDL_StartTextInput(window_);
+                }
+            }
+
+            return;
+        }
+#endif
+        SystemInterface_SDL::ActivateKeyboard(
+            caret_position,
+            line_height);
+    }
+
+private:
+    SDL_Window* window_ = nullptr;
+};
 
 
 // -------------------------------------------------------------
@@ -1644,22 +1730,51 @@ void HandleInputEvent(
 
         // -----------------------------------------------------
         // IME COMPOSITION EVENT
-        // Forward Android/SDL editing text to RmlUi.
+        // Forward desktop SDL editing text to RmlUi.
+        // Ignored on Android to avoid SDLInputConnection clash.
         // -----------------------------------------------------
 
         case SDL_EVENT_TEXT_EDITING:
         {
+#if !defined(__ANDROID__)
             g_text_input_method_editor.HandleEdit(
                 event.edit);
+#endif
             return;
         }
 
         default:
+        {
             RmlSDL::InputEventHandler(
                 g_context,
                 window,
                 event);
+
+#if defined(__ANDROID__)
+            // Flush Android IME composition buffer as soon as
+            // backspace clears the focused input completely.
+            if (event.type == SDL_EVENT_KEY_DOWN &&
+                event.key.key == SDLK_BACKSPACE)
+            {
+                Rml::Element* focused =
+                    g_context->GetFocusElement();
+
+                if (focused != nullptr &&
+                    (focused->GetTagName() == "textarea" ||
+                     focused->GetTagName() == "input"))
+                {
+                    auto* control =
+                        static_cast<Rml::ElementFormControl*>(focused);
+
+                    if (control->GetValue().empty())
+                    {
+                        SDL_ClearComposition(window);
+                    }
+                }
+            }
+#endif
             return;
+        }
     }
 }
 
@@ -2180,7 +2295,9 @@ int main(int argc, char** argv)
 
     g_sdl_initialized.store(true, std::memory_order_release);
 
+#if !defined(__ANDROID__)
     SDL_SetHint(SDL_HINT_IME_IMPLEMENTED_UI, "composition");
+#endif
     SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
     SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
 
@@ -2356,7 +2473,7 @@ int main(int argc, char** argv)
     int exit_code = 0;
 
     {
-        SystemInterface_SDL system_interface(window);
+        UltronSystemInterface_SDL system_interface(window);
         RenderInterface_GL3 render_interface;
         SDLFileInterface file_interface;
 
@@ -2376,13 +2493,12 @@ int main(int argc, char** argv)
         Rml::SetRenderInterface(&render_interface);
         Rml::SetFileInterface(&file_interface);
 
-        // -----------------------------------------------------
+#if !defined(__ANDROID__)
         // Register SDL3 IME handler BEFORE Rml::Initialise().
         // The global editor remains alive until after Shutdown.
-        // -----------------------------------------------------
-
         Rml::SetTextInputHandler(
             &g_text_input_method_editor);
+#endif
 
         const bool rml_initialized = Rml::Initialise();
 
@@ -2500,7 +2616,7 @@ int main(int argc, char** argv)
                     SDL_Log("Ultron: automatic TTF/OTF font loader initialized.");
                     SDL_Log("Ultron: shared RML event bridge initialized.");
                     SDL_Log("Ultron: universal SDL event dispatcher initialized.");
-                    SDL_Log("Ultron: SDL3 IME text editing handler initialized.");
+                    SDL_Log("Ultron: SDL3 text input initialized.");
 
                     while (g_running.load(std::memory_order_relaxed))
                     {
