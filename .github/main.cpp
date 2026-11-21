@@ -106,9 +106,9 @@ public:
 
         if (android_text_input_props_ != 0)
         {
-            // Normal Android text keyboard without composing/autocorrect cache.
+            // Normal Android keyboard layout with composing/autocorrect disabled.
             constexpr Sint64 kTypeClassText = 0x00000001;
-            constexpr Sint64 kTypeTextFlagCapSentences = 0x00004000;
+            constexpr Sint64 kTypeTextVariationFilter = 0x000000b0;
             constexpr Sint64 kTypeTextFlagMultiLine = 0x00020000;
             constexpr Sint64 kTypeTextFlagNoSuggestions = 0x00080000;
 
@@ -131,7 +131,7 @@ public:
                 android_text_input_props_,
                 SDL_PROP_TEXTINPUT_ANDROID_INPUTTYPE_NUMBER,
                 kTypeClassText |
-                kTypeTextFlagCapSentences |
+                kTypeTextVariationFilter |
                 kTypeTextFlagMultiLine |
                 kTypeTextFlagNoSuggestions);
         }
