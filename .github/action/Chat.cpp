@@ -917,8 +917,9 @@ void UpdateInput(InputState& state)
    MANUAL FINGER TOUCH SCROLL (#input-scroll)
 
    - Quick tap passes through to RmlUi (focus / cursor placement).
-   - Vertical finger drag scrolls #input-scroll smoothly 1:1
-     and cancels RmlUi's pending touch so text is not selected.
+   - Consumes FINGER_MOTION inside the input box so RmlUi never
+     triggers accidental desktop drag-selection (white highlight).
+   - Vertical finger drag scrolls #input-scroll smoothly 1:1.
 --------------------------------------------------------- */
 
 bool HandleTouchScrollEvent(
@@ -978,14 +979,10 @@ bool HandleTouchScrollEvent(
     if (event->type == SDL_EVENT_FINGER_DOWN)
     {
         if (state.touch_active ||
-            !state.first_line_shifted ||
             !state.bar->IsClassSet("expanded"))
         {
             return false;
         }
-
-        if (GetMaxManualScroll(state) <= kGeometryEpsilon)
-            return false;
 
         const Rml::Vector2f box_pos =
             state.scroll->GetAbsoluteOffset(Rml::BoxArea::Border);
@@ -1010,7 +1007,7 @@ bool HandleTouchScrollEvent(
                 state.scroll->GetScrollTop();
         }
 
-        // Let RmlUi receive FINGER_DOWN so normal taps still work.
+        // Let RmlUi receive FINGER_DOWN so normal taps still focus/place caret.
         return false;
     }
 
@@ -1023,13 +1020,13 @@ bool HandleTouchScrollEvent(
 
     if (event->type == SDL_EVENT_FINGER_MOTION)
     {
-        const float max_scroll = GetMaxManualScroll(state);
+        const float max_scroll =
+            state.first_line_shifted ? GetMaxManualScroll(state) : 0.0f;
 
+        // Always consume FINGER_MOTION inside the input box so RmlUi never
+        // triggers accidental desktop drag-selection (white highlight).
         if (max_scroll <= kGeometryEpsilon)
-        {
-            ResetTouchScroll(state);
-            return false;
-        }
+            return true;
 
         if (!state.is_scrolling)
         {
@@ -1038,15 +1035,23 @@ bool HandleTouchScrollEvent(
                 state.last_control_height * 0.12f);
 
             if (std::fabs(y - state.touch_start_y) < drag_threshold)
-                return false;
+                return true;
 
             state.is_scrolling = true;
             state.touch_start_y = y;
             state.touch_start_scroll_top =
                 state.scroll->GetScrollTop();
 
-            // Cancel the active touch in main.cpp / RmlUi cleanly so
-            // dragging does not select text or leave a stale touch ID.
+            // Clear any accidental text selection.
+            int sel_start = 0;
+            int sel_end = 0;
+            state.input->GetSelection(&sel_start, &sel_end, nullptr);
+            if (sel_start != sel_end)
+            {
+                state.input->SetSelectionRange(sel_end, sel_end);
+            }
+
+            // Cancel the active touch in main.cpp / RmlUi cleanly.
             state.has_pending_cancel = true;
             state.cancel_touch_id = event->tfinger.touchID;
             state.cancel_finger_id = event->tfinger.fingerID;
