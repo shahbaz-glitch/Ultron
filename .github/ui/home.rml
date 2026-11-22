@@ -19,17 +19,32 @@ body {
     right: 6%;
     bottom: 25.74vw;
     height: 75%;
-    display: block;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    overflow-x: hidden;
     overflow-y: auto;
     padding: 1.96vw 0px;
+}
+
+#chat-area scrollbarvertical {
+    width: 0px;
+}
+
+#chat-area scrollbarhorizontal {
+    height: 0px;
 }
 
 /* CHAT BUBBLE */
 
 .chat-message {
     display: block;
+    flex-grow: 0;
+    flex-shrink: 0;
+    box-sizing: border-box;
     width: auto;
-    max-width: 88%;
+    min-width: 14vw;
+    max-width: 75%;
     margin-left: auto;
     margin-bottom: 2.45vw;
     padding: 2.94vw 3.92vw;
@@ -270,6 +285,7 @@ body {
     }
 
     .chat-message {
+        min-width: 14vh;
         margin-bottom: 2.45vh;
         padding: 2.94vh 3.92vh;
 
