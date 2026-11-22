@@ -1,3037 +1,1455 @@
-#include <SDL3/SDL.h>
-#include <SDL3/SDL_main.h>
-#include <SDL3/SDL_filesystem.h>
-
-#include <GLES3/gl3.h>
-
-#include <RmlUi/Core/Context.h>
-#include <RmlUi/Core/Core.h>
-#include <RmlUi/Core/Element.h>
-#include <RmlUi/Core/ElementDocument.h>
-#include <RmlUi/Core/Elements/ElementFormControl.h>
-#include <RmlUi/Core/Event.h>
-#include <RmlUi/Core/EventListener.h>
-#include <RmlUi/Core/FileInterface.h>
-#include <RmlUi/Debugger.h>
-
-#include "RmlUi_Platform_SDL.h"
-#include "RmlUi_Renderer_GL3.h"
 #include "ultron_api.h"
 
+#include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/ElementText.h>
+#include <RmlUi/Core/ElementUtilities.h>
+#include <RmlUi/Core/Elements/ElementFormControlTextArea.h>
+#include <RmlUi/Core/Log.h>
+
 #include <algorithm>
-#include <atomic>
 #include <cctype>
 #include <cmath>
-#include <cstdio>
-#include <exception>
-#include <functional>
-#include <memory>
-#include <mutex>
-#include <queue>
 #include <string>
-#include <string_view>
-#include <thread>
-#include <unordered_map>
 #include <utility>
-#include <vector>
 
 namespace
 {
 
-// -------------------------------------------------------------
-// Application state
-// -------------------------------------------------------------
+constexpr char kModuleName[] = "ObsidianWingChat";
+constexpr char kBarId[] = "input-bar";
+constexpr char kWingHitId[] = "wing-hit";
+constexpr char kScrollId[] = "input-scroll";
+constexpr char kInputId[] = "message-input";
+constexpr char kSendButtonId[] = "send-button";
+constexpr char kChatId[] = "chat-area";
 
-constexpr const char* kUiDirectory = "ui";
-constexpr const char* kFontsDirectory = "fonts";
+constexpr float kControlUnits = 14.22f;
+constexpr float kFirstLeft = 18.63f;
+constexpr float kFirstRight = 12.99f;
+constexpr float kMultilineLeft = 4.17f;
+constexpr float kMultilineRight = 2.45f;
+constexpr float kExtraGap = 1.5f;
+constexpr float kGeometryEpsilon = 0.5f;
 
-constexpr const char* kFallbackDocumentName =
-    "__ultron_internal_black_fallback__";
-
-std::atomic_bool g_running{true};
-std::atomic_bool g_paused{false};
-std::atomic_bool g_accept_ui_tasks{false};
-std::atomic_bool g_sdl_initialized{false};
-std::atomic_bool g_rml_context_ready{false};
-
-// UI objects are accessed only from the main/UI thread.
-Rml::Context* g_context = nullptr;
-Rml::Element* g_context_root = nullptr;
-Rml::ElementDocument* g_active_document = nullptr;
-
-std::unordered_map<std::string, Rml::ElementDocument*> g_documents;
-std::string g_active_document_name;
-std::vector<std::string> g_document_history;
-std::thread::id g_ui_thread_id{};
-
-// -------------------------------------------------------------
-// Android smooth backspace state
-// -------------------------------------------------------------
-
-#if defined(__ANDROID__)
-constexpr Uint64 kSmoothBackspaceBaseMs = 26;
-constexpr Uint64 kSmoothBackspaceFastMs = 16;
-
-int g_pending_backspaces = 0;
-Uint64 g_last_backspace_ms = 0;
-SDL_Event g_pending_backspace_event{};
-
-void ResetPendingBackspaces()
+enum class TouchTarget
 {
-    g_pending_backspaces = 0;
-    g_last_backspace_ms = 0;
-}
-#endif
-
-// -------------------------------------------------------------
-// SDL3 / RmlUi IME integration
-//
-// Desktop platforms use RmlUi's SDL IME editor directly.
-// Android uses cached non-composing SDL text input properties
-// with the normal keyboard layout and zero redundant JNI churn.
-// -------------------------------------------------------------
-
-#if !defined(__ANDROID__)
-TextInputMethodEditor_SDL g_text_input_method_editor;
-#endif
-
-class UltronSystemInterface_SDL final : public SystemInterface_SDL
-{
-public:
-    explicit UltronSystemInterface_SDL(SDL_Window* window)
-        : SystemInterface_SDL(window),
-          window_(window)
-    {
-#if defined(__ANDROID__)
-        android_text_input_props_ = SDL_CreateProperties();
-
-        if (android_text_input_props_ != 0)
-        {
-            // Normal Android keyboard layout with composing/autocorrect disabled.
-            constexpr Sint64 kTypeClassText = 0x00000001;
-            constexpr Sint64 kTypeTextVariationFilter = 0x000000b0;
-            constexpr Sint64 kTypeTextFlagMultiLine = 0x00020000;
-            constexpr Sint64 kTypeTextFlagNoSuggestions = 0x00080000;
-
-            SDL_SetNumberProperty(
-                android_text_input_props_,
-                SDL_PROP_TEXTINPUT_TYPE_NUMBER,
-                SDL_TEXTINPUT_TYPE_TEXT);
-
-            SDL_SetBooleanProperty(
-                android_text_input_props_,
-                SDL_PROP_TEXTINPUT_AUTOCORRECT_BOOLEAN,
-                false);
-
-            SDL_SetBooleanProperty(
-                android_text_input_props_,
-                SDL_PROP_TEXTINPUT_MULTILINE_BOOLEAN,
-                true);
-
-            SDL_SetNumberProperty(
-                android_text_input_props_,
-                SDL_PROP_TEXTINPUT_ANDROID_INPUTTYPE_NUMBER,
-                kTypeClassText |
-                kTypeTextVariationFilter |
-                kTypeTextFlagMultiLine |
-                kTypeTextFlagNoSuggestions);
-        }
-#endif
-    }
-
-    ~UltronSystemInterface_SDL() override
-    {
-#if defined(__ANDROID__)
-        if (android_text_input_props_ != 0)
-        {
-            SDL_DestroyProperties(android_text_input_props_);
-            android_text_input_props_ = 0;
-        }
-#endif
-    }
-
-    void ActivateKeyboard(
-        Rml::Vector2f caret_position,
-        float line_height) override
-    {
-#if defined(__ANDROID__)
-        if (window_ != nullptr)
-        {
-            const float safe_line_height = std::max(line_height, 1.0f);
-            float anchor_top = std::max(caret_position.y, 0.0f);
-            float anchor_bottom = anchor_top + safe_line_height;
-
-            if (g_context != nullptr)
-            {
-                Rml::Element* focused = g_context->GetFocusElement();
-
-                if (focused != nullptr)
-                {
-                    const auto extend_bottom_to =
-                        [&anchor_bottom](Rml::Element* element)
-                    {
-                        if (element == nullptr)
-                        {
-                            return;
-                        }
-
-                        const float elem_bottom =
-                            element->GetAbsoluteOffset(Rml::BoxArea::Border).y +
-                            element->GetBox().GetSize(Rml::BoxArea::Border).y;
-
-                        if (elem_bottom > anchor_bottom)
-                        {
-                            anchor_bottom = elem_bottom;
-                        }
-                    };
-
-                    extend_bottom_to(focused);
-
-                    // Extend the IME anchor to the bottom of the containing
-                    // input panel so Android leaves clean breathing space above
-                    // the soft keyboard instead of clipping the panel's border.
-                    Rml::Element* ancestor = focused->GetParentNode();
-
-                    for (int depth = 0; ancestor != nullptr && depth < 4; ++depth)
-                    {
-                        if (ancestor->GetId() == "input-bar" ||
-                            ancestor->HasAttribute("data-keyboard-anchor"))
-                        {
-                            extend_bottom_to(ancestor);
-                            break;
-                        }
-
-                        ancestor = ancestor->GetParentNode();
-                    }
-                }
-
-                // Breathing space below the panel (adjust dp if needed).
-                constexpr float kKeyboardBreathingGapDp = 10.0f;
-                const float dp_ratio = std::max(
-                    g_context->GetDensityIndependentPixelRatio(),
-                    1.0f);
-
-                anchor_bottom += kKeyboardBreathingGapDp * dp_ratio;
-
-                const float max_y = static_cast<float>(
-                    std::max(g_context->GetDimensions().y, 1));
-
-                anchor_top = std::min(anchor_top, std::max(max_y - 1.0f, 0.0f));
-                anchor_bottom = std::min(anchor_bottom, max_y);
-            }
-
-            const int rect_x = static_cast<int>(std::max(caret_position.x, 0.0f));
-            const int rect_y = static_cast<int>(std::floor(anchor_top));
-            const int rect_h = static_cast<int>(
-                std::ceil(std::max(anchor_bottom - static_cast<float>(rect_y), 1.0f)));
-
-            const SDL_Rect area{
-                rect_x,
-                rect_y,
-                1,
-                rect_h
-            };
-
-            const bool area_changed =
-                !has_text_input_area_ ||
-                area.x != last_text_input_area_.x ||
-                area.y != last_text_input_area_.y ||
-                area.w != last_text_input_area_.w ||
-                area.h != last_text_input_area_.h;
-
-            if (area_changed)
-            {
-                SDL_SetTextInputArea(window_, &area, 0);
-                last_text_input_area_ = area;
-                has_text_input_area_ = true;
-            }
-
-            if (!SDL_TextInputActive(window_))
-            {
-                if (android_text_input_props_ != 0)
-                {
-                    SDL_StartTextInputWithProperties(
-                        window_,
-                        android_text_input_props_);
-                }
-                else
-                {
-                    SDL_StartTextInput(window_);
-                }
-            }
-
-            return;
-        }
-#endif
-        SystemInterface_SDL::ActivateKeyboard(
-            caret_position,
-            line_height);
-    }
-
-    void DeactivateKeyboard() override
-    {
-#if defined(__ANDROID__)
-        ResetPendingBackspaces();
-        has_text_input_area_ = false;
-
-        if (window_ != nullptr && SDL_TextInputActive(window_))
-        {
-            SDL_StopTextInput(window_);
-        }
-        return;
-#else
-        SystemInterface_SDL::DeactivateKeyboard();
-#endif
-    }
-
-private:
-    SDL_Window* window_ = nullptr;
-
-#if defined(__ANDROID__)
-    SDL_PropertiesID android_text_input_props_ = 0;
-    SDL_Rect last_text_input_area_{};
-    bool has_text_input_area_ = false;
-#endif
+    None,
+    InputScroll,
+    ChatArea
 };
 
 
-// -------------------------------------------------------------
-// Robust touch identity
-// -------------------------------------------------------------
+/* ---------------------------------------------------------
+   INPUT STATE
+--------------------------------------------------------- */
 
-struct SDLTouchKey
+struct InputState
 {
-    SDL_TouchID touch_id{};
-    SDL_FingerID finger_id{};
+    Rml::ElementDocument* document = nullptr;
 
-    bool operator==(const SDLTouchKey&) const = default;
+    Rml::Element* bar = nullptr;
+    Rml::Element* wing_hit = nullptr;
+    Rml::Element* scroll = nullptr;
+    Rml::Element* chat = nullptr;
+
+    Rml::ElementFormControlTextArea* input = nullptr;
+
+    bool word_break_configured = false;
+    bool first_line_shifted = false;
+    bool updating = false;
+
+    int last_line_count = 0;
+    int last_max_rows = 1;
+
+    float last_control_height = 0.0f;
+    float last_panel_width = 0.0f;
+
+    float last_scroll_height = -1.0f;
+    float last_textarea_height = -1.0f;
+    float last_bar_height = -1.0f;
+    float last_chat_bottom = -1.0f;
+
+    // Isolated mobile touch scroll state for #input-scroll and #chat-area.
+    TouchTarget touch_target = TouchTarget::None;
+    bool touch_active = false;
+    bool is_scrolling = false;
+    bool touch_moved = false;
+    SDL_TouchID touch_id = 0;
+    SDL_FingerID finger_id = 0;
+    float touch_start_x = 0.0f;
+    float touch_start_y = 0.0f;
+    float touch_start_scroll_top = 0.0f;
+
+    Rml::String last_value;
 };
 
-struct SDLTouchKeyHash
+
+InputState& State()
 {
-    size_t operator()(const SDLTouchKey& key) const noexcept
-    {
-        const size_t first_hash =
-            std::hash<SDL_TouchID>{}(key.touch_id);
-
-        const size_t second_hash =
-            std::hash<SDL_FingerID>{}(key.finger_id);
-
-        return first_hash ^
-            (second_hash +
-             static_cast<size_t>(0x9e3779b9U) +
-             (first_hash << 6U) +
-             (first_hash >> 2U));
-    }
-};
-
-std::unordered_map<
-    SDLTouchKey,
-    Rml::TouchId,
-    SDLTouchKeyHash> g_active_touches;
-
-Rml::TouchId g_next_rml_touch_id{1};
-
-// -------------------------------------------------------------
-// Action registry (existing API, preserved)
-// -------------------------------------------------------------
-
-using ActionRegistry =
-    std::unordered_map<std::string, UltronActionCallback>;
-
-ActionRegistry& GetActionRegistry()
-{
-    static ActionRegistry registry;
-    return registry;
+    static InputState state;
+    return state;
 }
 
-std::mutex& GetActionRegistryMutex()
+
+void ResetTouchScroll(InputState& state)
 {
-    static std::mutex mutex;
-    return mutex;
+    state.touch_target = TouchTarget::None;
+    state.touch_active = false;
+    state.is_scrolling = false;
+    state.touch_moved = false;
+    state.touch_id = 0;
+    state.finger_id = 0;
+    state.touch_start_x = 0.0f;
+    state.touch_start_y = 0.0f;
+    state.touch_start_scroll_top = 0.0f;
 }
 
-void DispatchAction(const Rml::String& action_name)
+
+bool IsInsideElement(
+    Rml::Element* element,
+    const char* target_id)
 {
-    if (action_name.empty())
+    while (element != nullptr)
     {
-        return;
-    }
-
-    UltronActionCallback callback = nullptr;
-
-    {
-        std::lock_guard lock(GetActionRegistryMutex());
-
-        const auto found = GetActionRegistry().find(
-            std::string(action_name.c_str()));
-
-        if (found != GetActionRegistry().end())
-        {
-            callback = found->second;
-        }
-    }
-
-    if (callback == nullptr)
-    {
-        SDL_LogWarn(
-            SDL_LOG_CATEGORY_APPLICATION,
-            "Ultron: no native action registered for '%s'.",
-            action_name.c_str());
-        return;
-    }
-
-    try
-    {
-        callback();
-    }
-    catch (const std::exception& exception)
-    {
-        SDL_LogError(
-            SDL_LOG_CATEGORY_APPLICATION,
-            "Ultron: action '%s' threw an exception: %s",
-            action_name.c_str(),
-            exception.what());
-    }
-    catch (...)
-    {
-        SDL_LogError(
-            SDL_LOG_CATEGORY_APPLICATION,
-            "Ultron: action '%s' threw an unknown exception.",
-            action_name.c_str());
-    }
-}
-
-// -------------------------------------------------------------
-// Universal SDL event registry
-// -------------------------------------------------------------
-
-struct SDLEventHandler
-{
-    std::string name;
-    Uint32 event_type = ULTRON_EVENT_ANY;
-    UltronEventCallback callback = nullptr;
-    void* user_data = nullptr;
-    int priority = 0;
-};
-
-using SDLEventRegistry = std::vector<SDLEventHandler>;
-
-SDLEventRegistry& GetSDLEventRegistry()
-{
-    static SDLEventRegistry registry;
-    return registry;
-}
-
-std::mutex& GetSDLEventRegistryMutex()
-{
-    static std::mutex mutex;
-    return mutex;
-}
-
-bool RegisterSDLEventHandlerInternal(
-    const char* name,
-    Uint32 event_type,
-    UltronEventCallback callback,
-    void* user_data,
-    int priority)
-{
-    if (name == nullptr || name[0] == '\0' || callback == nullptr)
-    {
-        return false;
-    }
-
-    std::lock_guard lock(GetSDLEventRegistryMutex());
-    SDLEventRegistry& registry = GetSDLEventRegistry();
-
-    const auto duplicate = std::find_if(
-        registry.begin(),
-        registry.end(),
-        [name, event_type](const SDLEventHandler& handler)
-        {
-            return handler.name == name &&
-                   handler.event_type == event_type;
-        });
-
-    if (duplicate != registry.end())
-    {
-        return false;
-    }
-
-    registry.push_back(SDLEventHandler{
-        name,
-        event_type,
-        callback,
-        user_data,
-        priority
-    });
-
-    return true;
-}
-
-bool DispatchRegisteredSDLEvent(const SDL_Event& event)
-{
-    std::vector<SDLEventHandler> handlers;
-
-    {
-        std::lock_guard lock(GetSDLEventRegistryMutex());
-        const SDLEventRegistry& registry = GetSDLEventRegistry();
-
-        handlers.reserve(registry.size());
-
-        for (const SDLEventHandler& handler : registry)
-        {
-            if (handler.event_type == ULTRON_EVENT_ANY ||
-                handler.event_type == event.type)
-            {
-                handlers.push_back(handler);
-            }
-        }
-    }
-
-    // Higher priority runs first. Equal priorities preserve registration order.
-    std::stable_sort(
-        handlers.begin(),
-        handlers.end(),
-        [](const SDLEventHandler& left,
-           const SDLEventHandler& right)
-        {
-            return left.priority > right.priority;
-        });
-
-    for (const SDLEventHandler& handler : handlers)
-    {
-        try
-        {
-            if (handler.callback(&event, handler.user_data))
-            {
-                return true;
-            }
-        }
-        catch (const std::exception& exception)
-        {
-            SDL_LogError(
-                SDL_LOG_CATEGORY_APPLICATION,
-                "Ultron: SDL event handler '%s' threw: %s",
-                handler.name.c_str(),
-                exception.what());
-        }
-        catch (...)
-        {
-            SDL_LogError(
-                SDL_LOG_CATEGORY_APPLICATION,
-                "Ultron: SDL event handler '%s' threw an unknown exception.",
-                handler.name.c_str());
-        }
-    }
-
-    return false;
-}
-
-// -------------------------------------------------------------
-// Universal RmlUi element/document event registry
-// -------------------------------------------------------------
-
-struct RmlEventHandler
-{
-    std::string name;
-    std::string event_name;
-    UltronRmlEventCallback callback = nullptr;
-    void* user_data = nullptr;
-    int priority = 0;
-};
-
-using RmlEventRegistry = std::vector<RmlEventHandler>;
-
-RmlEventRegistry& GetRmlEventRegistry()
-{
-    static RmlEventRegistry registry;
-    return registry;
-}
-
-std::mutex& GetRmlEventRegistryMutex()
-{
-    static std::mutex mutex;
-    return mutex;
-}
-
-class RmlEventBridgeListener final : public Rml::EventListener
-{
-public:
-    RmlEventBridgeListener(
-        Rml::Element* context_root,
-        std::string event_name)
-        : context_root_(context_root),
-          event_name_(std::move(event_name))
-    {
-    }
-
-    void ProcessEvent(Rml::Event& event) override;
-
-    const std::string& GetEventName() const noexcept
-    {
-        return event_name_;
-    }
-
-private:
-    Rml::Element* context_root_ = nullptr;
-    std::string event_name_;
-};
-
-// Listener objects must outlive the RmlUi context they are attached to.
-// This vector is only modified on the UI thread.
-std::vector<std::unique_ptr<RmlEventBridgeListener>>
-    g_rml_event_listeners;
-
-bool IsUIThread();
-bool RequireUIThread(const char* function_name);
-bool AttachRmlEventListener(const std::string& event_name);
-bool DispatchRegisteredRmlEvent(Rml::Event& event);
-
-bool RegisterRmlEventHandlerInternal(
-    const char* name,
-    const char* event_name,
-    UltronRmlEventCallback callback,
-    void* user_data,
-    int priority)
-{
-    if (name == nullptr || name[0] == '\0' ||
-        event_name == nullptr || event_name[0] == '\0' ||
-        callback == nullptr)
-    {
-        return false;
-    }
-
-    const std::string module_name(name);
-    const std::string registered_event_name(event_name);
-
-    {
-        std::lock_guard lock(GetRmlEventRegistryMutex());
-        RmlEventRegistry& registry = GetRmlEventRegistry();
-
-        const auto duplicate = std::find_if(
-            registry.begin(),
-            registry.end(),
-            [&module_name, &registered_event_name](
-                const RmlEventHandler& handler)
-            {
-                return handler.name == module_name &&
-                       handler.event_name == registered_event_name;
-            });
-
-        if (duplicate != registry.end())
-        {
-            return false;
-        }
-
-        registry.push_back(RmlEventHandler{
-            module_name,
-            registered_event_name,
-            callback,
-            user_data,
-            priority
-        });
-    }
-
-    // Feature modules normally register during static initialization, before
-    // main() creates RmlUi. Runtime registration is also supported on the UI thread.
-    if (g_rml_context_ready.load(std::memory_order_acquire))
-    {
-        if (!RequireUIThread("Ultron_RegisterRmlEventHandler") ||
-            !AttachRmlEventListener(registered_event_name))
-        {
-            std::lock_guard lock(GetRmlEventRegistryMutex());
-            auto& registry = GetRmlEventRegistry();
-            std::erase_if(
-                registry,
-                [&module_name, &registered_event_name](
-                    const RmlEventHandler& handler)
-                {
-                    return handler.name == module_name &&
-                           handler.event_name == registered_event_name;
-                });
-            return false;
-        }
-    }
-
-    return true;
-}
-
-bool DispatchRegisteredRmlEvent(Rml::Event& event)
-{
-    std::vector<RmlEventHandler> handlers;
-    const std::string event_name(event.GetType().c_str());
-
-    {
-        std::lock_guard lock(GetRmlEventRegistryMutex());
-        const RmlEventRegistry& registry = GetRmlEventRegistry();
-
-        handlers.reserve(registry.size());
-
-        for (const RmlEventHandler& handler : registry)
-        {
-            if (handler.event_name == event_name)
-            {
-                handlers.push_back(handler);
-            }
-        }
-    }
-
-    std::stable_sort(
-        handlers.begin(),
-        handlers.end(),
-        [](const RmlEventHandler& left,
-           const RmlEventHandler& right)
-        {
-            return left.priority > right.priority;
-        });
-
-    for (const RmlEventHandler& handler : handlers)
-    {
-        try
-        {
-            if (handler.callback(&event, handler.user_data))
-            {
-                return true;
-            }
-        }
-        catch (const std::exception& exception)
-        {
-            SDL_LogError(
-                SDL_LOG_CATEGORY_APPLICATION,
-                "Ultron: RmlUi event handler '%s' (%s) threw: %s",
-                handler.name.c_str(),
-                handler.event_name.c_str(),
-                exception.what());
-        }
-        catch (...)
-        {
-            SDL_LogError(
-                SDL_LOG_CATEGORY_APPLICATION,
-                "Ultron: RmlUi event handler '%s' (%s) threw an unknown exception.",
-                handler.name.c_str(),
-                handler.event_name.c_str());
-        }
-    }
-
-    return false;
-}
-
-// -------------------------------------------------------------
-// UI-thread task queue (existing API, preserved)
-// -------------------------------------------------------------
-
-struct PendingUITask
-{
-    UltronUITaskCallback callback = nullptr;
-    void* user_data = nullptr;
-};
-
-struct UITaskQueue
-{
-    std::mutex mutex;
-    std::queue<PendingUITask> tasks;
-};
-
-UITaskQueue& GetUITaskQueue()
-{
-    static UITaskQueue queue;
-    return queue;
-}
-
-bool IsUIThread()
-{
-    return g_ui_thread_id != std::thread::id{} &&
-           std::this_thread::get_id() == g_ui_thread_id;
-}
-
-bool RequireUIThread(const char* function_name)
-{
-    if (IsUIThread())
-    {
-        return true;
-    }
-
-    SDL_LogWarn(
-        SDL_LOG_CATEGORY_APPLICATION,
-        "Ultron: %s must run on the UI thread. "
-        "Use Ultron_PostToUI from background threads.",
-        function_name != nullptr ? function_name : "GUI API");
-
-    return false;
-}
-
-bool AttachRmlEventListener(const std::string& event_name)
-{
-    if (!RequireUIThread("RmlUi event listener attachment") ||
-        g_context_root == nullptr || event_name.empty())
-    {
-        return false;
-    }
-
-    const auto existing = std::find_if(
-        g_rml_event_listeners.begin(),
-        g_rml_event_listeners.end(),
-        [&event_name](const auto& listener)
-        {
-            return listener != nullptr &&
-                   listener->GetEventName() == event_name;
-        });
-
-    if (existing != g_rml_event_listeners.end())
-    {
-        return true;
-    }
-
-    auto listener = std::make_unique<RmlEventBridgeListener>(
-        g_context_root,
-        event_name);
-
-    g_context_root->AddEventListener(
-        event_name.c_str(),
-        listener.get(),
-        true);
-
-    g_rml_event_listeners.push_back(std::move(listener));
-    return true;
-}
-
-void AttachRegisteredRmlEventListeners()
-{
-    if (!RequireUIThread("AttachRegisteredRmlEventListeners") ||
-        g_context_root == nullptr)
-    {
-        return;
-    }
-
-    std::vector<std::string> event_names;
-    event_names.emplace_back("click"); // Preserve data-action click support.
-
-    {
-        std::lock_guard lock(GetRmlEventRegistryMutex());
-        const RmlEventRegistry& registry = GetRmlEventRegistry();
-
-        event_names.reserve(registry.size() + 1);
-
-        for (const RmlEventHandler& handler : registry)
-        {
-            event_names.push_back(handler.event_name);
-        }
-    }
-
-    std::sort(event_names.begin(), event_names.end());
-    event_names.erase(
-        std::unique(event_names.begin(), event_names.end()),
-        event_names.end());
-
-    for (const std::string& event_name : event_names)
-    {
-        AttachRmlEventListener(event_name);
-    }
-}
-
-void ProcessPendingUITasks()
-{
-    UITaskQueue& queue = GetUITaskQueue();
-    std::queue<PendingUITask> pending;
-
-    {
-        std::lock_guard lock(queue.mutex);
-        pending.swap(queue.tasks);
-    }
-
-    while (!pending.empty())
-    {
-        const PendingUITask task = pending.front();
-        pending.pop();
-
-        if (task.callback == nullptr)
-        {
-            continue;
-        }
-
-        try
-        {
-            task.callback(task.user_data);
-        }
-        catch (const std::exception& exception)
-        {
-            SDL_LogError(
-                SDL_LOG_CATEGORY_APPLICATION,
-                "Ultron: UI task threw an exception: %s",
-                exception.what());
-        }
-        catch (...)
-        {
-            SDL_LogError(
-                SDL_LOG_CATEGORY_APPLICATION,
-                "Ultron: UI task threw an unknown exception.");
-        }
-    }
-}
-
-void StopAcceptingUITasks()
-{
-    g_accept_ui_tasks.store(false, std::memory_order_release);
-
-    UITaskQueue& queue = GetUITaskQueue();
-    std::lock_guard lock(queue.mutex);
-
-    std::queue<PendingUITask> empty;
-    queue.tasks.swap(empty);
-}
-
-// -------------------------------------------------------------
-// SDL3-backed RmlUi file interface
-// -------------------------------------------------------------
-
-class SDLFileInterface final : public Rml::FileInterface
-{
-private:
-    static SDL_IOStream* ToStream(Rml::FileHandle file)
-    {
-        return reinterpret_cast<SDL_IOStream*>(file);
-    }
-
-public:
-    Rml::FileHandle Open(const Rml::String& path) override
-    {
-        SDL_IOStream* stream = SDL_IOFromFile(path.c_str(), "rb");
-
-        if (stream == nullptr)
-        {
-            SDL_LogWarn(
-                SDL_LOG_CATEGORY_APPLICATION,
-                "Ultron: unable to open UI resource '%s'.",
-                path.c_str());
-            return 0;
-        }
-
-        return reinterpret_cast<Rml::FileHandle>(stream);
-    }
-
-    void Close(Rml::FileHandle file) override
-    {
-        if (file != 0)
-        {
-            SDL_CloseIO(ToStream(file));
-        }
-    }
-
-    size_t Read(
-        void* buffer,
-        size_t size,
-        Rml::FileHandle file) override
-    {
-        if (file == 0 || buffer == nullptr || size == 0)
-        {
-            return 0;
-        }
-
-        return SDL_ReadIO(ToStream(file), buffer, size);
-    }
-
-    bool Seek(
-        Rml::FileHandle file,
-        long offset,
-        int origin) override
-    {
-        if (file == 0)
-        {
-            return false;
-        }
-
-        SDL_IOWhence whence;
-
-        switch (origin)
-        {
-            case SEEK_SET:
-                whence = SDL_IO_SEEK_SET;
-                break;
-
-            case SEEK_CUR:
-                whence = SDL_IO_SEEK_CUR;
-                break;
-
-            case SEEK_END:
-                whence = SDL_IO_SEEK_END;
-                break;
-
-            default:
-                return false;
-        }
-
-        return SDL_SeekIO(
-            ToStream(file),
-            static_cast<Sint64>(offset),
-            whence) >= 0;
-    }
-
-    size_t Tell(Rml::FileHandle file) override
-    {
-        if (file == 0)
-        {
-            return 0;
-        }
-
-        const Sint64 position = SDL_TellIO(ToStream(file));
-
-        return position >= 0
-            ? static_cast<size_t>(position)
-            : 0;
-    }
-};
-
-// -------------------------------------------------------------
-// RmlUi event bridge: generic events + existing data-action clicks
-// -------------------------------------------------------------
-
-void DispatchActionFromRmlEvent(
-    Rml::Event& event,
-    Rml::Element* context_root)
-{
-    if (context_root == nullptr)
-    {
-        return;
-    }
-
-    Rml::Element* element = event.GetTargetElement();
-
-    while (element != nullptr && element != context_root)
-    {
-        if (element->HasAttribute("data-action"))
-        {
-            const Rml::String action_name =
-                element->GetAttribute<Rml::String>(
-                    "data-action",
-                    Rml::String{});
-
-            if (!action_name.empty())
-            {
-                DispatchAction(action_name);
-                return;
-            }
-        }
+        if (element->GetId() == target_id)
+            return true;
 
         element = element->GetParentNode();
     }
+
+    return false;
 }
 
-void RmlEventBridgeListener::ProcessEvent(Rml::Event& event)
+
+bool IsInsideInput(Rml::Element* element)
 {
-    if (DispatchRegisteredRmlEvent(event))
-    {
-        event.StopPropagation();
+    return IsInsideElement(element, kInputId) ||
+           IsInsideElement(element, kScrollId);
+}
+
+
+void ClearTextSelection(InputState& state)
+{
+    if (!state.input)
         return;
-    }
 
-    // Existing RML data-action behaviour remains unchanged.
-    if (event.GetType() == "click")
+    int sel_start = 0;
+    int sel_end = 0;
+    state.input->GetSelection(&sel_start, &sel_end, nullptr);
+
+    if (sel_start != sel_end)
     {
-        DispatchActionFromRmlEvent(event, context_root_);
+        state.input->SetSelectionRange(sel_end, sel_end);
     }
 }
 
-// -------------------------------------------------------------
-// Automatic RML loader helpers
-// -------------------------------------------------------------
 
-bool StartsWith(
-    const std::string& value,
-    const std::string& prefix)
-{
-    return value.size() >= prefix.size() &&
-           value.compare(0, prefix.size(), prefix) == 0;
-}
+/* ---------------------------------------------------------
+   ELEMENT BINDING
+--------------------------------------------------------- */
 
-bool EndsWithRml(const std::string& path)
+bool BindElements(Rml::Element* source)
 {
-    if (path.size() < 4)
-    {
+    if (!source)
         return false;
+
+    Rml::ElementDocument* document =
+        source->GetOwnerDocument();
+
+    if (!document)
+        return false;
+
+    InputState& state = State();
+
+    if (state.document != document)
+    {
+        state = InputState{};
+        state.document = document;
     }
 
-    const size_t offset = path.size() - 4;
-
-    return std::tolower(
-               static_cast<unsigned char>(path[offset])) == '.' &&
-           std::tolower(
-               static_cast<unsigned char>(path[offset + 1])) == 'r' &&
-           std::tolower(
-               static_cast<unsigned char>(path[offset + 2])) == 'm' &&
-           std::tolower(
-               static_cast<unsigned char>(path[offset + 3])) == 'l';
-}
-
-std::string NormalizeSlashes(std::string path)
-{
-    for (char& character : path)
-    {
-        if (character == '\\')
-        {
-            character = '/';
-        }
-    }
-
-    return path;
-}
-
-std::string GetRmlLoadPath(const char* discovered_path)
-{
-    if (discovered_path == nullptr || discovered_path[0] == '\0')
-    {
-        return {};
-    }
-
-    std::string path = NormalizeSlashes(discovered_path);
-
-    while (StartsWith(path, "./"))
-    {
-        path.erase(0, 2);
-    }
-
-    if (StartsWith(path, "assets://") ||
-        (!path.empty() && path[0] == '/'))
-    {
-        return path;
-    }
-
-    if (StartsWith(path, "ui/"))
-    {
-        return path;
-    }
-
-    return std::string(kUiDirectory) + "/" + path;
-}
-
-// -------------------------------------------------------------
-// Automatic TTF / OTF font loader
-// -------------------------------------------------------------
-
-bool EndsWithFontExtension(const std::string& path)
-{
-    const auto ends_with = [&path](const char* extension)
-    {
-        const size_t extension_length =
-            std::char_traits<char>::length(extension);
-
-        if (path.size() < extension_length)
-        {
-            return false;
-        }
-
-        const size_t offset = path.size() - extension_length;
-
-        for (size_t i = 0; i < extension_length; ++i)
-        {
-            if (std::tolower(
-                    static_cast<unsigned char>(path[offset + i])) !=
-                std::tolower(
-                    static_cast<unsigned char>(extension[i])))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    };
-
-    return ends_with(".ttf") || ends_with(".otf");
-}
-
-std::string GetFontLoadPath(const char* discovered_path)
-{
-    if (discovered_path == nullptr || discovered_path[0] == '\0')
-    {
-        return {};
-    }
-
-    std::string path = NormalizeSlashes(discovered_path);
-
-    while (StartsWith(path, "./"))
-    {
-        path.erase(0, 2);
-    }
-
-    if (StartsWith(path, "assets://") ||
-        (!path.empty() && path[0] == '/'))
-    {
-        return path;
-    }
-
-    if (StartsWith(path, "fonts/"))
-    {
-        return path;
-    }
-
-    return std::string(kFontsDirectory) + "/" + path;
-}
-
-void CollectFontFiles(
-    const char* pattern,
-    std::vector<std::string>& font_files)
-{
-    int file_count = 0;
-
-    char** discovered_files = SDL_GlobDirectory(
-        kFontsDirectory,
-        pattern,
-        SDL_GLOB_CASEINSENSITIVE,
-        &file_count);
-
-    // Missing font files are completely normal.
-    if (discovered_files == nullptr)
-    {
-        SDL_ClearError();
-        return;
-    }
-
-    for (int index = 0; index < file_count; ++index)
-    {
-        if (discovered_files[index] == nullptr)
-        {
-            continue;
-        }
-
-        std::string path =
-            GetFontLoadPath(discovered_files[index]);
-
-        if (path.empty() || !EndsWithFontExtension(path))
-        {
-            continue;
-        }
-
-        font_files.push_back(std::move(path));
-    }
-
-    SDL_free(discovered_files);
-}
-
-size_t AutoLoadFontsFromFonts()
-{
-    std::vector<std::string> font_files;
-
-    CollectFontFiles("*.ttf", font_files);
-    CollectFontFiles("*.otf", font_files);
-
-    std::sort(font_files.begin(), font_files.end());
-    font_files.erase(
-        std::unique(font_files.begin(), font_files.end()),
-        font_files.end());
-
-    if (font_files.empty())
-    {
-        SDL_LogInfo(
-            SDL_LOG_CATEGORY_APPLICATION,
-            "Ultron: no TTF/OTF fonts found in '%s'; continuing.",
-            kFontsDirectory);
-        return 0;
-    }
-
-    size_t registered_count = 0;
-
-    for (const std::string& font_path : font_files)
-    {
-        if (Rml::LoadFontFace(font_path.c_str()))
-        {
-            ++registered_count;
-            SDL_LogInfo(
-                SDL_LOG_CATEGORY_APPLICATION,
-                "Ultron: registered font '%s'.",
-                font_path.c_str());
-        }
-        else
-        {
-            SDL_LogWarn(
-                SDL_LOG_CATEGORY_APPLICATION,
-                "Ultron: unable to register font '%s'; skipping.",
-                font_path.c_str());
-        }
-    }
-
-    SDL_LogInfo(
-        SDL_LOG_CATEGORY_APPLICATION,
-        "Ultron: automatically registered %zu of %zu font(s).",
-        registered_count,
-        font_files.size());
-
-    return registered_count;
-}
-
-// -------------------------------------------------------------
-// Generate document name from RML path
-// -------------------------------------------------------------
-
-std::string GetDocumentNameFromPath(const std::string& load_path)
-{
-    std::string path = NormalizeSlashes(load_path);
-
-    if (StartsWith(path, "assets://"))
-    {
-        path.erase(0, 9);
-    }
-
-    while (StartsWith(path, "./"))
-    {
-        path.erase(0, 2);
-    }
-
-    if (StartsWith(path, "ui/"))
-    {
-        path.erase(0, 3);
-    }
-    else
-    {
-        const size_t marker = path.find("/ui/");
-
-        if (marker != std::string::npos)
-        {
-            path.erase(0, marker + 4);
-        }
-    }
-
-    if (EndsWithRml(path))
-    {
-        path.resize(path.size() - 4);
-    }
-
-    return path;
-}
-
-struct DiscoveredDocument
-{
-    std::string name;
-    std::string path;
-};
-
-// -------------------------------------------------------------
-// Existing automatic RML loader
-// -------------------------------------------------------------
-
-size_t AutoLoadDocumentsFromUI(std::string& first_document_name)
-{
-    first_document_name.clear();
-
-    int file_count = 0;
-
-    char** discovered_files = SDL_GlobDirectory(
-        kUiDirectory,
-        "*.rml",
-        SDL_GLOB_CASEINSENSITIVE,
-        &file_count);
-
-    if (discovered_files == nullptr)
-    {
-        SDL_LogWarn(
-            SDL_LOG_CATEGORY_APPLICATION,
-            "Ultron: unable to scan '%s' for RML files: %s",
-            kUiDirectory,
-            SDL_GetError());
-        SDL_ClearError();
-        return 0;
-    }
-
-    std::vector<DiscoveredDocument> candidates;
-    candidates.reserve(
-        file_count > 0 ? static_cast<size_t>(file_count) : 0);
-
-    for (int index = 0; index < file_count; ++index)
-    {
-        if (discovered_files[index] == nullptr)
-        {
-            continue;
-        }
-
-        std::string path =
-            GetRmlLoadPath(discovered_files[index]);
-
-        if (path.empty() || !EndsWithRml(path))
-        {
-            continue;
-        }
-
-        std::string name = GetDocumentNameFromPath(path);
-
-        if (name.empty())
-        {
-            SDL_LogWarn(
-                SDL_LOG_CATEGORY_APPLICATION,
-                "Ultron: skipped RML file with an empty document name.");
-            continue;
-        }
-
-        if (name == kFallbackDocumentName)
-        {
-            SDL_LogWarn(
-                SDL_LOG_CATEGORY_APPLICATION,
-                "Ultron: skipped reserved document name '%s'.",
-                name.c_str());
-            continue;
-        }
-
-        candidates.push_back(DiscoveredDocument{
-            std::move(name),
-            std::move(path)
-        });
-    }
-
-    std::sort(
-        candidates.begin(),
-        candidates.end(),
-        [](const DiscoveredDocument& left,
-           const DiscoveredDocument& right)
-        {
-            return left.path < right.path;
-        });
-
-    size_t loaded_count = 0;
-
-    for (const DiscoveredDocument& candidate : candidates)
-    {
-        if (g_documents.find(candidate.name) != g_documents.end())
-        {
-            SDL_LogWarn(
-                SDL_LOG_CATEGORY_APPLICATION,
-                "Ultron: duplicate screen name '%s'; skipped '%s'.",
-                candidate.name.c_str(),
-                candidate.path.c_str());
-            continue;
-        }
-
-        Rml::ElementDocument* document =
-            g_context->LoadDocument(candidate.path.c_str());
-
-        if (document == nullptr)
-        {
-            SDL_LogWarn(
-                SDL_LOG_CATEGORY_APPLICATION,
-                "Ultron: failed to load screen '%s' from '%s'.",
-                candidate.name.c_str(),
-                candidate.path.c_str());
-            continue;
-        }
-
-        document->Hide();
-        g_documents.emplace(candidate.name, document);
-
-        if (first_document_name.empty())
-        {
-            first_document_name = candidate.name;
-        }
-
-        ++loaded_count;
-
-        SDL_LogInfo(
-            SDL_LOG_CATEGORY_APPLICATION,
-            "Ultron: registered screen '%s' from '%s'.",
-            candidate.name.c_str(),
-            candidate.path.c_str());
-    }
-
-    SDL_free(discovered_files);
-
-    SDL_LogInfo(
-        SDL_LOG_CATEGORY_APPLICATION,
-        "Ultron: automatic loader registered %zu screen(s).",
-        loaded_count);
-
-    return loaded_count;
-}
-
-// -------------------------------------------------------------
-// Multiple-document navigation
-// -------------------------------------------------------------
-
-Rml::ElementDocument* FindDocument(const char* document_name)
-{
-    if (document_name == nullptr || document_name[0] == '\0')
-    {
-        return nullptr;
-    }
-
-    const auto found = g_documents.find(document_name);
-
-    return found != g_documents.end()
-        ? found->second
+    state.bar = document->GetElementById(kBarId);
+    state.wing_hit = document->GetElementById(kWingHitId);
+    state.scroll = document->GetElementById(kScrollId);
+    state.chat = document->GetElementById(kChatId);
+
+    Rml::Element* input =
+        document->GetElementById(kInputId);
+
+    state.input =
+        input && input->GetTagName() == "textarea"
+        ? static_cast<Rml::ElementFormControlTextArea*>(input)
         : nullptr;
-}
 
-bool SwitchToLoadedDocument(
-    const std::string& document_name,
-    bool remember_current)
-{
-    const auto found = g_documents.find(document_name);
-
-    if (found == g_documents.end() || found->second == nullptr)
-    {
-        SDL_LogWarn(
-            SDL_LOG_CATEGORY_APPLICATION,
-            "Ultron: document '%s' is not loaded.",
-            document_name.c_str());
+    if (!state.bar || !state.wing_hit ||
+        !state.scroll || !state.chat || !state.input)
         return false;
-    }
-
-    Rml::ElementDocument* next_document = found->second;
-
-    if (next_document == g_active_document)
-    {
-        next_document->Show();
-        g_active_document_name = document_name;
-        return true;
-    }
-
-    if (remember_current &&
-        g_active_document != nullptr &&
-        !g_active_document_name.empty())
-    {
-        g_document_history.push_back(g_active_document_name);
-    }
-
-    if (g_active_document != nullptr)
-    {
-        g_active_document->Hide();
-    }
-
-    next_document->Show();
-
-    g_active_document = next_document;
-    g_active_document_name = document_name;
-
-    SDL_LogInfo(
-        SDL_LOG_CATEGORY_APPLICATION,
-        "Ultron: active document is now '%s'.",
-        g_active_document_name.c_str());
 
     return true;
 }
 
-bool ShowDocumentInternal(
-    const char* document_name,
-    const char* rml_path,
-    bool remember_current)
+
+/* ---------------------------------------------------------
+   INTERNAL TEXT ELEMENT
+--------------------------------------------------------- */
+
+Rml::ElementText* GetTextElement(
+    Rml::ElementFormControlTextArea* input)
 {
-    if (!RequireUIThread("Ultron_ShowDocument") || g_context == nullptr)
-    {
-        return false;
-    }
-
-    if (document_name == nullptr || document_name[0] == '\0')
-    {
-        return false;
-    }
-
-    const std::string name(document_name);
-
-    if (g_documents.find(name) == g_documents.end())
-    {
-        if (rml_path == nullptr || rml_path[0] == '\0')
-        {
-            SDL_LogWarn(
-                SDL_LOG_CATEGORY_APPLICATION,
-                "Ultron: screen '%s' is not loaded and no RML path was supplied.",
-                document_name);
-            return false;
-        }
-
-        Rml::ElementDocument* document =
-            g_context->LoadDocument(rml_path);
-
-        if (document == nullptr)
-        {
-            SDL_LogWarn(
-                SDL_LOG_CATEGORY_APPLICATION,
-                "Ultron: failed to load screen '%s' from '%s'.",
-                document_name,
-                rml_path);
-            return false;
-        }
-
-        document->Hide();
-        g_documents.emplace(name, document);
-    }
-
-    return SwitchToLoadedDocument(name, remember_current);
-}
-
-Rml::Element* FindActiveElement(const char* element_id)
-{
-    if (g_active_document == nullptr ||
-        element_id == nullptr ||
-        element_id[0] == '\0')
-    {
+    if (!input || input->GetNumChildren(true) < 1)
         return nullptr;
-    }
 
-    return g_active_document->GetElementById(element_id);
+    Rml::Element* child = input->GetChild(0);
+
+    if (!child || child->GetTagName() != "#text")
+        return nullptr;
+
+    return static_cast<Rml::ElementText*>(child);
 }
 
-Rml::String EscapeRmlText(std::string_view text)
+
+/* ---------------------------------------------------------
+   MULTILINE WORD BREAK
+--------------------------------------------------------- */
+
+void ConfigureMultilineWordBreak(InputState& state)
 {
-    Rml::String escaped;
-    escaped.reserve(text.size());
+    if (state.word_break_configured || !state.input)
+        return;
 
-    for (const char character : text)
+    if (!state.input->SetProperty(
+            "word-break",
+            "break-word"))
     {
-        switch (character)
-        {
-            case '&': escaped += "&amp;"; break;
-            case '<': escaped += "&lt;"; break;
-            case '>': escaped += "&gt;"; break;
-            default:  escaped += character; break;
-        }
-    }
-
-    return escaped;
-}
-
-// -------------------------------------------------------------
-// Existing embedded black fallback
-// -------------------------------------------------------------
-
-bool ShowBlackFallback()
-{
-    if (g_context == nullptr)
-    {
-        return false;
-    }
-
-    const Rml::String fallback_ui = R"rml(
-<rml>
-  <head>
-    <style>
-      body {
-        margin: 0px;
-        width: 100%;
-        height: 100%;
-        background-color: #000000;
-        color: #ffffff;
-      }
-    </style>
-  </head>
-  <body></body>
-</rml>
-)rml";
-
-    Rml::ElementDocument* fallback_document =
-        g_context->LoadDocumentFromMemory(
-            fallback_ui,
-            "[embedded-ultron-black-fallback.rml]");
-
-    if (fallback_document == nullptr)
-    {
-        SDL_LogError(
-            SDL_LOG_CATEGORY_APPLICATION,
-            "Ultron: unable to create embedded black fallback.");
-        return false;
-    }
-
-    fallback_document->Hide();
-
-    g_documents.emplace(
-        kFallbackDocumentName,
-        fallback_document);
-
-    SDL_LogWarn(
-        SDL_LOG_CATEGORY_APPLICATION,
-        "Ultron: no valid UI screen found; showing embedded black fallback.");
-
-    return SwitchToLoadedDocument(
-        kFallbackDocumentName,
-        false);
-}
-
-// -------------------------------------------------------------
-// Touch handling helpers
-// -------------------------------------------------------------
-
-Rml::TouchId AllocateRmlTouchId()
-{
-    for (;;)
-    {
-        const Rml::TouchId candidate = g_next_rml_touch_id++;
-
-        if (candidate == 0)
-        {
-            continue;
-        }
-
-        bool already_used = false;
-
-        for (const auto& entry : g_active_touches)
-        {
-            if (entry.second == candidate)
-            {
-                already_used = true;
-                break;
-            }
-        }
-
-        if (!already_used)
-        {
-            return candidate;
-        }
-    }
-}
-
-Rml::Touch MakeRmlTouch(
-    const SDL_Event& event,
-    Rml::TouchId identifier)
-{
-    const Rml::Vector2i dimensions =
-        g_context->GetDimensions();
-
-    const Rml::Vector2f position{
-        event.tfinger.x * static_cast<float>(dimensions.x),
-        event.tfinger.y * static_cast<float>(dimensions.y)
-    };
-
-    return Rml::Touch{identifier, position};
-}
-
-void CancelRmlTouchStates(const Rml::TouchList& touches)
-{
-    if (g_context == nullptr || touches.empty())
-    {
+        Rml::Log::Message(
+            Rml::Log::LT_WARNING,
+            "ObsidianWingChat: Failed to configure "
+            "word-break: break-word.");
         return;
     }
 
-    g_context->ProcessMouseMove(
-        -1,
-        -1,
-        RmlSDL::GetKeyModifierState());
-
-    g_context->ProcessTouchCancel(touches);
+    state.word_break_configured = true;
 }
 
-void CancelTouchForKey(const SDLTouchKey& key)
+
+/* ---------------------------------------------------------
+   TEXT STATE
+--------------------------------------------------------- */
+
+bool HasVisibleText(const Rml::String& value)
 {
-    const auto found = g_active_touches.find(key);
-
-    if (found == g_active_touches.end())
-    {
-        return;
-    }
-
-    if (g_context != nullptr)
-    {
-        Rml::TouchList touches;
-        touches.push_back(Rml::Touch{
-            found->second,
-            Rml::Vector2f{0.0f, 0.0f}
+    return std::any_of(
+        value.begin(),
+        value.end(),
+        [](unsigned char ch)
+        {
+            return std::isspace(ch) == 0;
         });
-
-        CancelRmlTouchStates(touches);
-    }
-
-    g_active_touches.erase(found);
 }
 
-void CancelAllActiveTouches()
+
+Rml::String TrimMessage(const Rml::String& value)
 {
-    if (g_active_touches.empty())
+    size_t start = 0;
+
+    while (start < value.size() &&
+           std::isspace(static_cast<unsigned char>(value[start])) != 0)
     {
-        return;
+        ++start;
     }
 
-    if (g_context != nullptr)
-    {
-        Rml::TouchList touches;
-        touches.reserve(g_active_touches.size());
+    size_t end = value.size();
 
-        for (const auto& entry : g_active_touches)
+    while (end > start &&
+           std::isspace(static_cast<unsigned char>(value[end - 1])) != 0)
+    {
+        --end;
+    }
+
+    return value.substr(start, end - start);
+}
+
+
+bool IsAppendOnly(
+    const Rml::String& previous,
+    const Rml::String& current)
+{
+    return current.size() >= previous.size() &&
+           std::equal(
+               previous.begin(),
+               previous.end(),
+               current.begin());
+}
+
+
+void SetClass(
+    Rml::Element* element,
+    const char* id,
+    const char* class_name,
+    bool enabled)
+{
+    if (element &&
+        element->IsClassSet(class_name) != enabled)
+    {
+        Ultron_SetElementClass(
+            id,
+            class_name,
+            enabled);
+    }
+}
+
+
+Rml::String Pixels(float value)
+{
+    return std::to_string(
+        std::max(value, 0.0f)) + "px";
+}
+
+
+/* ---------------------------------------------------------
+   FIRST-LINE SHIFT DETECTION
+--------------------------------------------------------- */
+
+bool IsFirstLineReadyToShift(
+    Rml::ElementText* text_element,
+    float available_width,
+    float cursor_width)
+{
+    if (!text_element || available_width <= 0.0f)
+        return false;
+
+    const Rml::String& text =
+        text_element->GetText();
+
+    if (text.empty())
+        return false;
+
+    if (text.find('\n') != Rml::String::npos)
+        return true;
+
+    const Rml::StringView first_line(
+        text,
+        0,
+        text.size());
+
+    const float occupied_width =
+        static_cast<float>(
+            Rml::ElementUtilities::GetStringWidth(
+                text_element,
+                first_line));
+
+    return occupied_width + cursor_width >= available_width;
+}
+
+
+/* ---------------------------------------------------------
+   NATIVE WRAP DETECTION (single-line layout)
+--------------------------------------------------------- */
+
+bool HasNativeWrapped(InputState& state)
+{
+    const float line_height =
+        state.input->GetLineHeight();
+
+    if (line_height <= 0.0f)
+        return false;
+
+    const float client_height =
+        state.input->GetClientHeight();
+
+    if (client_height < line_height * 0.9f)
+        return false;
+
+    return state.input->GetScrollHeight() -
+               client_height >=
+           line_height * 0.75f;
+}
+
+
+/* ---------------------------------------------------------
+   RMLUI-NATIVE LINE COUNT
+--------------------------------------------------------- */
+
+int CountWrappedLines(
+    Rml::ElementText* text_element,
+    float available_width,
+    float cursor_width)
+{
+    if (!text_element)
+        return 1;
+
+    const Rml::String& text =
+        text_element->GetText();
+
+    if (text.empty())
+        return 1;
+
+    const float maximum_line_width =
+        available_width - cursor_width;
+
+    if (maximum_line_width <= 0.0f)
+        return 1;
+
+    int line_begin = 0;
+    int line_count = 0;
+
+    bool last_line = false;
+    bool counted_trailing_empty = false;
+
+    do
+    {
+        Rml::String line_content;
+
+        int line_size = 0;
+        float line_width = 0.0f;
+
+        last_line = text_element->GenerateLine(
+            line_content,
+            line_size,
+            line_width,
+            line_begin,
+            maximum_line_width,
+            0.0f,
+            false,
+            false,
+            false);
+
+        int editable_length =
+            static_cast<int>(line_content.size());
+
+        if (!line_content.empty() &&
+            line_content.back() == '\n')
         {
-            touches.push_back(Rml::Touch{
-                entry.second,
-                Rml::Vector2f{0.0f, 0.0f}
-            });
+            --editable_length;
         }
 
-        CancelRmlTouchStates(touches);
-    }
+        const size_t space_begin = std::min(
+            text.size(),
+            static_cast<size_t>(
+                line_begin + std::max(editable_length, 0)));
 
-    g_active_touches.clear();
-}
+        const size_t found =
+            text.find_first_not_of(' ', space_begin);
 
-void HandleTouchEvent(const SDL_Event& event)
-{
-    if (g_context == nullptr)
-    {
-        return;
-    }
+        const size_t space_end =
+            found == Rml::String::npos
+            ? text.size()
+            : found;
 
-    const SDLTouchKey key{
-        event.tfinger.touchID,
-        event.tfinger.fingerID
-    };
+        const size_t trailing_spaces =
+            space_end - space_begin;
 
-    if (g_paused.load(std::memory_order_relaxed))
-    {
-        CancelTouchForKey(key);
-        return;
-    }
-
-    switch (event.type)
-    {
-        case SDL_EVENT_FINGER_DOWN:
+        if (trailing_spaces > 0)
         {
-            const auto existing = g_active_touches.find(key);
+            line_size +=
+                static_cast<int>(trailing_spaces);
 
-            if (existing != g_active_touches.end())
+            if (space_end < text.size() &&
+                text[space_end] == '\n')
             {
-                SDL_LogWarn(
-                    SDL_LOG_CATEGORY_APPLICATION,
-                    "Ultron: duplicate finger-down detected; "
-                    "cancelling stale touch before restarting it.");
-                CancelTouchForKey(key);
+                ++line_size;
             }
 
-            const Rml::TouchId identifier = AllocateRmlTouchId();
-            g_active_touches.emplace(key, identifier);
-
-            const Rml::Touch touch =
-                MakeRmlTouch(event, identifier);
-
-            g_context->ProcessTouchStart(
-                Rml::TouchList{touch},
-                RmlSDL::GetKeyModifierState());
-            return;
+            if (space_end == text.size())
+                last_line = true;
         }
 
-        case SDL_EVENT_FINGER_MOTION:
+        if (line_size <= 0)
         {
-            const auto found = g_active_touches.find(key);
-
-            if (found == g_active_touches.end())
-            {
-                return;
-            }
-
-            const Rml::Touch touch =
-                MakeRmlTouch(event, found->second);
-
-            g_context->ProcessTouchMove(
-                Rml::TouchList{touch},
-                RmlSDL::GetKeyModifierState());
-            return;
+            ++line_count;
+            counted_trailing_empty = true;
+            break;
         }
 
-        case SDL_EVENT_FINGER_UP:
-        {
-            const auto found = g_active_touches.find(key);
+        line_begin += line_size;
+        ++line_count;
 
-            if (found == g_active_touches.end())
-            {
-                return;
-            }
-
-            const Rml::Touch touch =
-                MakeRmlTouch(event, found->second);
-
-            g_context->ProcessTouchEnd(
-                Rml::TouchList{touch},
-                RmlSDL::GetKeyModifierState());
-
-            g_active_touches.erase(found);
-            return;
-        }
-
-        case SDL_EVENT_FINGER_CANCELED:
-        {
-            CancelTouchForKey(key);
-            return;
-        }
-
-        default:
-            return;
     }
+    while (!last_line);
+
+    if (!counted_trailing_empty &&
+        !text.empty() &&
+        text.back() == '\n' &&
+        line_begin >= static_cast<int>(text.size()))
+    {
+        ++line_count;
+    }
+
+    return std::max(line_count, 1);
 }
 
-// -------------------------------------------------------------
-// Android smooth backspace helpers
-// -------------------------------------------------------------
 
-#if defined(__ANDROID__)
-Rml::ElementFormControl* GetFocusedTextControl()
+/* ---------------------------------------------------------
+   RESPONSIVE TEXT WIDTH
+--------------------------------------------------------- */
+
+float GetTextWidth(
+    InputState& state,
+    float control_height,
+    float left_units,
+    float right_units)
 {
-    if (g_context == nullptr)
-    {
-        return nullptr;
-    }
+    const float scale =
+        control_height / kControlUnits;
 
-    Rml::Element* focused = g_context->GetFocusElement();
+    const float horizontal_frame =
+        state.input->GetBox()
+            .GetFrameSize(Rml::BoxArea::Padding).x;
 
-    if (focused == nullptr)
-    {
-        return nullptr;
-    }
-
-    const Rml::String& tag = focused->GetTagName();
-
-    if (tag != "textarea" && tag != "input")
-    {
-        return nullptr;
-    }
-
-    return static_cast<Rml::ElementFormControl*>(focused);
+    return std::max(
+        1.0f,
+        state.bar->GetClientWidth() -
+        (left_units + right_units) * scale -
+        horizontal_frame);
 }
 
-void ApplyOneBackspace(
-    SDL_Window* window,
-    SDL_Event& event)
-{
-    Rml::ElementFormControl* control = GetFocusedTextControl();
 
-    if (control == nullptr || control->GetValue().empty())
+/* ---------------------------------------------------------
+   MANUAL SCROLL RANGES
+--------------------------------------------------------- */
+
+float GetMaxInputScroll(const InputState& state)
+{
+    if (!state.input || !state.scroll || !state.first_line_shifted)
+        return 0.0f;
+
+    const float line_height =
+        state.input->GetLineHeight();
+
+    if (line_height <= 0.0f)
+        return 0.0f;
+
+    const int hidden_rows = std::max(
+        0,
+        state.last_line_count - state.last_max_rows);
+
+    if (hidden_rows <= 0)
+        return 0.0f;
+
+    const float logical_max =
+        static_cast<float>(hidden_rows) * line_height;
+
+    const float native_max = std::max(
+        0.0f,
+        state.scroll->GetScrollHeight() -
+        state.scroll->GetClientHeight());
+
+    return std::min(logical_max, native_max);
+}
+
+
+float GetMaxChatScroll(const InputState& state)
+{
+    if (!state.chat)
+        return 0.0f;
+
+    return std::max(
+        0.0f,
+        state.chat->GetScrollHeight() -
+        state.chat->GetClientHeight());
+}
+
+
+void ScrollChatToBottom(InputState& state)
+{
+    if (!state.chat)
+        return;
+
+    state.chat->SetScrollTop(GetMaxChatScroll(state));
+}
+
+
+/* ---------------------------------------------------------
+   SCROLL SYNC (#input-scroll)
+
+   Textarea itself stays pinned at (0, 0).
+   Only the outer #input-scroll container scrolls 1 row at a time:
+       4 lines -> 0 hidden rows
+       5 lines -> 1 hidden row
+       6 lines -> 2 hidden rows
+--------------------------------------------------------- */
+
+void SyncScroll(
+    InputState& state,
+    bool force_top,
+    bool follow_end)
+{
+    if (!state.scroll || !state.input)
+        return;
+
+    // Keep textarea internal scroll pinned at top-left.
+    state.input->SetScrollTop(0.0f);
+    state.input->SetScrollLeft(0.0f);
+
+    if (force_top)
     {
-        g_pending_backspaces = 0;
+        state.scroll->SetScrollTop(0.0f);
         return;
     }
 
-    RmlSDL::InputEventHandler(
-        g_context,
-        window,
-        event);
+    const float line_height =
+        state.input->GetLineHeight();
 
-    // Flush Android IME buffer once on the exact transition to empty.
-    if (control->GetValue().empty())
+    if (line_height <= 0.0f)
+        return;
+
+    const int hidden_rows = std::max(
+        0,
+        state.last_line_count - state.last_max_rows);
+
+    const float current_top =
+        state.scroll->GetScrollTop();
+
+    if (hidden_rows == 0)
     {
-        g_pending_backspaces = 0;
+        if (current_top > kGeometryEpsilon)
+            state.scroll->SetScrollTop(0.0f);
+
+        return;
+    }
+
+    const float target =
+        static_cast<float>(hidden_rows) * line_height;
+
+    if (follow_end)
+    {
+        const float max_scroll = std::max(
+            0.0f,
+            state.scroll->GetScrollHeight() -
+            state.scroll->GetClientHeight());
+
+        if (max_scroll + kGeometryEpsilon < target &&
+            state.document)
+        {
+            state.document->UpdateDocument();
+        }
+
+        if (std::fabs(current_top - target) > kGeometryEpsilon)
+        {
+            state.scroll->SetScrollTop(target);
+        }
+    }
+    else if (current_top > target + kGeometryEpsilon)
+    {
+        state.scroll->SetScrollTop(target);
+    }
+}
+
+
+/* ---------------------------------------------------------
+   RESET MULTILINE
+--------------------------------------------------------- */
+
+void ResetMultiline(InputState& state)
+{
+    if (state.touch_target == TouchTarget::InputScroll)
+    {
+        ResetTouchScroll(state);
+    }
+
+    state.first_line_shifted = false;
+
+    state.last_line_count = 0;
+    state.last_max_rows = 1;
+
+    state.last_control_height = 0.0f;
+    state.last_panel_width = 0.0f;
+
+    state.last_scroll_height = -1.0f;
+    state.last_textarea_height = -1.0f;
+    state.last_bar_height = -1.0f;
+    state.last_chat_bottom = -1.0f;
+
+    state.last_value.clear();
+
+    if (state.word_break_configured)
+    {
+        state.input->SetProperty(
+            "word-break",
+            "break-word");
+    }
+
+    state.word_break_configured = false;
+
+    SetClass(
+        state.bar,
+        kBarId,
+        "multiline",
+        false);
+
+    state.scroll->RemoveProperty("width");
+    state.scroll->RemoveProperty("height");
+
+    state.input->RemoveProperty("width");
+    state.input->RemoveProperty("height");
+
+    state.bar->RemoveProperty("height");
+    state.chat->RemoveProperty("bottom");
+
+    state.scroll->SetScrollTop(0.0f);
+    state.scroll->SetScrollLeft(0.0f);
+
+    state.input->SetScrollTop(0.0f);
+    state.input->SetScrollLeft(0.0f);
+}
+
+
+/* ---------------------------------------------------------
+   SEND CURRENT MESSAGE (#send-button arrow)
+--------------------------------------------------------- */
+
+void SendCurrentMessage(InputState& state)
+{
+    if (!state.document ||
+        !state.bar ||
+        !state.chat ||
+        !state.input)
+    {
+        return;
+    }
+
+    if (!state.bar->IsClassSet("expanded"))
+        return;
+
+    const Rml::String message =
+        TrimMessage(state.input->GetValue());
+
+    if (message.empty())
+        return;
+
+    Rml::ElementPtr bubble =
+        state.document->CreateElement("div");
+
+    if (bubble)
+    {
+        bubble->SetClass("chat-message", true);
+        bubble->SetProperty("word-break", "break-word");
+
+        if (Rml::ElementPtr text_node =
+                state.document->CreateTextNode(message))
+        {
+            bubble->AppendChild(std::move(text_node));
+        }
+
+        state.chat->AppendChild(std::move(bubble));
+    }
+
+    state.input->SetValue("");
+    ResetMultiline(state);
+    SetClass(state.bar, kBarId, "has-text", false);
+
+    if (SDL_Window* window = SDL_GetKeyboardFocus())
+    {
         SDL_ClearComposition(window);
     }
+
+    state.document->UpdateDocument();
+    ScrollChatToBottom(state);
 }
 
-void FlushPendingBackspaces(SDL_Window* window)
+
+/* ---------------------------------------------------------
+   APPLY MULTILINE GEOMETRY
+
+   #input-scroll caps at maximum_rows (4).
+   #message-input always grows to (line_count + 1) rows once
+   at/above maximum_rows so it NEVER overflows internally.
+--------------------------------------------------------- */
+
+void ApplyMultilineLayout(
+    InputState& state,
+    int line_count,
+    float control_height,
+    float full_text_width)
 {
-    while (g_pending_backspaces > 0 && g_context != nullptr)
+    const float padding_height =
+        control_height * (1.23f / kControlUnits);
+
+    const float maximum_text_height =
+        control_height * (30.15f / kControlUnits);
+
+    const float extra_gap =
+        control_height * (kExtraGap / kControlUnits);
+
+    const float line_height =
+        state.input->GetLineHeight();
+
+    if (line_height <= 0.0f)
+        return;
+
+    const int maximum_rows = std::max(
+        1,
+        static_cast<int>(
+            std::floor(
+                (maximum_text_height - padding_height) /
+                    line_height +
+                0.05f)));
+
+    const int clamped_lines = std::max(line_count, 1);
+
+    const int visible_rows = std::min(
+        clamped_lines,
+        maximum_rows);
+
+    const int textarea_rows =
+        clamped_lines >= maximum_rows
+        ? clamped_lines + 1
+        : visible_rows;
+
+    const float scroll_box_height =
+        static_cast<float>(visible_rows) * line_height;
+
+    const float textarea_height =
+        static_cast<float>(textarea_rows) * line_height;
+
+    const float text_height =
+        scroll_box_height + padding_height;
+
+    const float bar_height =
+        text_height +
+        control_height +
+        extra_gap;
+
+    const float chat_bottom =
+        bar_height +
+        control_height * (11.52f / kControlUnits);
+
+    const bool width_changed =
+        std::fabs(
+            full_text_width -
+            state.last_panel_width) > kGeometryEpsilon;
+
+    const bool scroll_height_changed =
+        std::fabs(
+            scroll_box_height -
+            state.last_scroll_height) > kGeometryEpsilon;
+
+    const bool textarea_height_changed =
+        std::fabs(
+            textarea_height -
+            state.last_textarea_height) > kGeometryEpsilon;
+
+    const bool bar_height_changed =
+        std::fabs(
+            bar_height -
+            state.last_bar_height) > kGeometryEpsilon;
+
+    const bool chat_bottom_changed =
+        std::fabs(
+            chat_bottom -
+            state.last_chat_bottom) > kGeometryEpsilon;
+
+    if (width_changed)
     {
-        --g_pending_backspaces;
-        ApplyOneBackspace(window, g_pending_backspace_event);
+        state.scroll->SetProperty(
+            "width",
+            Pixels(full_text_width));
+
+        state.input->SetProperty(
+            "width",
+            Pixels(full_text_width));
+
+        state.last_panel_width = full_text_width;
     }
+
+    if (scroll_height_changed)
+    {
+        state.scroll->SetProperty(
+            "height",
+            Pixels(scroll_box_height));
+
+        state.last_scroll_height = scroll_box_height;
+    }
+
+    if (textarea_height_changed)
+    {
+        state.input->SetProperty(
+            "height",
+            Pixels(textarea_height));
+
+        state.last_textarea_height = textarea_height;
+    }
+
+    if (bar_height_changed)
+    {
+        state.bar->SetProperty(
+            "height",
+            Pixels(bar_height));
+
+        state.last_bar_height = bar_height;
+    }
+
+    if (chat_bottom_changed)
+    {
+        state.chat->SetProperty(
+            "bottom",
+            Pixels(chat_bottom));
+
+        state.last_chat_bottom = chat_bottom;
+    }
+
+    state.last_line_count = clamped_lines;
+    state.last_max_rows = maximum_rows;
+    state.last_control_height = control_height;
 }
 
-void StepSmoothBackspace(SDL_Window* window)
+
+/* ---------------------------------------------------------
+   INPUT UPDATE
+--------------------------------------------------------- */
+
+void UpdateInput(InputState& state)
 {
-    if (g_pending_backspaces <= 0 || g_context == nullptr)
+    if (state.updating ||
+        !state.input ||
+        !state.scroll ||
+        !state.bar ||
+        !state.wing_hit ||
+        !state.chat)
     {
         return;
     }
 
-    const Uint64 now = SDL_GetTicks();
-
-    // Adaptive Gemini-style cadence:
-    // crisp 1-by-1 deletion initially, smoothly accelerating on long holds.
-    Uint64 interval_ms = kSmoothBackspaceBaseMs;
-    int chars_per_step = 1;
-
-    if (g_pending_backspaces > 18)
+    struct UpdateGuard
     {
-        interval_ms = kSmoothBackspaceFastMs;
-        chars_per_step = 2;
-    }
-    else if (g_pending_backspaces > 6)
-    {
-        interval_ms = kSmoothBackspaceFastMs;
-    }
+        bool& flag;
 
-    if (now - g_last_backspace_ms < interval_ms)
+        explicit UpdateGuard(bool& value)
+            : flag(value)
+        {
+            flag = true;
+        }
+
+        ~UpdateGuard()
+        {
+            flag = false;
+        }
+    };
+
+    UpdateGuard guard(state.updating);
+
+    const Rml::String value =
+        state.input->GetValue();
+
+    SetClass(
+        state.bar,
+        kBarId,
+        "has-text",
+        HasVisibleText(value));
+
+    if (value.empty())
     {
+        ResetMultiline(state);
         return;
     }
 
-    g_last_backspace_ms = now;
+    Rml::ElementText* text_element =
+        GetTextElement(state.input);
 
-    for (int i = 0; i < chars_per_step && g_pending_backspaces > 0; ++i)
-    {
-        --g_pending_backspaces;
-        ApplyOneBackspace(window, g_pending_backspace_event);
-    }
-}
-#endif
-
-void HandleInputEvent(
-    SDL_Window* window,
-    SDL_Event& event)
-{
-    if (g_context == nullptr)
-    {
+    if (!text_element)
         return;
-    }
 
-    switch (event.type)
+    const float control_height =
+        state.wing_hit->GetOffsetHeight();
+
+    if (control_height <= 0.0f)
+        return;
+
+    const float cursor_width =
+        std::round(
+            Rml::ElementUtilities::
+                GetDensityIndependentPixelRatio(text_element));
+
+    bool just_shifted = false;
+
+    /* FIRST LINE */
+
+    if (!state.first_line_shifted)
     {
-        case SDL_EVENT_FINGER_DOWN:
-#if defined(__ANDROID__)
-            FlushPendingBackspaces(window);
-#endif
-            HandleTouchEvent(event);
-            return;
+        const float first_line_width =
+            GetTextWidth(
+                state,
+                control_height,
+                kFirstLeft,
+                kFirstRight);
 
-        case SDL_EVENT_FINGER_MOTION:
-        case SDL_EVENT_FINGER_UP:
-        case SDL_EVENT_FINGER_CANCELED:
-            HandleTouchEvent(event);
-            return;
+        const bool reached_width =
+            IsFirstLineReadyToShift(
+                text_element,
+                first_line_width,
+                cursor_width);
 
-        // -----------------------------------------------------
-        // IME COMPOSITION EVENT
-        // Forward desktop SDL editing text to RmlUi.
-        // Ignored on Android to avoid SDLInputConnection clash.
-        // -----------------------------------------------------
+        const bool already_wrapped =
+            !reached_width && HasNativeWrapped(state);
 
-        case SDL_EVENT_TEXT_EDITING:
+        if (!reached_width && !already_wrapped)
         {
-#if !defined(__ANDROID__)
-            g_text_input_method_editor.HandleEdit(
-                event.edit);
-#endif
-            return;
-        }
-
-        default:
-        {
-#if defined(__ANDROID__)
-            if (event.type == SDL_EVENT_KEY_DOWN &&
-                event.key.key == SDLK_BACKSPACE)
-            {
-                Rml::ElementFormControl* control = GetFocusedTextControl();
-
-                if (control != nullptr)
-                {
-                    if (control->GetValue().empty())
-                    {
-                        g_pending_backspaces = 0;
-                        return;
-                    }
-
-                    const Uint64 now = SDL_GetTicks();
-
-                    if (g_pending_backspaces == 0 &&
-                        (g_last_backspace_ms == 0 ||
-                         now - g_last_backspace_ms >= kSmoothBackspaceBaseMs))
-                    {
-                        g_last_backspace_ms = now;
-                        ApplyOneBackspace(window, event);
-                    }
-                    else
-                    {
-                        g_pending_backspace_event = event;
-                        ++g_pending_backspaces;
-                    }
-
-                    return;
-                }
-            }
-
-            if (event.type == SDL_EVENT_TEXT_INPUT ||
-                (event.type == SDL_EVENT_KEY_DOWN &&
-                 event.key.key != SDLK_BACKSPACE))
-            {
-                FlushPendingBackspaces(window);
-            }
-#endif
-            RmlSDL::InputEventHandler(
-                g_context,
-                window,
-                event);
+            state.last_value = value;
             return;
         }
+
+        state.first_line_shifted = true;
+        just_shifted = true;
+
+        SetClass(
+            state.bar,
+            kBarId,
+            "multiline",
+            true);
+
+        ConfigureMultilineWordBreak(state);
     }
+
+    /* FULL-WIDTH MULTILINE */
+
+    const float full_width =
+        GetTextWidth(
+            state,
+            control_height,
+            kMultilineLeft,
+            kMultilineRight);
+
+    const bool responsive_size_changed =
+        std::fabs(
+            control_height -
+            state.last_control_height) > kGeometryEpsilon ||
+
+        std::fabs(
+            full_width -
+            state.last_panel_width) > kGeometryEpsilon;
+
+    const int corrected_line_count =
+        CountWrappedLines(
+            text_element,
+            full_width,
+            cursor_width);
+
+    const bool append_only =
+        IsAppendOnly(state.last_value, value);
+
+    int final_line_count = corrected_line_count;
+
+    if (append_only && !responsive_size_changed)
+    {
+        final_line_count = std::max(
+            final_line_count,
+            state.last_line_count);
+    }
+
+    const bool line_count_changed =
+        final_line_count != state.last_line_count;
+
+    if (just_shifted ||
+        line_count_changed ||
+        responsive_size_changed)
+    {
+        ApplyMultilineLayout(
+            state,
+            final_line_count,
+            control_height,
+            full_width);
+    }
+
+    SyncScroll(
+        state,
+        just_shifted && final_line_count == 1,
+        append_only);
+
+    state.last_value = value;
 }
 
-// -------------------------------------------------------------
-// Android / SDL lifecycle events
-// -------------------------------------------------------------
 
-void HandleApplicationEvent(const SDL_Event& event)
+/* ---------------------------------------------------------
+   MOBILE TOUCH HANDLER (#input-scroll + #chat-area)
+
+   Isolates touch dragging from RmlUi's desktop mouse-drag
+   selection so both #input-scroll and #chat-area scroll
+   smoothly 1:1 without drawing white selection highlights.
+   Clean taps pass through on release.
+--------------------------------------------------------- */
+
+bool HandleTouchScrollEvent(
+    const SDL_Event* event,
+    void*)
 {
-    switch (event.type)
+    if (!event)
+        return false;
+
+    InputState& state = State();
+
+    if (event->type == SDL_EVENT_FINGER_CANCELED)
     {
-        case SDL_EVENT_WILL_ENTER_BACKGROUND:
-        case SDL_EVENT_DID_ENTER_BACKGROUND:
-        case SDL_EVENT_WILL_ENTER_FOREGROUND:
+        if (state.touch_active &&
+            event->tfinger.touchID == state.touch_id &&
+            event->tfinger.fingerID == state.finger_id)
         {
-            g_paused.store(true, std::memory_order_relaxed);
-            CancelAllActiveTouches();
-#if defined(__ANDROID__)
-            ResetPendingBackspaces();
-#endif
-            break;
-        }
-
-        case SDL_EVENT_DID_ENTER_FOREGROUND:
-        {
-            g_paused.store(false, std::memory_order_relaxed);
-            break;
-        }
-
-        case SDL_EVENT_WINDOW_FOCUS_LOST:
-        {
-            CancelAllActiveTouches();
-#if defined(__ANDROID__)
-            ResetPendingBackspaces();
-#endif
-            if (g_context != nullptr)
-            {
-                g_context->ProcessMouseLeave();
-            }
-            break;
-        }
-
-        case SDL_EVENT_LOW_MEMORY:
-        {
-            SDL_Log("Ultron: Android low-memory notification received.");
-            break;
-        }
-
-        case SDL_EVENT_TERMINATING:
-        {
-            CancelAllActiveTouches();
-#if defined(__ANDROID__)
-            ResetPendingBackspaces();
-#endif
-            g_running.store(false, std::memory_order_relaxed);
-            break;
-        }
-
-        default:
-            break;
-    }
-}
-
-int Fail(
-    SDL_Window* window,
-    SDL_GLContext gl_context,
-    int code,
-    const char* message)
-{
-    SDL_LogError(
-        SDL_LOG_CATEGORY_APPLICATION,
-        "Ultron startup failure: %s",
-        message != nullptr ? message : "unknown error");
-
-    const char* error = SDL_GetError();
-
-    if (error != nullptr && error[0] != '\0')
-    {
-        SDL_LogError(
-            SDL_LOG_CATEGORY_APPLICATION,
-            "SDL error: %s",
-            error);
-    }
-
-    if (gl_context != nullptr)
-    {
-        SDL_GL_DestroyContext(gl_context);
-    }
-
-    if (window != nullptr)
-    {
-        SDL_DestroyWindow(window);
-    }
-
-    SDL_Quit();
-    return code;
-}
-
-// -------------------------------------------------------------
-// Window and OpenGL context creation with MSAA fallback
-// -------------------------------------------------------------
-
-bool CreateWindowAndContext(
-    SDL_PropertiesID properties,
-    int requested_samples,
-    SDL_Window*& window,
-    SDL_GLContext& gl_context)
-{
-    const int buffer_count =
-        requested_samples > 0 ? 1 : 0;
-
-    if (!SDL_GL_SetAttribute(
-            SDL_GL_MULTISAMPLEBUFFERS,
-            buffer_count) ||
-        !SDL_GL_SetAttribute(
-            SDL_GL_MULTISAMPLESAMPLES,
-            requested_samples))
-    {
-        SDL_LogWarn(
-            SDL_LOG_CATEGORY_APPLICATION,
-            "Ultron: unable to set MSAA attributes (%d samples): %s",
-            requested_samples,
-            SDL_GetError());
-    }
-
-    window = SDL_CreateWindowWithProperties(properties);
-
-    if (window == nullptr)
-    {
-        SDL_LogWarn(
-            SDL_LOG_CATEGORY_APPLICATION,
-            "Ultron: window creation failed with %d MSAA samples: %s",
-            requested_samples,
-            SDL_GetError());
-        return false;
-    }
-
-    gl_context = SDL_GL_CreateContext(window);
-
-    if (gl_context == nullptr)
-    {
-        SDL_LogWarn(
-            SDL_LOG_CATEGORY_APPLICATION,
-            "Ultron: GL context creation failed with %d MSAA samples: %s",
-            requested_samples,
-            SDL_GetError());
-
-        SDL_DestroyWindow(window);
-        window = nullptr;
-        return false;
-    }
-
-    if (!SDL_GL_MakeCurrent(window, gl_context))
-    {
-        SDL_LogWarn(
-            SDL_LOG_CATEGORY_APPLICATION,
-            "Ultron: unable to make GL context current with %d MSAA samples: %s",
-            requested_samples,
-            SDL_GetError());
-
-        SDL_GL_DestroyContext(gl_context);
-        SDL_DestroyWindow(window);
-        gl_context = nullptr;
-        window = nullptr;
-        return false;
-    }
-
-    SDL_LogInfo(
-        SDL_LOG_CATEGORY_APPLICATION,
-        "Ultron: created GL window with requested MSAA samples=%d.",
-        requested_samples);
-
-    return true;
-}
-
-} // namespace
-
-// -------------------------------------------------------------
-// Public action / event registration APIs
-// -------------------------------------------------------------
-
-extern "C" bool Ultron_RegisterAction(
-    const char* name,
-    UltronActionCallback callback)
-{
-    if (name == nullptr || name[0] == '\0' || callback == nullptr)
-    {
-        return false;
-    }
-
-    std::lock_guard lock(GetActionRegistryMutex());
-    return GetActionRegistry().emplace(name, callback).second;
-}
-
-extern "C" bool Ultron_UnregisterAction(const char* name)
-{
-    if (name == nullptr || name[0] == '\0')
-    {
-        return false;
-    }
-
-    std::lock_guard lock(GetActionRegistryMutex());
-    return GetActionRegistry().erase(name) != 0;
-}
-
-extern "C" bool Ultron_RegisterEventHandler(
-    const char* name,
-    Uint32 event_type,
-    UltronEventCallback callback,
-    void* user_data,
-    int priority)
-{
-    return RegisterSDLEventHandlerInternal(
-        name,
-        event_type,
-        callback,
-        user_data,
-        priority);
-}
-
-extern "C" bool Ultron_RegisterRmlEventHandler(
-    const char* name,
-    const char* event_name,
-    UltronRmlEventCallback callback,
-    void* user_data,
-    int priority)
-{
-    return RegisterRmlEventHandlerInternal(
-        name,
-        event_name,
-        callback,
-        user_data,
-        priority);
-}
-
-extern "C" bool Ultron_UnregisterEventHandlers(const char* name)
-{
-    if (name == nullptr || name[0] == '\0')
-    {
-        return false;
-    }
-
-    const std::string module_name(name);
-    size_t removed_count = 0;
-
-    {
-        std::lock_guard lock(GetSDLEventRegistryMutex());
-        auto& registry = GetSDLEventRegistry();
-        const size_t old_size = registry.size();
-
-        std::erase_if(
-            registry,
-            [&module_name](const SDLEventHandler& handler)
-            {
-                return handler.name == module_name;
-            });
-
-        removed_count += old_size - registry.size();
-    }
-
-    {
-        std::lock_guard lock(GetRmlEventRegistryMutex());
-        auto& registry = GetRmlEventRegistry();
-        const size_t old_size = registry.size();
-
-        std::erase_if(
-            registry,
-            [&module_name](const RmlEventHandler& handler)
-            {
-                return handler.name == module_name;
-            });
-
-        removed_count += old_size - registry.size();
-    }
-
-    return removed_count != 0;
-}
-
-extern "C" Uint32 Ultron_RegisterCustomEventType()
-{
-    if (!g_sdl_initialized.load(std::memory_order_acquire))
-    {
-        return 0;
-    }
-
-    const Uint32 event_type = SDL_RegisterEvents(1);
-
-    if (event_type == 0)
-    {
-        SDL_LogError(
-            SDL_LOG_CATEGORY_APPLICATION,
-            "Ultron: SDL_RegisterEvents failed: %s",
-            SDL_GetError());
-    }
-
-    return event_type;
-}
-
-// -------------------------------------------------------------
-// Multiple-screen API
-// -------------------------------------------------------------
-
-extern "C" bool Ultron_ShowDocument(
-    const char* document_name,
-    const char* rml_path)
-{
-    return ShowDocumentInternal(
-        document_name,
-        rml_path,
-        true);
-}
-
-extern "C" bool Ultron_GoBack()
-{
-    if (!RequireUIThread("Ultron_GoBack") || g_context == nullptr)
-    {
-        return false;
-    }
-
-    while (!g_document_history.empty())
-    {
-        std::string previous_name =
-            std::move(g_document_history.back());
-
-        g_document_history.pop_back();
-
-        if (previous_name != g_active_document_name &&
-            SwitchToLoadedDocument(previous_name, false))
-        {
+            ResetTouchScroll(state);
             return true;
         }
+
+        return false;
+    }
+
+    if (!state.document ||
+        !state.document->IsVisible() ||
+        !state.bar ||
+        !state.scroll ||
+        !state.chat ||
+        !state.input)
+    {
+        return false;
+    }
+
+    Rml::Context* context = state.document->GetContext();
+
+    if (!context)
+        return false;
+
+    const Rml::Vector2i dims = context->GetDimensions();
+
+    if (dims.x <= 0 || dims.y <= 0)
+        return false;
+
+    const float x =
+        event->tfinger.x * static_cast<float>(dims.x);
+
+    const float y =
+        event->tfinger.y * static_cast<float>(dims.y);
+
+    const auto is_point_inside =
+        [x, y](Rml::Element* element)
+    {
+        if (!element)
+            return false;
+
+        const Rml::Vector2f box_pos =
+            element->GetAbsoluteOffset(Rml::BoxArea::Border);
+
+        const Rml::Vector2f box_size =
+            element->GetBox().GetSize(Rml::BoxArea::Border);
+
+        return x >= box_pos.x &&
+               x <= box_pos.x + box_size.x &&
+               y >= box_pos.y &&
+               y <= box_pos.y + box_size.y;
+    };
+
+    if (event->type == SDL_EVENT_FINGER_DOWN)
+    {
+        if (state.touch_active)
+            return false;
+
+        TouchTarget target = TouchTarget::None;
+        float start_scroll_top = 0.0f;
+
+        if (state.bar->IsClassSet("expanded") &&
+            is_point_inside(state.scroll))
+        {
+            target = TouchTarget::InputScroll;
+            start_scroll_top = state.scroll->GetScrollTop();
+        }
+        else if (is_point_inside(state.chat))
+        {
+            target = TouchTarget::ChatArea;
+            start_scroll_top = state.chat->GetScrollTop();
+        }
+
+        if (target == TouchTarget::None)
+            return false;
+
+        state.touch_target = target;
+        state.touch_active = true;
+        state.is_scrolling = false;
+        state.touch_moved = false;
+        state.touch_id = event->tfinger.touchID;
+        state.finger_id = event->tfinger.fingerID;
+        state.touch_start_x = x;
+        state.touch_start_y = y;
+        state.touch_start_scroll_top = start_scroll_top;
+
+        return true;
+    }
+
+    if (!state.touch_active ||
+        event->tfinger.touchID != state.touch_id ||
+        event->tfinger.fingerID != state.finger_id)
+    {
+        return false;
+    }
+
+    if (event->type == SDL_EVENT_FINGER_MOTION)
+    {
+        const float control_height =
+            state.wing_hit ? state.wing_hit->GetOffsetHeight() : 0.0f;
+
+        const float drag_threshold = std::max(
+            12.0f,
+            control_height * 0.14f);
+
+        const float dx = x - state.touch_start_x;
+        const float dy = y - state.touch_start_y;
+
+        const float max_scroll =
+            state.touch_target == TouchTarget::InputScroll
+            ? GetMaxInputScroll(state)
+            : GetMaxChatScroll(state);
+
+        if (!state.is_scrolling)
+        {
+            if (std::fabs(dx) >= drag_threshold ||
+                std::fabs(dy) >= drag_threshold)
+            {
+                state.touch_moved = true;
+            }
+
+            if (max_scroll > kGeometryEpsilon &&
+                std::fabs(dy) >= drag_threshold)
+            {
+                state.is_scrolling = true;
+                state.touch_start_y = y;
+                state.touch_start_scroll_top =
+                    state.touch_target == TouchTarget::InputScroll
+                    ? state.scroll->GetScrollTop()
+                    : state.chat->GetScrollTop();
+            }
+
+            return true;
+        }
+
+        if (max_scroll <= kGeometryEpsilon)
+            return true;
+
+        const float delta_y = y - state.touch_start_y;
+        const float target_scroll = std::clamp(
+            state.touch_start_scroll_top - delta_y,
+            0.0f,
+            max_scroll);
+
+        if (state.touch_target == TouchTarget::InputScroll)
+        {
+            state.scroll->SetScrollTop(target_scroll);
+            state.input->SetScrollTop(0.0f);
+        }
+        else if (state.touch_target == TouchTarget::ChatArea)
+        {
+            state.chat->SetScrollTop(target_scroll);
+        }
+
+        return true;
+    }
+
+    if (event->type == SDL_EVENT_FINGER_UP)
+    {
+        const TouchTarget target = state.touch_target;
+        const bool was_scrolling = state.is_scrolling;
+        const bool was_moved = state.touch_moved;
+        const float tap_x = state.touch_start_x;
+        const float tap_y = state.touch_start_y;
+
+        ResetTouchScroll(state);
+
+        // Forward clean taps only (never drags).
+        if (!was_scrolling && !was_moved)
+        {
+            const int px = static_cast<int>(std::round(tap_x));
+            const int py = static_cast<int>(std::round(tap_y));
+
+            context->ProcessMouseMove(px, py, 0);
+            context->ProcessMouseButtonDown(0, 0);
+            context->ProcessMouseButtonUp(0, 0);
+
+            if (target == TouchTarget::InputScroll)
+            {
+                if (context->GetFocusElement() != state.input)
+                {
+                    state.input->Focus();
+                }
+
+                ClearTextSelection(state);
+            }
+        }
+
+        return true;
     }
 
     return false;
 }
 
-extern "C" bool Ultron_IsDocumentLoaded(
-    const char* document_name)
+
+/* ---------------------------------------------------------
+   SINGLE RML EVENT HANDLER
+--------------------------------------------------------- */
+
+bool HandleRmlEvent(
+    Rml::Event* event,
+    void*)
 {
-    if (!RequireUIThread("Ultron_IsDocumentLoaded"))
-    {
+    if (!event)
         return false;
-    }
 
-    return FindDocument(document_name) != nullptr;
-}
+    Rml::Element* target =
+        event->GetTargetElement();
 
-// -------------------------------------------------------------
-// GUI manipulation API
-// -------------------------------------------------------------
-
-extern "C" bool Ultron_SetElementClass(
-    const char* element_id,
-    const char* class_name,
-    bool enabled)
-{
-    if (!RequireUIThread("Ultron_SetElementClass") ||
-        class_name == nullptr ||
-        class_name[0] == '\0')
-    {
+    if (!target)
         return false;
+
+    const Rml::String& type = event->GetType();
+
+    /* BLOCK DOUBLE-TAP WORD SELECTION INSIDE INPUT & CHAT */
+
+    if (type == "dblclick" &&
+        (IsInsideInput(target) || IsInsideElement(target, kChatId)))
+    {
+        ClearTextSelection(State());
+        return true;
     }
 
-    Rml::Element* element = FindActiveElement(element_id);
+    /* WING CLICK */
 
-    if (element == nullptr)
+    if (type == "click" &&
+        IsInsideElement(target, kWingHitId))
     {
-        return false;
-    }
+        if (!BindElements(target))
+            return false;
 
-    element->SetClass(class_name, enabled);
-    return true;
-}
+        InputState& state = State();
 
-extern "C" bool Ultron_SetElementText(
-    const char* element_id,
-    const char* text)
-{
-    if (!RequireUIThread("Ultron_SetElementText") || text == nullptr)
-    {
-        return false;
-    }
+        const bool expand =
+            !state.bar->IsClassSet("expanded");
 
-    Rml::Element* element = FindActiveElement(element_id);
+        Ultron_SetElementClass(
+            kBarId,
+            "expanded",
+            expand);
 
-    if (element == nullptr)
-    {
-        return false;
-    }
-
-    element->SetInnerRML(EscapeRmlText(text));
-    return true;
-}
-
-extern "C" bool Ultron_SetElementProperty(
-    const char* element_id,
-    const char* property_name,
-    const char* value)
-{
-    if (!RequireUIThread("Ultron_SetElementProperty") ||
-        property_name == nullptr ||
-        property_name[0] == '\0' ||
-        value == nullptr)
-    {
-        return false;
-    }
-
-    Rml::Element* element = FindActiveElement(element_id);
-
-    return element != nullptr &&
-           element->SetProperty(property_name, value);
-}
-
-extern "C" bool Ultron_SetElementAttribute(
-    const char* element_id,
-    const char* attribute_name,
-    const char* value)
-{
-    if (!RequireUIThread("Ultron_SetElementAttribute") ||
-        attribute_name == nullptr ||
-        attribute_name[0] == '\0' ||
-        value == nullptr)
-    {
-        return false;
-    }
-
-    Rml::Element* element = FindActiveElement(element_id);
-
-    if (element == nullptr)
-    {
-        return false;
-    }
-
-    element->SetAttribute(
-        attribute_name,
-        Rml::String(value));
-
-    return true;
-}
-
-extern "C" bool Ultron_RemoveElementAttribute(
-    const char* element_id,
-    const char* attribute_name)
-{
-    if (!RequireUIThread("Ultron_RemoveElementAttribute") ||
-        attribute_name == nullptr ||
-        attribute_name[0] == '\0')
-    {
-        return false;
-    }
-
-    Rml::Element* element = FindActiveElement(element_id);
-
-    if (element == nullptr)
-    {
-        return false;
-    }
-
-    element->RemoveAttribute(attribute_name);
-    return true;
-}
-
-// -------------------------------------------------------------
-// Post native work back to the UI thread
-// -------------------------------------------------------------
-
-extern "C" bool Ultron_PostToUI(
-    UltronUITaskCallback callback,
-    void* user_data)
-{
-    if (callback == nullptr ||
-        !g_accept_ui_tasks.load(std::memory_order_acquire))
-    {
-        return false;
-    }
-
-    UITaskQueue& queue = GetUITaskQueue();
-    std::lock_guard lock(queue.mutex);
-
-    if (!g_accept_ui_tasks.load(std::memory_order_relaxed))
-    {
-        return false;
-    }
-
-    queue.tasks.push(PendingUITask{callback, user_data});
-    return true;
-}
-
-// -------------------------------------------------------------
-// Main application
-// -------------------------------------------------------------
-
-int main(int argc, char** argv)
-{
-    (void)argc;
-    (void)argv;
-
-    constexpr int initial_width = 1280;
-    constexpr int initial_height = 720;
-
-    g_ui_thread_id = std::this_thread::get_id();
-
-    g_running.store(true, std::memory_order_relaxed);
-    g_paused.store(false, std::memory_order_relaxed);
-    g_accept_ui_tasks.store(false, std::memory_order_relaxed);
-    g_sdl_initialized.store(false, std::memory_order_relaxed);
-    g_rml_context_ready.store(false, std::memory_order_relaxed);
-
-    g_active_touches.clear();
-    g_next_rml_touch_id = 1;
-#if defined(__ANDROID__)
-    ResetPendingBackspaces();
-#endif
-
-    SDL_SetLogPriority(
-        SDL_LOG_CATEGORY_APPLICATION,
-        SDL_LOG_PRIORITY_INFO);
-
-    SDL_Log("Ultron starting...");
-
-    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS))
-    {
-        return Fail(
-            nullptr,
-            nullptr,
-            1,
-            "SDL_Init failed");
-    }
-
-    g_sdl_initialized.store(true, std::memory_order_release);
-
-#if !defined(__ANDROID__)
-    SDL_SetHint(SDL_HINT_IME_IMPLEMENTED_UI, "composition");
-#endif
-    SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
-    SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
-
-    // ---------------------------------------------------------
-    // OpenGL ES 3.2 request
-    // ---------------------------------------------------------
-
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, 0);
-    SDL_GL_SetAttribute(
-        SDL_GL_CONTEXT_PROFILE_MASK,
-        SDL_GL_CONTEXT_PROFILE_ES);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
-    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-
-    // ---------------------------------------------------------
-    // Window properties
-    // ---------------------------------------------------------
-
-    SDL_PropertiesID properties = SDL_CreateProperties();
-
-    if (properties == 0)
-    {
-        g_sdl_initialized.store(false, std::memory_order_release);
-        return Fail(
-            nullptr,
-            nullptr,
-            2,
-            "SDL_CreateProperties failed");
-    }
-
-    SDL_SetStringProperty(
-        properties,
-        SDL_PROP_WINDOW_CREATE_TITLE_STRING,
-        "Ultron");
-    SDL_SetNumberProperty(
-        properties,
-        SDL_PROP_WINDOW_CREATE_X_NUMBER,
-        SDL_WINDOWPOS_CENTERED);
-    SDL_SetNumberProperty(
-        properties,
-        SDL_PROP_WINDOW_CREATE_Y_NUMBER,
-        SDL_WINDOWPOS_CENTERED);
-    SDL_SetNumberProperty(
-        properties,
-        SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER,
-        initial_width);
-    SDL_SetNumberProperty(
-        properties,
-        SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER,
-        initial_height);
-    SDL_SetBooleanProperty(
-        properties,
-        SDL_PROP_WINDOW_CREATE_OPENGL_BOOLEAN,
-        true);
-    SDL_SetBooleanProperty(
-        properties,
-        SDL_PROP_WINDOW_CREATE_RESIZABLE_BOOLEAN,
-        true);
-    SDL_SetBooleanProperty(
-        properties,
-        SDL_PROP_WINDOW_CREATE_HIGH_PIXEL_DENSITY_BOOLEAN,
-        true);
-
-    // MSAA: try 4x, then 2x, then no window MSAA.
-    SDL_Window* window = nullptr;
-    SDL_GLContext gl_context = nullptr;
-
-    constexpr int msaa_attempts[] = {4, 2, 0};
-    bool gl_ready = false;
-
-    for (const int samples : msaa_attempts)
-    {
-        if (CreateWindowAndContext(
-                properties,
-                samples,
-                window,
-                gl_context))
+        if (expand)
         {
-            gl_ready = true;
-            break;
+            state.input->Focus();
+        }
+        else if (state.touch_target == TouchTarget::InputScroll)
+        {
+            ResetTouchScroll(state);
         }
 
-        SDL_ClearError();
+        return false;
     }
 
-    SDL_DestroyProperties(properties);
+    /* SEND BUTTON (ARROW) CLICK */
 
-    if (!gl_ready)
+    if (type == "click" &&
+        IsInsideElement(target, kSendButtonId))
     {
-        g_sdl_initialized.store(false, std::memory_order_release);
-        return Fail(
-            nullptr,
-            nullptr,
-            3,
-            "Unable to create an SDL window and OpenGL ES context, even without MSAA");
+        if (!BindElements(target))
+            return false;
+
+        SendCurrentMessage(State());
+        return true;
     }
 
-    if (!SDL_GL_SetSwapInterval(1))
+    /* TEXTAREA CHANGE */
+
+    if (type == "change" &&
+        target->GetId() == kInputId)
     {
-        SDL_LogWarn(
-            SDL_LOG_CATEGORY_APPLICATION,
-            "Ultron: VSync could not be enabled: %s",
-            SDL_GetError());
-        SDL_ClearError();
+        if (!BindElements(target))
+            return false;
+
+        UpdateInput(State());
+        return false;
     }
 
-    int actual_msaa_buffers = 0;
-    int actual_msaa_samples = 0;
+    /* ANIMATED RESIZE FINISHED */
 
-    const bool have_msaa_info =
-        SDL_GL_GetAttribute(
-            SDL_GL_MULTISAMPLEBUFFERS,
-            &actual_msaa_buffers) &&
-        SDL_GL_GetAttribute(
-            SDL_GL_MULTISAMPLESAMPLES,
-            &actual_msaa_samples);
-
-    SDL_LogInfo(
-        SDL_LOG_CATEGORY_APPLICATION,
-        "Ultron: window framebuffer MSAA: %s",
-        have_msaa_info
-            ? (actual_msaa_samples > 0 ? "enabled" : "not available")
-            : "query unavailable");
-
-    if (have_msaa_info)
+    if (type == "transitionend")
     {
-        SDL_LogInfo(
-            SDL_LOG_CATEGORY_APPLICATION,
-            "Ultron: window framebuffer reports %d buffers / %d samples.",
-            actual_msaa_buffers,
-            actual_msaa_samples);
-    }
+        const Rml::String& id = target->GetId();
 
-    const GLubyte* gl_version = glGetString(GL_VERSION);
-    const GLubyte* gl_renderer = glGetString(GL_RENDERER);
-
-    SDL_LogInfo(
-        SDL_LOG_CATEGORY_APPLICATION,
-        "Ultron: OpenGL version: %s",
-        gl_version != nullptr
-            ? reinterpret_cast<const char*>(gl_version)
-            : "unknown");
-
-    SDL_LogInfo(
-        SDL_LOG_CATEGORY_APPLICATION,
-        "Ultron: GPU renderer: %s",
-        gl_renderer != nullptr
-            ? reinterpret_cast<const char*>(gl_renderer)
-            : "unknown");
-
-    glDisable(GL_SCISSOR_TEST);
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
-    SDL_GL_SwapWindow(window);
-
-    SDL_Log("Ultron: OpenGL ES context created.");
-
-    // ---------------------------------------------------------
-    // RmlUi renderer initialization
-    // ---------------------------------------------------------
-
-    if (!RmlGL3::Initialize())
-    {
-        g_sdl_initialized.store(false, std::memory_order_release);
-        return Fail(
-            window,
-            gl_context,
-            6,
-            "RmlGL3::Initialize failed");
-    }
-
-    int exit_code = 0;
-
-    {
-        UltronSystemInterface_SDL system_interface(window);
-        RenderInterface_GL3 render_interface;
-        SDLFileInterface file_interface;
-
-        int width = 0;
-        int height = 0;
-
-        if (!SDL_GetWindowSizeInPixels(window, &width, &height) ||
-            width < 1 || height < 1)
+        if (id == kInputId ||
+            id == kScrollId ||
+            id == kBarId ||
+            id == kChatId)
         {
-            width = initial_width;
-            height = initial_height;
-        }
-
-        render_interface.SetViewport(width, height);
-
-        Rml::SetSystemInterface(&system_interface);
-        Rml::SetRenderInterface(&render_interface);
-        Rml::SetFileInterface(&file_interface);
-
-#if !defined(__ANDROID__)
-        // Register SDL3 IME handler BEFORE Rml::Initialise().
-        // The global editor remains alive until after Shutdown.
-        Rml::SetTextInputHandler(
-            &g_text_input_method_editor);
-#endif
-
-        const bool rml_initialized = Rml::Initialise();
-
-        if (!rml_initialized)
-        {
-            SDL_LogError(
-                SDL_LOG_CATEGORY_APPLICATION,
-                "Ultron startup failure: Rml::Initialise failed.");
-            exit_code = 7;
-        }
-        else
-        {
-            g_context = Rml::CreateContext(
-                "main",
-                Rml::Vector2i(width, height));
-
-            if (g_context == nullptr)
+            if (BindElements(target))
             {
-                SDL_LogError(
-                    SDL_LOG_CATEGORY_APPLICATION,
-                    "Ultron startup failure: Rml::CreateContext failed.");
-                Rml::Shutdown();
-                exit_code = 8;
-            }
-            else
-            {
-                g_context_root = g_context->GetRootElement();
-                g_rml_context_ready.store(true, std::memory_order_release);
+                InputState& state = State();
 
-                // -------------------------------------------------
-                // Visual Debugger initialization
-                // -------------------------------------------------
-
-                const bool debugger_initialized =
-                    Rml::Debugger::Initialise(g_context);
-
-                if (debugger_initialized)
+                if (state.first_line_shifted &&
+                    !state.updating)
                 {
-                    SDL_LogInfo(
-                        SDL_LOG_CATEGORY_APPLICATION,
-                        "Ultron: Visual Debugger initialized. Press F8 to toggle visibility.");
-                }
-                else
-                {
-                    SDL_LogWarn(
-                        SDL_LOG_CATEGORY_APPLICATION,
-                        "Ultron: Visual Debugger initialization failed; continuing without the debugger.");
-                }
-
-                float window_scale = SDL_GetWindowDisplayScale(window);
-
-                if (window_scale > 0.0f)
-                {
-                    g_context->SetDensityIndependentPixelRatio(window_scale);
-                }
-
-                // Attach all module-declared RmlUi events to the context root.
-                // The click listener is included automatically to preserve data-action.
-                AttachRegisteredRmlEventListeners();
-
-                // -------------------------------------------------
-                // Automatic loader startup
-                // -------------------------------------------------
-
-                std::string startup_document_name;
-
-                AutoLoadFontsFromFonts();
-                AutoLoadDocumentsFromUI(startup_document_name);
-
-                bool startup_ready = false;
-
-                if (!startup_document_name.empty())
-                {
-                    startup_ready = SwitchToLoadedDocument(
-                        startup_document_name,
-                        false);
-                }
-
-                if (!startup_ready)
-                {
-                    startup_ready = ShowBlackFallback();
-                }
-
-                if (!startup_ready)
-                {
-                    SDL_LogError(
-                        SDL_LOG_CATEGORY_APPLICATION,
-                        "Ultron startup failure: unable to show any screen or the black fallback.");
-                    exit_code = 9;
-                }
-
-                if (exit_code != 0)
-                {
-                    StopAcceptingUITasks();
-                    CancelAllActiveTouches();
-
-                    g_documents.clear();
-                    g_document_history.clear();
-                    g_active_document = nullptr;
-                    g_active_document_name.clear();
-
-                    g_rml_context_ready.store(false, std::memory_order_release);
-                    g_context_root = nullptr;
-                    g_context = nullptr;
-
-                    Rml::RemoveContext("main");
-                    Rml::Shutdown();
-                    g_rml_event_listeners.clear();
-                }
-                else
-                {
-                    g_accept_ui_tasks.store(true, std::memory_order_release);
-
-                    SDL_Log("Ultron: automatic RML loader initialized.");
-                    SDL_Log("Ultron: automatic TTF/OTF font loader initialized.");
-                    SDL_Log("Ultron: shared RML event bridge initialized.");
-                    SDL_Log("Ultron: universal SDL event dispatcher initialized.");
-                    SDL_Log("Ultron: SDL3 text input initialized.");
-
-                    while (g_running.load(std::memory_order_relaxed))
+                    if (id == kBarId)
                     {
-                        SDL_Event event;
-
-                        while (SDL_PollEvent(&event))
-                        {
-                            // Keep core lifecycle handling authoritative.
-                            HandleApplicationEvent(event);
-
-                            // External modules see raw SDL events before RmlUi.
-                            // Returning true consumes the event for the RmlUi input layer.
-                            const bool event_consumed =
-                                DispatchRegisteredSDLEvent(event);
-
-                            if (event.type == SDL_EVENT_QUIT)
-                            {
-                                g_running.store(
-                                    false,
-                                    std::memory_order_relaxed);
-                                break;
-                            }
-
-                            if (!g_running.load(std::memory_order_relaxed))
-                            {
-                                break;
-                            }
-
-                            if (!event_consumed &&
-                                debugger_initialized &&
-                                event.type == SDL_EVENT_KEY_DOWN &&
-                                event.key.key == SDLK_F8 &&
-                                !event.key.repeat)
-                            {
-                                const bool make_visible =
-                                    !Rml::Debugger::IsVisible();
-
-                                Rml::Debugger::SetVisible(make_visible);
-
-                                SDL_LogInfo(
-                                    SDL_LOG_CATEGORY_APPLICATION,
-                                    "Ultron: Visual Debugger %s.",
-                                    make_visible ? "shown" : "hidden");
-
-                                continue;
-                            }
-
-                            if (!event_consumed)
-                            {
-                                HandleInputEvent(window, event);
-                            }
-                        }
-
-                        if (!g_running.load(std::memory_order_relaxed))
-                        {
-                            break;
-                        }
-
-                        ProcessPendingUITasks();
-
-#if defined(__ANDROID__)
-                        StepSmoothBackspace(window);
-#endif
-
-                        if (g_paused.load(std::memory_order_relaxed))
-                        {
-                            SDL_Delay(16);
-                            continue;
-                        }
-
-                        int new_width = 0;
-                        int new_height = 0;
-
-                        if (SDL_GetWindowSizeInPixels(
-                                window,
-                                &new_width,
-                                &new_height) &&
-                            new_width > 0 &&
-                            new_height > 0 &&
-                            (new_width != width || new_height != height))
-                        {
-                            width = new_width;
-                            height = new_height;
-
-                            g_context->SetDimensions(
-                                Rml::Vector2i(width, height));
-
-                            render_interface.SetViewport(width, height);
-                        }
-
-                        const float new_scale =
-                            SDL_GetWindowDisplayScale(window);
-
-                        if (new_scale > 0.0f && new_scale != window_scale)
-                        {
-                            window_scale = new_scale;
-                            g_context->SetDensityIndependentPixelRatio(window_scale);
-                        }
-
-                        glDisable(GL_SCISSOR_TEST);
-                        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-                        glClear(GL_COLOR_BUFFER_BIT);
-
-                        g_context->Update();
-
-                        render_interface.BeginFrame();
-                        g_context->Render();
-                        render_interface.EndFrame();
-
-                        SDL_GL_SwapWindow(window);
+                        UpdateInput(state);
                     }
-
-                    StopAcceptingUITasks();
-                    CancelAllActiveTouches();
-
-                    g_documents.clear();
-                    g_document_history.clear();
-                    g_active_document = nullptr;
-                    g_active_document_name.clear();
-
-                    // Listener objects remain alive until after Rml::Shutdown().
-                    g_rml_context_ready.store(false, std::memory_order_release);
-                    g_context_root = nullptr;
-                    g_context = nullptr;
-
-                    Rml::RemoveContext("main");
-                    Rml::Shutdown();
-                    g_rml_event_listeners.clear();
+                    else
+                    {
+                        SyncScroll(state, false, false);
+                    }
                 }
             }
         }
+
+        return false;
     }
 
-    // Interfaces and context are shut down before the GL context.
-    RmlGL3::Shutdown();
-
-    SDL_GL_DestroyContext(gl_context);
-    SDL_DestroyWindow(window);
-
-    g_sdl_initialized.store(false, std::memory_order_release);
-    SDL_Quit();
-
-    g_ui_thread_id = std::thread::id{};
-
-    SDL_Log("Ultron shutdown cleanly.");
-    return exit_code;
+    return false;
 }
+
+
+/* ---------------------------------------------------------
+   AUTOMATIC REGISTRATION
+--------------------------------------------------------- */
+
+bool RegisterObsidianWingChat()
+{
+    const bool click_registered =
+        Ultron_RegisterRmlEventHandler(
+            kModuleName,
+            "click",
+            &HandleRmlEvent);
+
+    const bool change_registered =
+        Ultron_RegisterRmlEventHandler(
+            kModuleName,
+            "change",
+            &HandleRmlEvent);
+
+    (void)Ultron_RegisterRmlEventHandler(
+        kModuleName,
+        "transitionend",
+        &HandleRmlEvent);
+
+    (void)Ultron_RegisterRmlEventHandler(
+        kModuleName,
+        "dblclick",
+        &HandleRmlEvent);
+
+    (void)Ultron_RegisterEventHandler(
+        kModuleName,
+        SDL_EVENT_FINGER_DOWN,
+        &HandleTouchScrollEvent);
+
+    (void)Ultron_RegisterEventHandler(
+        kModuleName,
+        SDL_EVENT_FINGER_MOTION,
+        &HandleTouchScrollEvent);
+
+    (void)Ultron_RegisterEventHandler(
+        kModuleName,
+        SDL_EVENT_FINGER_UP,
+        &HandleTouchScrollEvent);
+
+    (void)Ultron_RegisterEventHandler(
+        kModuleName,
+        SDL_EVENT_FINGER_CANCELED,
+        &HandleTouchScrollEvent);
+
+    return click_registered && change_registered;
+}
+
+
+[[maybe_unused]]
+const bool g_registered =
+    RegisterObsidianWingChat();
+
+} // namespace
