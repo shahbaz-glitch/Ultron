@@ -9,6 +9,7 @@
 #include <RmlUi/Core/Log.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <string>
@@ -33,6 +34,13 @@ constexpr float kMultilineRight = 2.45f;
 constexpr float kExtraGap = 1.5f;
 constexpr float kGeometryEpsilon = 0.5f;
 
+// Gemini-style smooth scroll physics constants.
+constexpr size_t kVelocitySampleCapacity = 8;
+constexpr Uint64 kVelocityWindowMs = 100;
+constexpr Uint64 kFlingStationaryCutoffMs = 65;
+constexpr float kMomentumFriction = 3.2f;
+constexpr float kAutoScrollSnappiness = 16.0f;
+
 enum class TouchTarget
 {
     None,
@@ -40,9 +48,22 @@ enum class TouchTarget
     ChatArea
 };
 
+enum class ScrollAnimMode
+{
+    None,
+    Momentum,
+    EaseToTarget
+};
+
+struct TouchSample
+{
+    Uint64 time_ms = 0;
+    float y = 0.0f;
+};
+
 
 /* ---------------------------------------------------------
-   INPUT STATE
+   INPUT & CHAT STATE
 --------------------------------------------------------- */
 
 struct InputState
@@ -57,6 +78,7 @@ struct InputState
     Rml::ElementFormControlTextArea* input = nullptr;
 
     bool word_break_configured = false;
+    bool chat_area_configured = false;
     bool first_line_shifted = false;
     bool updating = false;
 
@@ -65,6 +87,7 @@ struct InputState
 
     float last_control_height = 0.0f;
     float last_panel_width = 0.0f;
+    float last_chat_width = 0.0f;
 
     float last_scroll_height = -1.0f;
     float last_textarea_height = -1.0f;
@@ -76,11 +99,25 @@ struct InputState
     bool touch_active = false;
     bool is_scrolling = false;
     bool touch_moved = false;
+    bool caught_momentum = false;
     SDL_TouchID touch_id = 0;
     SDL_FingerID finger_id = 0;
     float touch_start_x = 0.0f;
     float touch_start_y = 0.0f;
     float touch_start_scroll_top = 0.0f;
+    Uint64 last_motion_ms = 0;
+
+    std::array<TouchSample, kVelocitySampleCapacity> velocity_samples{};
+    size_t velocity_sample_count = 0;
+
+    // VSync-locked smooth momentum & ease-to-bottom animation state.
+    ScrollAnimMode anim_mode = ScrollAnimMode::None;
+    TouchTarget anim_target = TouchTarget::None;
+    float anim_scroll_pos = 0.0f;
+    float anim_velocity = 0.0f;
+    float anim_goal_scroll = 0.0f;
+    Uint64 anim_last_ms = 0;
+    bool anim_posted = false;
 
     Rml::String last_value;
 };
@@ -93,17 +130,50 @@ InputState& State()
 }
 
 
+void StopScrollAnimation(InputState& state)
+{
+    state.anim_mode = ScrollAnimMode::None;
+    state.anim_target = TouchTarget::None;
+    state.anim_velocity = 0.0f;
+}
+
+
 void ResetTouchScroll(InputState& state)
 {
     state.touch_target = TouchTarget::None;
     state.touch_active = false;
     state.is_scrolling = false;
     state.touch_moved = false;
+    state.caught_momentum = false;
     state.touch_id = 0;
     state.finger_id = 0;
     state.touch_start_x = 0.0f;
     state.touch_start_y = 0.0f;
     state.touch_start_scroll_top = 0.0f;
+    state.last_motion_ms = 0;
+    state.velocity_sample_count = 0;
+}
+
+
+void PushVelocitySample(
+    InputState& state,
+    Uint64 time_ms,
+    float y)
+{
+    if (state.velocity_sample_count < kVelocitySampleCapacity)
+    {
+        state.velocity_samples[state.velocity_sample_count++] =
+            TouchSample{time_ms, y};
+        return;
+    }
+
+    for (size_t i = 1; i < kVelocitySampleCapacity; ++i)
+    {
+        state.velocity_samples[i - 1] = state.velocity_samples[i];
+    }
+
+    state.velocity_samples[kVelocitySampleCapacity - 1] =
+        TouchSample{time_ms, y};
 }
 
 
@@ -150,6 +220,8 @@ void ClearTextSelection(InputState& state)
    ELEMENT BINDING
 --------------------------------------------------------- */
 
+void ConfigureChatArea(InputState& state);
+
 bool BindElements(Rml::Element* source)
 {
     if (!source)
@@ -186,6 +258,7 @@ bool BindElements(Rml::Element* source)
         !state.scroll || !state.chat || !state.input)
         return false;
 
+    ConfigureChatArea(state);
     return true;
 }
 
@@ -195,17 +268,71 @@ bool BindElements(Rml::Element* source)
 --------------------------------------------------------- */
 
 Rml::ElementText* GetTextElement(
-    Rml::ElementFormControlTextArea* input)
+    Rml::Element* element)
 {
-    if (!input || input->GetNumChildren(true) < 1)
+    if (!element || element->GetNumChildren(true) < 1)
         return nullptr;
 
-    Rml::Element* child = input->GetChild(0);
+    Rml::Element* child = element->GetChild(0);
 
     if (!child || child->GetTagName() != "#text")
         return nullptr;
 
     return static_cast<Rml::ElementText*>(child);
+}
+
+
+/* ---------------------------------------------------------
+   CHAT AREA CONFIGURATION
+
+   Locks #chat-area width to 88% (matching left: 6%; right: 6%)
+   and hides RmlUi's default desktop scrollbars so bubbles
+   always have full horizontal width.
+--------------------------------------------------------- */
+
+void HideNativeScrollbars(Rml::Element* container)
+{
+    if (!container)
+        return;
+
+    const int total_children = container->GetNumChildren(true);
+
+    for (int i = 0; i < total_children; ++i)
+    {
+        Rml::Element* child = container->GetChild(i);
+
+        if (!child)
+            continue;
+
+        const Rml::String& tag = child->GetTagName();
+
+        if (tag == "scrollbarvertical")
+        {
+            child->SetProperty("width", "0px");
+            child->SetProperty("visibility", "hidden");
+        }
+        else if (tag == "scrollbarhorizontal")
+        {
+            child->SetProperty("height", "0px");
+            child->SetProperty("visibility", "hidden");
+        }
+    }
+}
+
+
+void ConfigureChatArea(InputState& state)
+{
+    if (!state.chat)
+        return;
+
+    if (!state.chat_area_configured)
+    {
+        state.chat->SetProperty("width", "88%");
+        state.chat->SetProperty("overflow-x", "hidden");
+        state.chat_area_configured = true;
+    }
+
+    HideNativeScrollbars(state.chat);
 }
 
 
@@ -304,6 +431,164 @@ Rml::String Pixels(float value)
 {
     return std::to_string(
         std::max(value, 0.0f)) + "px";
+}
+
+
+float GetDpRatio(const InputState& state)
+{
+    if (state.document)
+    {
+        if (Rml::Context* context = state.document->GetContext())
+        {
+            return std::max(
+                context->GetDensityIndependentPixelRatio(),
+                1.0f);
+        }
+    }
+
+    return 1.0f;
+}
+
+
+/* ---------------------------------------------------------
+   HORIZONTAL CHAT BUBBLE SIZING
+
+   Measures the message's natural horizontal width so short
+   messages become crisp horizontal pills and long messages
+   fill the full 88% horizontal width before wrapping.
+--------------------------------------------------------- */
+
+float GetChatContentWidth(const InputState& state)
+{
+    if (!state.chat)
+        return 0.0f;
+
+    float width =
+        state.chat->GetBox().GetSize(Rml::BoxArea::Content).x;
+
+    if (width <= kGeometryEpsilon)
+    {
+        width = state.chat->GetClientWidth();
+    }
+
+    if (width <= kGeometryEpsilon && state.document)
+    {
+        if (Rml::Context* context = state.document->GetContext())
+        {
+            width = static_cast<float>(context->GetDimensions().x) * 0.88f;
+        }
+    }
+
+    return std::max(width, 0.0f);
+}
+
+
+void LayoutChatBubble(
+    Rml::Element* bubble,
+    float chat_content_width)
+{
+    if (!bubble || chat_content_width <= kGeometryEpsilon)
+        return;
+
+    Rml::ElementText* text_el = GetTextElement(bubble);
+
+    if (!text_el)
+        return;
+
+    const Rml::String& text = text_el->GetText();
+    float widest_line = 0.0f;
+    size_t line_start = 0;
+
+    while (line_start <= text.size())
+    {
+        const size_t newline_pos = text.find('\n', line_start);
+        const size_t line_end =
+            newline_pos == Rml::String::npos
+            ? text.size()
+            : newline_pos;
+
+        if (line_end > line_start)
+        {
+            const Rml::StringView segment(
+                text,
+                line_start,
+                line_end - line_start);
+
+            const float seg_width = static_cast<float>(
+                Rml::ElementUtilities::GetStringWidth(
+                    text_el,
+                    segment));
+
+            if (seg_width > widest_line)
+                widest_line = seg_width;
+        }
+
+        if (newline_pos == Rml::String::npos)
+            break;
+
+        line_start = newline_pos + 1;
+    }
+
+    const float dp_ratio = std::max(
+        Rml::ElementUtilities::GetDensityIndependentPixelRatio(text_el),
+        1.0f);
+
+    const float horizontal_frame =
+        bubble->GetBox().GetFrameSize(Rml::BoxArea::Border).x;
+
+    const float max_outer_width = chat_content_width * 0.88f;
+    const float max_content_width =
+        std::max(1.0f, max_outer_width - horizontal_frame);
+
+    const float line_height = std::max(bubble->GetLineHeight(), 1.0f);
+    const float min_content_width =
+        std::min(max_content_width, line_height * 1.15f);
+
+    const float safety_px = std::ceil(dp_ratio * 4.0f);
+    const float target_content_width = std::clamp(
+        widest_line + safety_px,
+        min_content_width,
+        max_content_width);
+
+    const float bubble_outer_width =
+        target_content_width + horizontal_frame;
+
+    const float left_margin =
+        std::max(0.0f, chat_content_width - bubble_outer_width);
+
+    bubble->SetProperty("box-sizing", "content-box");
+    bubble->SetProperty("width", Pixels(target_content_width));
+    bubble->SetProperty("max-width", Pixels(max_content_width));
+    bubble->SetProperty("margin-left", Pixels(left_margin));
+    bubble->SetProperty("margin-right", "0px");
+}
+
+
+void RelayoutAllChatBubbles(InputState& state)
+{
+    if (!state.chat || !state.document)
+        return;
+
+    ConfigureChatArea(state);
+
+    const float chat_width = GetChatContentWidth(state);
+
+    if (chat_width <= kGeometryEpsilon)
+        return;
+
+    const int child_count = state.chat->GetNumChildren(false);
+
+    for (int i = 0; i < child_count; ++i)
+    {
+        Rml::Element* child = state.chat->GetChild(i);
+
+        if (child && child->IsClassSet("chat-message"))
+        {
+            LayoutChatBubble(child, chat_width);
+        }
+    }
+
+    state.last_chat_width = chat_width;
 }
 
 
@@ -551,12 +836,232 @@ float GetMaxChatScroll(const InputState& state)
 }
 
 
-void ScrollChatToBottom(InputState& state)
+/* ---------------------------------------------------------
+   VSYNC-LOCKED SMOOTH SCROLL ENGINE (MOMENTUM + AUTO-GLIDE)
+--------------------------------------------------------- */
+
+void StepScrollAnimationTask(void*);
+
+void ScheduleScrollAnimation(InputState& state)
 {
-    if (!state.chat)
+    if (state.anim_posted ||
+        state.anim_mode == ScrollAnimMode::None)
+    {
+        return;
+    }
+
+    if (Ultron_PostToUI(&StepScrollAnimationTask, nullptr))
+    {
+        state.anim_posted = true;
+    }
+}
+
+
+void StartMomentumScroll(
+    InputState& state,
+    TouchTarget target,
+    float velocity_px_per_sec)
+{
+    if (target == TouchTarget::None)
         return;
 
-    state.chat->SetScrollTop(GetMaxChatScroll(state));
+    const float dp_ratio = GetDpRatio(state);
+    const float min_fling_velocity = 110.0f * dp_ratio;
+
+    if (std::fabs(velocity_px_per_sec) < min_fling_velocity)
+    {
+        StopScrollAnimation(state);
+        return;
+    }
+
+    const float max_fling_velocity = 3600.0f * dp_ratio;
+    const float clamped_velocity = std::clamp(
+        velocity_px_per_sec,
+        -max_fling_velocity,
+        max_fling_velocity);
+
+    const float current_scroll =
+        target == TouchTarget::InputScroll
+        ? (state.scroll ? state.scroll->GetScrollTop() : 0.0f)
+        : (state.chat ? state.chat->GetScrollTop() : 0.0f);
+
+    state.anim_mode = ScrollAnimMode::Momentum;
+    state.anim_target = target;
+    state.anim_scroll_pos = current_scroll;
+    state.anim_velocity = clamped_velocity;
+    state.anim_last_ms = SDL_GetTicks();
+
+    ScheduleScrollAnimation(state);
+}
+
+
+void StartSmoothScrollTo(
+    InputState& state,
+    TouchTarget target,
+    float goal_scroll)
+{
+    if (target == TouchTarget::None)
+        return;
+
+    const float current_scroll =
+        target == TouchTarget::InputScroll
+        ? (state.scroll ? state.scroll->GetScrollTop() : 0.0f)
+        : (state.chat ? state.chat->GetScrollTop() : 0.0f);
+
+    if (std::fabs(goal_scroll - current_scroll) <= kGeometryEpsilon)
+    {
+        StopScrollAnimation(state);
+
+        if (target == TouchTarget::ChatArea && state.chat)
+        {
+            state.chat->SetScrollTop(goal_scroll);
+        }
+        else if (target == TouchTarget::InputScroll && state.scroll)
+        {
+            state.scroll->SetScrollTop(goal_scroll);
+        }
+
+        return;
+    }
+
+    state.anim_mode = ScrollAnimMode::EaseToTarget;
+    state.anim_target = target;
+    state.anim_scroll_pos = current_scroll;
+    state.anim_goal_scroll = goal_scroll;
+    state.anim_velocity = 0.0f;
+    state.anim_last_ms = SDL_GetTicks();
+
+    ScheduleScrollAnimation(state);
+}
+
+
+void StepScrollAnimation(InputState& state)
+{
+    state.anim_posted = false;
+
+    if (state.anim_mode == ScrollAnimMode::None ||
+        !state.document ||
+        !state.document->IsVisible())
+    {
+        StopScrollAnimation(state);
+        return;
+    }
+
+    Rml::Element* container =
+        state.anim_target == TouchTarget::InputScroll
+        ? state.scroll
+        : state.chat;
+
+    if (!container)
+    {
+        StopScrollAnimation(state);
+        return;
+    }
+
+    const float max_scroll =
+        state.anim_target == TouchTarget::InputScroll
+        ? GetMaxInputScroll(state)
+        : GetMaxChatScroll(state);
+
+    if (max_scroll <= kGeometryEpsilon)
+    {
+        container->SetScrollTop(0.0f);
+        StopScrollAnimation(state);
+        return;
+    }
+
+    const Uint64 now = SDL_GetTicks();
+    const Uint64 elapsed_ms =
+        now >= state.anim_last_ms ? (now - state.anim_last_ms) : 0;
+
+    if (elapsed_ms > 180)
+    {
+        StopScrollAnimation(state);
+        return;
+    }
+
+    if (elapsed_ms == 0)
+    {
+        ScheduleScrollAnimation(state);
+        return;
+    }
+
+    state.anim_last_ms = now;
+    const float dt = std::min(
+        static_cast<float>(elapsed_ms) * 0.001f,
+        0.05f);
+
+    if (state.anim_mode == ScrollAnimMode::Momentum)
+    {
+        // Frame-rate independent exponential deceleration.
+        const float decay = std::exp(-kMomentumFriction * dt);
+        const float delta =
+            state.anim_velocity * (1.0f - decay) / kMomentumFriction;
+
+        state.anim_scroll_pos += delta;
+        state.anim_velocity *= decay;
+
+        bool hit_edge = false;
+
+        if (state.anim_scroll_pos <= 0.0f)
+        {
+            state.anim_scroll_pos = 0.0f;
+            hit_edge = true;
+        }
+        else if (state.anim_scroll_pos >= max_scroll)
+        {
+            state.anim_scroll_pos = max_scroll;
+            hit_edge = true;
+        }
+
+        container->SetScrollTop(state.anim_scroll_pos);
+
+        if (state.anim_target == TouchTarget::InputScroll && state.input)
+        {
+            state.input->SetScrollTop(0.0f);
+        }
+
+        const float stop_threshold = 18.0f * GetDpRatio(state);
+
+        if (hit_edge || std::fabs(state.anim_velocity) < stop_threshold)
+        {
+            StopScrollAnimation(state);
+            return;
+        }
+
+        ScheduleScrollAnimation(state);
+        return;
+    }
+
+    if (state.anim_mode == ScrollAnimMode::EaseToTarget)
+    {
+        const float goal = std::clamp(
+            state.anim_goal_scroll,
+            0.0f,
+            max_scroll);
+
+        const float alpha =
+            1.0f - std::exp(-kAutoScrollSnappiness * dt);
+
+        state.anim_scroll_pos +=
+            (goal - state.anim_scroll_pos) * alpha;
+
+        if (std::fabs(goal - state.anim_scroll_pos) <= kGeometryEpsilon)
+        {
+            container->SetScrollTop(goal);
+            StopScrollAnimation(state);
+            return;
+        }
+
+        container->SetScrollTop(state.anim_scroll_pos);
+        ScheduleScrollAnimation(state);
+    }
+}
+
+
+void StepScrollAnimationTask(void*)
+{
+    StepScrollAnimation(State());
 }
 
 
@@ -577,6 +1082,11 @@ void SyncScroll(
 {
     if (!state.scroll || !state.input)
         return;
+
+    if (state.anim_target == TouchTarget::InputScroll)
+    {
+        StopScrollAnimation(state);
+    }
 
     // Keep textarea internal scroll pinned at top-left.
     state.input->SetScrollTop(0.0f);
@@ -646,6 +1156,11 @@ void ResetMultiline(InputState& state)
     if (state.touch_target == TouchTarget::InputScroll)
     {
         ResetTouchScroll(state);
+    }
+
+    if (state.anim_target == TouchTarget::InputScroll)
+    {
+        StopScrollAnimation(state);
     }
 
     state.first_line_shifted = false;
@@ -718,8 +1233,12 @@ void SendCurrentMessage(InputState& state)
     if (message.empty())
         return;
 
+    ConfigureChatArea(state);
+
     Rml::ElementPtr bubble =
         state.document->CreateElement("div");
+
+    Rml::Element* appended_bubble = nullptr;
 
     if (bubble)
     {
@@ -732,7 +1251,8 @@ void SendCurrentMessage(InputState& state)
             bubble->AppendChild(std::move(text_node));
         }
 
-        state.chat->AppendChild(std::move(bubble));
+        appended_bubble =
+            state.chat->AppendChild(std::move(bubble));
     }
 
     state.input->SetValue("");
@@ -744,8 +1264,29 @@ void SendCurrentMessage(InputState& state)
         SDL_ClearComposition(window);
     }
 
+    // First layout pass resolves font size, padding, and chat-area width.
     state.document->UpdateDocument();
-    ScrollChatToBottom(state);
+    HideNativeScrollbars(state.chat);
+
+    const float chat_width = GetChatContentWidth(state);
+
+    if (std::fabs(chat_width - state.last_chat_width) > kGeometryEpsilon)
+    {
+        RelayoutAllChatBubbles(state);
+    }
+    else if (appended_bubble != nullptr)
+    {
+        LayoutChatBubble(appended_bubble, chat_width);
+    }
+
+    // Second layout pass locks in exact horizontal bubble heights & scrollHeight.
+    state.document->UpdateDocument();
+    HideNativeScrollbars(state.chat);
+
+    StartSmoothScrollTo(
+        state,
+        TouchTarget::ChatArea,
+        GetMaxChatScroll(state));
 }
 
 
@@ -1061,12 +1602,63 @@ void UpdateInput(InputState& state)
 
 
 /* ---------------------------------------------------------
+   FLING VELOCITY COMPUTATION
+--------------------------------------------------------- */
+
+float ComputeFlingVelocity(
+    const InputState& state,
+    Uint64 release_ms)
+{
+    if (state.velocity_sample_count < 2)
+        return 0.0f;
+
+    // If finger paused before lifting, stop cleanly without drifting.
+    if (release_ms > state.last_motion_ms &&
+        release_ms - state.last_motion_ms > kFlingStationaryCutoffMs)
+    {
+        return 0.0f;
+    }
+
+    const TouchSample& newest =
+        state.velocity_samples[state.velocity_sample_count - 1];
+
+    const TouchSample* oldest = &newest;
+
+    for (size_t i = state.velocity_sample_count; i-- > 0;)
+    {
+        const TouchSample& sample = state.velocity_samples[i];
+
+        if (newest.time_ms >= sample.time_ms &&
+            newest.time_ms - sample.time_ms <= kVelocityWindowMs)
+        {
+            oldest = &sample;
+        }
+        else
+        {
+            break;
+        }
+    }
+
+    if (newest.time_ms <= oldest->time_ms)
+        return 0.0f;
+
+    const float dt_sec =
+        static_cast<float>(newest.time_ms - oldest->time_ms) * 0.001f;
+
+    if (dt_sec < 0.004f)
+        return 0.0f;
+
+    const float dy = newest.y - oldest->y;
+    return -dy / dt_sec;
+}
+
+
+/* ---------------------------------------------------------
    MOBILE TOUCH HANDLER (#input-scroll + #chat-area)
 
    Isolates touch dragging from RmlUi's desktop mouse-drag
-   selection so both #input-scroll and #chat-area scroll
-   smoothly 1:1 without drawing white selection highlights.
-   Clean taps pass through on release.
+   selection, drives 1:1 finger scrolling while touching,
+   and launches VSync-locked momentum glide on release.
 --------------------------------------------------------- */
 
 bool HandleTouchScrollEvent(
@@ -1077,6 +1669,24 @@ bool HandleTouchScrollEvent(
         return false;
 
     InputState& state = State();
+
+    if (event->type == SDL_EVENT_WILL_ENTER_BACKGROUND)
+    {
+        StopScrollAnimation(state);
+        ResetTouchScroll(state);
+        return false;
+    }
+
+    if (event->type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED)
+    {
+        if (state.document && state.document->IsVisible() && state.chat)
+        {
+            state.document->UpdateDocument();
+            RelayoutAllChatBubbles(state);
+        }
+
+        return false;
+    }
 
     if (event->type == SDL_EVENT_FINGER_CANCELED)
     {
@@ -1158,16 +1768,32 @@ bool HandleTouchScrollEvent(
         if (target == TouchTarget::None)
             return false;
 
+        const bool was_gliding =
+            state.anim_mode == ScrollAnimMode::Momentum &&
+            state.anim_target == target &&
+            std::fabs(state.anim_velocity) > 80.0f * GetDpRatio(state);
+
+        if (state.anim_target == target)
+        {
+            StopScrollAnimation(state);
+        }
+
+        const Uint64 now = SDL_GetTicks();
+
         state.touch_target = target;
         state.touch_active = true;
         state.is_scrolling = false;
         state.touch_moved = false;
+        state.caught_momentum = was_gliding;
         state.touch_id = event->tfinger.touchID;
         state.finger_id = event->tfinger.fingerID;
         state.touch_start_x = x;
         state.touch_start_y = y;
         state.touch_start_scroll_top = start_scroll_top;
+        state.last_motion_ms = now;
+        state.velocity_sample_count = 0;
 
+        PushVelocitySample(state, now, y);
         return true;
     }
 
@@ -1180,12 +1806,16 @@ bool HandleTouchScrollEvent(
 
     if (event->type == SDL_EVENT_FINGER_MOTION)
     {
+        const Uint64 now = SDL_GetTicks();
+        state.last_motion_ms = now;
+        PushVelocitySample(state, now, y);
+
         const float control_height =
             state.wing_hit ? state.wing_hit->GetOffsetHeight() : 0.0f;
 
         const float drag_threshold = std::max(
-            12.0f,
-            control_height * 0.14f);
+            10.0f,
+            control_height * 0.11f);
 
         const float dx = x - state.touch_start_x;
         const float dy = y - state.touch_start_y;
@@ -1241,17 +1871,25 @@ bool HandleTouchScrollEvent(
 
     if (event->type == SDL_EVENT_FINGER_UP)
     {
+        const Uint64 now = SDL_GetTicks();
         const TouchTarget target = state.touch_target;
         const bool was_scrolling = state.is_scrolling;
         const bool was_moved = state.touch_moved;
+        const bool was_catching = state.caught_momentum;
         const float tap_x = state.touch_start_x;
         const float tap_y = state.touch_start_y;
+        const float fling_velocity =
+            was_scrolling ? ComputeFlingVelocity(state, now) : 0.0f;
 
         ResetTouchScroll(state);
 
-        // Forward clean taps only (never drags).
-        if (!was_scrolling && !was_moved)
+        if (was_scrolling)
         {
+            StartMomentumScroll(state, target, fling_velocity);
+        }
+        else if (!was_moved && !was_catching)
+        {
+            // Forward clean taps only (never drags or momentum catches).
             const int px = static_cast<int>(std::round(tap_x));
             const int py = static_cast<int>(std::round(tap_y));
 
@@ -1327,9 +1965,13 @@ bool HandleRmlEvent(
         {
             state.input->Focus();
         }
-        else if (state.touch_target == TouchTarget::InputScroll)
+        else
         {
-            ResetTouchScroll(state);
+            if (state.touch_target == TouchTarget::InputScroll)
+                ResetTouchScroll(state);
+
+            if (state.anim_target == TouchTarget::InputScroll)
+                StopScrollAnimation(state);
         }
 
         return false;
@@ -1442,6 +2084,16 @@ bool RegisterObsidianWingChat()
     (void)Ultron_RegisterEventHandler(
         kModuleName,
         SDL_EVENT_FINGER_CANCELED,
+        &HandleTouchScrollEvent);
+
+    (void)Ultron_RegisterEventHandler(
+        kModuleName,
+        SDL_EVENT_WILL_ENTER_BACKGROUND,
+        &HandleTouchScrollEvent);
+
+    (void)Ultron_RegisterEventHandler(
+        kModuleName,
+        SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED,
         &HandleTouchScrollEvent);
 
     return click_registered && change_registered;
