@@ -96,6 +96,38 @@ void ResetTouchScroll(InputState& state)
 }
 
 
+bool IsInsideInput(Rml::Element* element)
+{
+    while (element != nullptr)
+    {
+        const Rml::String& id = element->GetId();
+
+        if (id == kInputId || id == kScrollId)
+            return true;
+
+        element = element->GetParentNode();
+    }
+
+    return false;
+}
+
+
+void ClearTextSelection(InputState& state)
+{
+    if (!state.input)
+        return;
+
+    int sel_start = 0;
+    int sel_end = 0;
+    state.input->GetSelection(&sel_start, &sel_end, nullptr);
+
+    if (sel_start != sel_end)
+    {
+        state.input->SetSelectionRange(sel_end, sel_end);
+    }
+}
+
+
 /* ---------------------------------------------------------
    ELEMENT BINDING
 --------------------------------------------------------- */
@@ -918,7 +950,7 @@ void UpdateInput(InputState& state)
 
    - Quick tap passes through to RmlUi (focus / cursor placement).
    - Consumes FINGER_MOTION inside the input box so RmlUi never
-     triggers accidental desktop drag-selection (white highlight).
+     triggers accidental drag-selection.
    - Vertical finger drag scrolls #input-scroll smoothly 1:1.
 --------------------------------------------------------- */
 
@@ -1023,8 +1055,6 @@ bool HandleTouchScrollEvent(
         const float max_scroll =
             state.first_line_shifted ? GetMaxManualScroll(state) : 0.0f;
 
-        // Always consume FINGER_MOTION inside the input box so RmlUi never
-        // triggers accidental desktop drag-selection (white highlight).
         if (max_scroll <= kGeometryEpsilon)
             return true;
 
@@ -1042,16 +1072,11 @@ bool HandleTouchScrollEvent(
             state.touch_start_scroll_top =
                 state.scroll->GetScrollTop();
 
-            // Clear any accidental text selection.
-            int sel_start = 0;
-            int sel_end = 0;
-            state.input->GetSelection(&sel_start, &sel_end, nullptr);
-            if (sel_start != sel_end)
-            {
-                state.input->SetSelectionRange(sel_end, sel_end);
-            }
+            ClearTextSelection(state);
 
             // Cancel the active touch in main.cpp / RmlUi cleanly.
+            // Capture-phase mousedrag blocking prevents CancelRmlTouchStates'
+            // ProcessMouseMove(-1, -1) from creating a white text selection.
             state.has_pending_cancel = true;
             state.cancel_touch_id = event->tfinger.touchID;
             state.cancel_finger_id = event->tfinger.fingerID;
@@ -1083,6 +1108,7 @@ bool HandleTouchScrollEvent(
     {
         const bool was_scrolling = state.is_scrolling;
         ResetTouchScroll(state);
+        ClearTextSelection(state);
         return was_scrolling;
     }
 
@@ -1107,9 +1133,32 @@ bool HandleRmlEvent(
     if (!target)
         return false;
 
+    const Rml::String& type = event->GetType();
+
+    /* BLOCK ACCIDENTAL WHITE SELECTION HIGHLIGHT */
+
+    if (type == "mousedrag" || type == "dblclick")
+    {
+        InputState& state = State();
+
+        if (state.is_scrolling || IsInsideInput(target))
+        {
+            ClearTextSelection(state);
+            return true;
+        }
+
+        return false;
+    }
+
+    if (type == "touchcancel")
+    {
+        ClearTextSelection(State());
+        return false;
+    }
+
     /* WING CLICK */
 
-    if (event->GetType() == "click" &&
+    if (type == "click" &&
         target->GetId() == kWingHitId)
     {
         if (!BindElements(target))
@@ -1139,7 +1188,7 @@ bool HandleRmlEvent(
 
     /* TEXTAREA CHANGE */
 
-    if (event->GetType() == "change" &&
+    if (type == "change" &&
         target->GetId() == kInputId)
     {
         if (!BindElements(target))
@@ -1151,7 +1200,7 @@ bool HandleRmlEvent(
 
     /* ANIMATED RESIZE FINISHED */
 
-    if (event->GetType() == "transitionend")
+    if (type == "transitionend")
     {
         const Rml::String& id = target->GetId();
 
@@ -1207,6 +1256,21 @@ bool RegisterObsidianWingChat()
     (void)Ultron_RegisterRmlEventHandler(
         kModuleName,
         "transitionend",
+        &HandleRmlEvent);
+
+    (void)Ultron_RegisterRmlEventHandler(
+        kModuleName,
+        "mousedrag",
+        &HandleRmlEvent);
+
+    (void)Ultron_RegisterRmlEventHandler(
+        kModuleName,
+        "dblclick",
+        &HandleRmlEvent);
+
+    (void)Ultron_RegisterRmlEventHandler(
+        kModuleName,
+        "touchcancel",
         &HandleRmlEvent);
 
     (void)Ultron_RegisterEventHandler(
