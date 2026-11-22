@@ -2265,4 +2265,802 @@ void ApplyMultilineLayout(
     const bool textarea_height_changed =
         std::fabs(
             textarea_height -
-            state
+            state.last_textarea_height) > kGeometryEpsilon;
+
+    const bool bar_height_changed =
+        std::fabs(
+            bar_height -
+            state.last_bar_height) > kGeometryEpsilon;
+
+    if (width_changed)
+    {
+        state.scroll->SetProperty(
+            "width",
+            Pixels(full_text_width));
+
+        state.input->SetProperty(
+            "width",
+            Pixels(full_text_width));
+
+        state.last_panel_width = full_text_width;
+    }
+
+    if (scroll_height_changed)
+    {
+        state.scroll->SetProperty(
+            "height",
+            Pixels(scroll_box_height));
+
+        state.last_scroll_height = scroll_box_height;
+    }
+
+    if (textarea_height_changed)
+    {
+        state.input->SetProperty(
+            "height",
+            Pixels(textarea_height));
+
+        state.last_textarea_height = textarea_height;
+    }
+
+    if (bar_height_changed)
+    {
+        state.bar->SetProperty(
+            "height",
+            Pixels(bar_height));
+
+        state.last_bar_height = bar_height;
+    }
+
+    state.last_line_count = clamped_lines;
+    state.last_max_rows = maximum_rows;
+    state.last_control_height = control_height;
+
+    SyncViewportAndChatLayout(state);
+}
+
+
+/* ---------------------------------------------------------
+   INPUT UPDATE
+--------------------------------------------------------- */
+
+void UpdateInput(InputState& state)
+{
+    if (state.updating ||
+        !state.input ||
+        !state.scroll ||
+        !state.bar ||
+        !state.wing_hit ||
+        !state.chat)
+    {
+        return;
+    }
+
+    struct UpdateGuard
+    {
+        bool& flag;
+
+        explicit UpdateGuard(bool& value)
+            : flag(value)
+        {
+            flag = true;
+        }
+
+        ~UpdateGuard()
+        {
+            flag = false;
+        }
+    };
+
+    UpdateGuard guard(state.updating);
+
+    const Rml::String value =
+        state.input->GetValue();
+
+    SetClass(
+        state.bar,
+        kBarId,
+        "has-text",
+        HasVisibleText(value));
+
+    if (value.empty())
+    {
+        ResetMultiline(state);
+
+        // Completely clearing the input bar cancels active editing
+        // and restores the original message plus all messages below it.
+        if (state.edit_active && !state.entering_edit)
+        {
+            CancelEdit(state, true);
+        }
+
+        return;
+    }
+
+    Rml::ElementText* text_element =
+        GetTextElement(state.input);
+
+    if (!text_element)
+        return;
+
+    const float control_height =
+        state.wing_hit->GetOffsetHeight();
+
+    if (control_height <= 0.0f)
+        return;
+
+    const float cursor_width =
+        std::round(
+            Rml::ElementUtilities::
+                GetDensityIndependentPixelRatio(text_element));
+
+    bool just_shifted = false;
+
+    /* FIRST LINE */
+
+    if (!state.first_line_shifted)
+    {
+        const float first_line_width =
+            GetTextWidth(
+                state,
+                control_height,
+                kFirstLeft,
+                kFirstRight);
+
+        const bool reached_width =
+            IsFirstLineReadyToShift(
+                text_element,
+                first_line_width,
+                cursor_width);
+
+        const bool already_wrapped =
+            !reached_width && HasNativeWrapped(state);
+
+        if (!reached_width && !already_wrapped)
+        {
+            state.last_value = value;
+            return;
+        }
+
+        state.first_line_shifted = true;
+        just_shifted = true;
+
+        SetClass(
+            state.bar,
+            kBarId,
+            "multiline",
+            true);
+
+        ConfigureMultilineWordBreak(state);
+    }
+
+    /* FULL-WIDTH MULTILINE */
+
+    const float full_width =
+        GetTextWidth(
+            state,
+            control_height,
+            kMultilineLeft,
+            kMultilineRight);
+
+    const bool responsive_size_changed =
+        std::fabs(
+            control_height -
+            state.last_control_height) > kGeometryEpsilon ||
+
+        std::fabs(
+            full_width -
+            state.last_panel_width) > kGeometryEpsilon;
+
+    const int corrected_line_count =
+        CountWrappedLines(
+            text_element,
+            full_width,
+            cursor_width);
+
+    const bool append_only =
+        IsAppendOnly(state.last_value, value);
+
+    int final_line_count = corrected_line_count;
+
+    if (append_only && !responsive_size_changed)
+    {
+        final_line_count = std::max(
+            final_line_count,
+            state.last_line_count);
+    }
+
+    const bool line_count_changed =
+        final_line_count != state.last_line_count;
+
+    if (just_shifted ||
+        line_count_changed ||
+        responsive_size_changed)
+    {
+        ApplyMultilineLayout(
+            state,
+            final_line_count,
+            control_height,
+            full_width);
+    }
+
+    SyncScroll(
+        state,
+        just_shifted && final_line_count == 1,
+        append_only);
+
+    state.last_value = value;
+}
+
+
+/* ---------------------------------------------------------
+   FLING VELOCITY COMPUTATION
+--------------------------------------------------------- */
+
+float ComputeFlingVelocity(
+    const InputState& state,
+    Uint64 release_ms)
+{
+    if (state.velocity_sample_count < 2)
+        return 0.0f;
+
+    // If finger paused before lifting, stop cleanly without drifting.
+    if (release_ms > state.last_motion_ms &&
+        release_ms - state.last_motion_ms > kFlingStationaryCutoffMs)
+    {
+        return 0.0f;
+    }
+
+    const TouchSample& newest =
+        state.velocity_samples[state.velocity_sample_count - 1];
+
+    const TouchSample* oldest = &newest;
+
+    for (size_t i = state.velocity_sample_count; i-- > 0;)
+    {
+        const TouchSample& sample = state.velocity_samples[i];
+
+        if (newest.time_ms >= sample.time_ms &&
+            newest.time_ms - sample.time_ms <= kVelocityWindowMs)
+        {
+            oldest = &sample;
+        }
+        else
+        {
+            break;
+        }
+    }
+
+    if (newest.time_ms <= oldest->time_ms)
+        return 0.0f;
+
+    const float dt_sec =
+        static_cast<float>(newest.time_ms - oldest->time_ms) * 0.001f;
+
+    if (dt_sec < 0.004f)
+        return 0.0f;
+
+    const float dy = newest.y - oldest->y;
+    return -dy / dt_sec;
+}
+
+
+/* ---------------------------------------------------------
+   MOBILE TOUCH HANDLER (#input-scroll + #chat-area)
+
+   Isolates touch dragging from RmlUi's desktop mouse-drag
+   selection, drives 1:1 finger scrolling while touching,
+   detects 650ms long-press on chat bubbles when #input-bar
+   is expanded, and launches VSync-locked momentum glide.
+--------------------------------------------------------- */
+
+bool HandleTouchScrollEvent(
+    const SDL_Event* event,
+    void*)
+{
+    if (!event)
+        return false;
+
+    InputState& state = State();
+
+    if (event->type == SDL_EVENT_WILL_ENTER_BACKGROUND)
+    {
+        state.app_in_background = true;
+        StopScrollAnimation(state);
+        ResetTouchScroll(state);
+        return false;
+    }
+
+    if (event->type == SDL_EVENT_DID_ENTER_FOREGROUND)
+    {
+        state.app_in_background = false;
+        state.insets_last_ms = 0;
+        EnsureInsetsMonitor(state);
+        return false;
+    }
+
+    if (event->type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED)
+    {
+        if (state.document && state.document->IsVisible() && state.chat)
+        {
+            state.document->UpdateDocument();
+            SyncViewportAndChatLayout(state);
+            RelayoutAllChatBubbles(state);
+        }
+
+        return false;
+    }
+
+    if (event->type == SDL_EVENT_FINGER_CANCELED)
+    {
+        if (state.touch_active &&
+            event->tfinger.touchID == state.touch_id &&
+            event->tfinger.fingerID == state.finger_id)
+        {
+            ResetTouchScroll(state);
+            return true;
+        }
+
+        return false;
+    }
+
+    if (!state.document ||
+        !state.document->IsVisible() ||
+        !state.bar ||
+        !state.scroll ||
+        !state.chat ||
+        !state.input)
+    {
+        return false;
+    }
+
+    Rml::Context* context = state.document->GetContext();
+
+    if (!context)
+        return false;
+
+    const Rml::Vector2i dims = context->GetDimensions();
+
+    if (dims.x <= 0 || dims.y <= 0)
+        return false;
+
+    const float x =
+        event->tfinger.x * static_cast<float>(dims.x);
+
+    const float y =
+        event->tfinger.y * static_cast<float>(dims.y);
+
+    const auto is_point_inside =
+        [x, y](Rml::Element* element)
+    {
+        if (!element)
+            return false;
+
+        const Rml::Vector2f box_pos =
+            element->GetAbsoluteOffset(Rml::BoxArea::Border);
+
+        const Rml::Vector2f box_size =
+            element->GetBox().GetSize(Rml::BoxArea::Border);
+
+        return x >= box_pos.x &&
+               x <= box_pos.x + box_size.x &&
+               y >= box_pos.y &&
+               y <= box_pos.y + box_size.y;
+    };
+
+    if (event->type == SDL_EVENT_FINGER_DOWN)
+    {
+        if (state.touch_active)
+            return false;
+
+        TouchTarget target = TouchTarget::None;
+        float start_scroll_top = 0.0f;
+
+        if (IsBarExpanded(state) &&
+            is_point_inside(state.scroll))
+        {
+            target = TouchTarget::InputScroll;
+            start_scroll_top = state.scroll->GetScrollTop();
+        }
+        else if (is_point_inside(state.chat))
+        {
+            target = TouchTarget::ChatArea;
+            start_scroll_top = state.chat->GetScrollTop();
+        }
+
+        if (target == TouchTarget::None)
+            return false;
+
+        const bool was_gliding =
+            state.anim_mode == ScrollAnimMode::Momentum &&
+            state.anim_target == target &&
+            std::fabs(state.anim_velocity) > 80.0f * GetDpRatio(state);
+
+        if (state.anim_target == target)
+        {
+            StopScrollAnimation(state);
+        }
+
+        const Uint64 now = SDL_GetTicks();
+
+        state.touch_target = target;
+        state.touch_active = true;
+        state.is_scrolling = false;
+        state.touch_moved = false;
+        state.caught_momentum = was_gliding;
+        state.long_press_triggered = false;
+        state.touch_id = event->tfinger.touchID;
+        state.finger_id = event->tfinger.fingerID;
+        state.touch_start_x = x;
+        state.touch_start_y = y;
+        state.touch_start_scroll_top = start_scroll_top;
+        state.last_motion_ms = now;
+        state.velocity_sample_count = 0;
+
+        PushVelocitySample(state, now, y);
+
+        // Long-press to edit is enabled only while #input-bar is expanded
+        // and the user isn't catching an active momentum scroll.
+        if (target == TouchTarget::ChatArea &&
+            IsBarExpanded(state) &&
+            !was_gliding)
+        {
+            if (Rml::Element* bubble = FindChatBubbleAtPoint(state, x, y))
+            {
+                state.long_press_pending = true;
+                state.long_press_start_ms = now;
+                state.long_press_bubble = bubble;
+                ScheduleLongPressCheck(state);
+            }
+            else
+            {
+                CancelPendingLongPress(state);
+            }
+        }
+        else
+        {
+            CancelPendingLongPress(state);
+        }
+
+        return true;
+    }
+
+    if (!state.touch_active ||
+        event->tfinger.touchID != state.touch_id ||
+        event->tfinger.fingerID != state.finger_id)
+    {
+        return false;
+    }
+
+    if (event->type == SDL_EVENT_FINGER_MOTION)
+    {
+        if (state.long_press_triggered)
+            return true;
+
+        const Uint64 now = SDL_GetTicks();
+        state.last_motion_ms = now;
+        PushVelocitySample(state, now, y);
+
+        const float control_height =
+            state.wing_hit ? state.wing_hit->GetOffsetHeight() : 0.0f;
+
+        const float drag_threshold = std::max(
+            10.0f,
+            control_height * 0.11f);
+
+        const float dx = x - state.touch_start_x;
+        const float dy = y - state.touch_start_y;
+
+        const float max_scroll =
+            state.touch_target == TouchTarget::InputScroll
+            ? GetMaxInputScroll(state)
+            : GetMaxChatScroll(state);
+
+        if (!state.is_scrolling)
+        {
+            if (std::fabs(dx) >= drag_threshold ||
+                std::fabs(dy) >= drag_threshold)
+            {
+                state.touch_moved = true;
+                CancelPendingLongPress(state);
+            }
+
+            if (max_scroll > kGeometryEpsilon &&
+                std::fabs(dy) >= drag_threshold)
+            {
+                state.is_scrolling = true;
+                CancelPendingLongPress(state);
+                state.touch_start_y = y;
+                state.touch_start_scroll_top =
+                    state.touch_target == TouchTarget::InputScroll
+                    ? state.scroll->GetScrollTop()
+                    : state.chat->GetScrollTop();
+            }
+
+            return true;
+        }
+
+        if (max_scroll <= kGeometryEpsilon)
+            return true;
+
+        const float delta_y = y - state.touch_start_y;
+        const float target_scroll = std::clamp(
+            state.touch_start_scroll_top - delta_y,
+            0.0f,
+            max_scroll);
+
+        if (state.touch_target == TouchTarget::InputScroll)
+        {
+            state.scroll->SetScrollTop(target_scroll);
+            state.input->SetScrollTop(0.0f);
+        }
+        else if (state.touch_target == TouchTarget::ChatArea)
+        {
+            state.chat->SetScrollTop(target_scroll);
+        }
+
+        return true;
+    }
+
+    if (event->type == SDL_EVENT_FINGER_UP)
+    {
+        if (state.long_press_triggered)
+        {
+            ResetTouchScroll(state);
+            return true;
+        }
+
+        const Uint64 now = SDL_GetTicks();
+        const TouchTarget target = state.touch_target;
+        const bool was_scrolling = state.is_scrolling;
+        const bool was_moved = state.touch_moved;
+        const bool was_catching = state.caught_momentum;
+        const float tap_x = state.touch_start_x;
+        const float tap_y = state.touch_start_y;
+        const float fling_velocity =
+            was_scrolling ? ComputeFlingVelocity(state, now) : 0.0f;
+
+        ResetTouchScroll(state);
+
+        if (was_scrolling)
+        {
+            StartMomentumScroll(state, target, fling_velocity);
+        }
+        else if (!was_moved && !was_catching)
+        {
+            // Forward clean taps only (never drags or momentum catches).
+            const int px = static_cast<int>(std::round(tap_x));
+            const int py = static_cast<int>(std::round(tap_y));
+
+            context->ProcessMouseMove(px, py, 0);
+            context->ProcessMouseButtonDown(0, 0);
+            context->ProcessMouseButtonUp(0, 0);
+
+            if (target == TouchTarget::InputScroll)
+            {
+                if (context->GetFocusElement() != state.input)
+                {
+                    state.input->Focus();
+                }
+
+                ClearTextSelection(state);
+            }
+        }
+
+        return true;
+    }
+
+    return false;
+}
+
+
+/* ---------------------------------------------------------
+   SINGLE RML EVENT HANDLER
+--------------------------------------------------------- */
+
+bool HandleRmlEvent(
+    Rml::Event* event,
+    void*)
+{
+    if (!event)
+        return false;
+
+    Rml::Element* target =
+        event->GetTargetElement();
+
+    if (!target)
+        return false;
+
+    const Rml::String& type = event->GetType();
+
+    /* DOCUMENT LOADED: BIND & LOCK CHAT AREA TOP IMMEDIATELY */
+
+    if (type == "load")
+    {
+        BindElements(target);
+        return false;
+    }
+
+    /* BLOCK DOUBLE-TAP WORD SELECTION INSIDE INPUT & CHAT */
+
+    if (type == "dblclick" &&
+        (IsInsideInput(target) || IsInsideElement(target, kChatId)))
+    {
+        ClearTextSelection(State());
+        return true;
+    }
+
+    /* WING CLICK */
+
+    if (type == "click" &&
+        IsInsideElement(target, kWingHitId))
+    {
+        if (!BindElements(target))
+            return false;
+
+        InputState& state = State();
+
+        const bool expand = !IsBarExpanded(state);
+
+        Ultron_SetElementClass(
+            kBarId,
+            "expanded",
+            expand);
+
+        if (expand)
+        {
+            state.input->Focus();
+        }
+        else
+        {
+            CancelPendingLongPress(state);
+            state.input->Blur();
+
+            if (state.touch_target == TouchTarget::InputScroll)
+                ResetTouchScroll(state);
+
+            if (state.anim_target == TouchTarget::InputScroll)
+                StopScrollAnimation(state);
+        }
+
+        return false;
+    }
+
+    /* SEND BUTTON (ARROW) CLICK */
+
+    if (type == "click" &&
+        IsInsideElement(target, kSendButtonId))
+    {
+        if (!BindElements(target))
+            return false;
+
+        SendCurrentMessage(State());
+        return true;
+    }
+
+    /* TEXTAREA CHANGE */
+
+    if (type == "change" &&
+        target->GetId() == kInputId)
+    {
+        if (!BindElements(target))
+            return false;
+
+        UpdateInput(State());
+        return false;
+    }
+
+    /* ANIMATED RESIZE FINISHED */
+
+    if (type == "transitionend")
+    {
+        const Rml::String& id = target->GetId();
+
+        if (id == kInputId ||
+            id == kScrollId ||
+            id == kBarId ||
+            id == kChatId)
+        {
+            if (BindElements(target))
+            {
+                InputState& state = State();
+
+                if (state.first_line_shifted &&
+                    !state.updating)
+                {
+                    if (id == kBarId)
+                    {
+                        UpdateInput(state);
+                    }
+                    else
+                    {
+                        SyncScroll(state, false, false);
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    return false;
+}
+
+
+/* ---------------------------------------------------------
+   AUTOMATIC REGISTRATION
+--------------------------------------------------------- */
+
+bool RegisterObsidianWingChat()
+{
+    const bool click_registered =
+        Ultron_RegisterRmlEventHandler(
+            kModuleName,
+            "click",
+            &HandleRmlEvent);
+
+    const bool change_registered =
+        Ultron_RegisterRmlEventHandler(
+            kModuleName,
+            "change",
+            &HandleRmlEvent);
+
+    (void)Ultron_RegisterRmlEventHandler(
+        kModuleName,
+        "load",
+        &HandleRmlEvent);
+
+    (void)Ultron_RegisterRmlEventHandler(
+        kModuleName,
+        "transitionend",
+        &HandleRmlEvent);
+
+    (void)Ultron_RegisterRmlEventHandler(
+        kModuleName,
+        "dblclick",
+        &HandleRmlEvent);
+
+    (void)Ultron_RegisterEventHandler(
+        kModuleName,
+        SDL_EVENT_FINGER_DOWN,
+        &HandleTouchScrollEvent);
+
+    (void)Ultron_RegisterEventHandler(
+        kModuleName,
+        SDL_EVENT_FINGER_MOTION,
+        &HandleTouchScrollEvent);
+
+    (void)Ultron_RegisterEventHandler(
+        kModuleName,
+        SDL_EVENT_FINGER_UP,
+        &HandleTouchScrollEvent);
+
+    (void)Ultron_RegisterEventHandler(
+        kModuleName,
+        SDL_EVENT_FINGER_CANCELED,
+        &HandleTouchScrollEvent);
+
+    (void)Ultron_RegisterEventHandler(
+        kModuleName,
+        SDL_EVENT_WILL_ENTER_BACKGROUND,
+        &HandleTouchScrollEvent);
+
+    (void)Ultron_RegisterEventHandler(
+        kModuleName,
+        SDL_EVENT_DID_ENTER_FOREGROUND,
+        &HandleTouchScrollEvent);
+
+    (void)Ultron_RegisterEventHandler(
+        kModuleName,
+        SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED,
+        &HandleTouchScrollEvent);
+
+    return click_registered && change_registered;
+}
+
+
+[[maybe_unused]]
+const bool g_registered =
+    RegisterObsidianWingChat();
+
+} // namespace
