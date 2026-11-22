@@ -62,17 +62,15 @@ struct InputState
     float last_bar_height = -1.0f;
     float last_chat_bottom = -1.0f;
 
-    // Manual finger-drag scroll state for #input-scroll.
+    // Touch state for #input-scroll (isolated from RmlUi mouse-drag).
     bool touch_active = false;
     bool is_scrolling = false;
+    bool touch_moved = false;
     SDL_TouchID touch_id = 0;
     SDL_FingerID finger_id = 0;
+    float touch_start_x = 0.0f;
     float touch_start_y = 0.0f;
     float touch_start_scroll_top = 0.0f;
-
-    bool has_pending_cancel = false;
-    SDL_TouchID cancel_touch_id = 0;
-    SDL_FingerID cancel_finger_id = 0;
 
     Rml::String last_value;
 };
@@ -89,8 +87,10 @@ void ResetTouchScroll(InputState& state)
 {
     state.touch_active = false;
     state.is_scrolling = false;
+    state.touch_moved = false;
     state.touch_id = 0;
     state.finger_id = 0;
+    state.touch_start_x = 0.0f;
     state.touch_start_y = 0.0f;
     state.touch_start_scroll_top = 0.0f;
 }
@@ -946,12 +946,14 @@ void UpdateInput(InputState& state)
 
 
 /* ---------------------------------------------------------
-   MANUAL FINGER TOUCH SCROLL (#input-scroll)
+   MOBILE TOUCH HANDLER FOR #input-scroll
 
-   - Quick tap passes through to RmlUi (focus / cursor placement).
-   - Consumes FINGER_MOTION inside the input box so RmlUi never
-     triggers accidental drag-selection.
-   - Vertical finger drag scrolls #input-scroll smoothly 1:1.
+   Intercepts FINGER_DOWN / FINGER_MOTION / FINGER_UP inside
+   the input viewport so RmlUi never enters desktop mouse-drag
+   selection mode (which draws the white highlight):
+   - Dragging scrolls #input-scroll smoothly 1:1.
+   - A clean tap (release without dragging) dispatches a single
+     instantaneous click to place the caret and focus the input.
 --------------------------------------------------------- */
 
 bool HandleTouchScrollEvent(
@@ -965,19 +967,12 @@ bool HandleTouchScrollEvent(
 
     if (event->type == SDL_EVENT_FINGER_CANCELED)
     {
-        if (state.has_pending_cancel &&
-            event->tfinger.touchID == state.cancel_touch_id &&
-            event->tfinger.fingerID == state.cancel_finger_id)
-        {
-            state.has_pending_cancel = false;
-            return false;
-        }
-
         if (state.touch_active &&
             event->tfinger.touchID == state.touch_id &&
             event->tfinger.fingerID == state.finger_id)
         {
             ResetTouchScroll(state);
+            return true;
         }
 
         return false;
@@ -1028,19 +1023,21 @@ bool HandleTouchScrollEvent(
             y >= box_pos.y &&
             y <= box_pos.y + box_size.y;
 
-        if (inside)
-        {
-            state.touch_active = true;
-            state.is_scrolling = false;
-            state.touch_id = event->tfinger.touchID;
-            state.finger_id = event->tfinger.fingerID;
-            state.touch_start_y = y;
-            state.touch_start_scroll_top =
-                state.scroll->GetScrollTop();
-        }
+        if (!inside)
+            return false;
 
-        // Let RmlUi receive FINGER_DOWN so normal taps still focus/place caret.
-        return false;
+        state.touch_active = true;
+        state.is_scrolling = false;
+        state.touch_moved = false;
+        state.touch_id = event->tfinger.touchID;
+        state.finger_id = event->tfinger.fingerID;
+        state.touch_start_x = x;
+        state.touch_start_y = y;
+        state.touch_start_scroll_top =
+            state.scroll->GetScrollTop();
+
+        // Consume FINGER_DOWN so RmlUi never starts desktop drag-selection.
+        return true;
     }
 
     if (!state.touch_active ||
@@ -1052,46 +1049,41 @@ bool HandleTouchScrollEvent(
 
     if (event->type == SDL_EVENT_FINGER_MOTION)
     {
+        const float control_height =
+            state.wing_hit ? state.wing_hit->GetOffsetHeight() : 0.0f;
+
+        const float drag_threshold = std::max(
+            12.0f,
+            control_height * 0.14f);
+
+        const float dx = x - state.touch_start_x;
+        const float dy = y - state.touch_start_y;
+
         const float max_scroll =
             state.first_line_shifted ? GetMaxManualScroll(state) : 0.0f;
 
-        if (max_scroll <= kGeometryEpsilon)
-            return true;
-
         if (!state.is_scrolling)
         {
-            const float drag_threshold = std::max(
-                8.0f,
-                state.last_control_height * 0.12f);
+            if (std::fabs(dx) >= drag_threshold ||
+                std::fabs(dy) >= drag_threshold)
+            {
+                state.touch_moved = true;
+            }
 
-            if (std::fabs(y - state.touch_start_y) < drag_threshold)
-                return true;
-
-            state.is_scrolling = true;
-            state.touch_start_y = y;
-            state.touch_start_scroll_top =
-                state.scroll->GetScrollTop();
-
-            ClearTextSelection(state);
-
-            // Cancel the active touch in main.cpp / RmlUi cleanly.
-            // Capture-phase mousedrag blocking prevents CancelRmlTouchStates'
-            // ProcessMouseMove(-1, -1) from creating a white text selection.
-            state.has_pending_cancel = true;
-            state.cancel_touch_id = event->tfinger.touchID;
-            state.cancel_finger_id = event->tfinger.fingerID;
-
-            SDL_Event cancel{};
-            cancel.type = SDL_EVENT_FINGER_CANCELED;
-            cancel.tfinger.touchID = event->tfinger.touchID;
-            cancel.tfinger.fingerID = event->tfinger.fingerID;
-            cancel.tfinger.x = event->tfinger.x;
-            cancel.tfinger.y = event->tfinger.y;
-            cancel.tfinger.windowID = event->tfinger.windowID;
-            SDL_PushEvent(&cancel);
+            if (max_scroll > kGeometryEpsilon &&
+                std::fabs(dy) >= drag_threshold)
+            {
+                state.is_scrolling = true;
+                state.touch_start_y = y;
+                state.touch_start_scroll_top =
+                    state.scroll->GetScrollTop();
+            }
 
             return true;
         }
+
+        if (max_scroll <= kGeometryEpsilon)
+            return true;
 
         const float delta_y = y - state.touch_start_y;
         const float target = std::clamp(
@@ -1107,9 +1099,31 @@ bool HandleTouchScrollEvent(
     if (event->type == SDL_EVENT_FINGER_UP)
     {
         const bool was_scrolling = state.is_scrolling;
+        const bool was_moved = state.touch_moved;
+        const float tap_x = state.touch_start_x;
+        const float tap_y = state.touch_start_y;
+
         ResetTouchScroll(state);
-        ClearTextSelection(state);
-        return was_scrolling;
+
+        // Only forward a clean tap (never a drag) to place the caret & focus.
+        if (!was_scrolling && !was_moved)
+        {
+            const int px = static_cast<int>(std::round(tap_x));
+            const int py = static_cast<int>(std::round(tap_y));
+
+            context->ProcessMouseMove(px, py, 0);
+            context->ProcessMouseButtonDown(0, 0);
+            context->ProcessMouseButtonUp(0, 0);
+
+            if (context->GetFocusElement() != state.input)
+            {
+                state.input->Focus();
+            }
+
+            ClearTextSelection(state);
+        }
+
+        return true;
     }
 
     return false;
@@ -1135,25 +1149,12 @@ bool HandleRmlEvent(
 
     const Rml::String& type = event->GetType();
 
-    /* BLOCK ACCIDENTAL WHITE SELECTION HIGHLIGHT */
+    /* BLOCK DOUBLE-TAP WORD SELECTION INSIDE INPUT */
 
-    if (type == "mousedrag" || type == "dblclick")
-    {
-        InputState& state = State();
-
-        if (state.is_scrolling || IsInsideInput(target))
-        {
-            ClearTextSelection(state);
-            return true;
-        }
-
-        return false;
-    }
-
-    if (type == "touchcancel")
+    if (type == "dblclick" && IsInsideInput(target))
     {
         ClearTextSelection(State());
-        return false;
+        return true;
     }
 
     /* WING CLICK */
@@ -1200,7 +1201,7 @@ bool HandleRmlEvent(
 
     /* ANIMATED RESIZE FINISHED */
 
-    if (type == "transitionend")
+    if (event->GetType() == "transitionend")
     {
         const Rml::String& id = target->GetId();
 
@@ -1260,17 +1261,7 @@ bool RegisterObsidianWingChat()
 
     (void)Ultron_RegisterRmlEventHandler(
         kModuleName,
-        "mousedrag",
-        &HandleRmlEvent);
-
-    (void)Ultron_RegisterRmlEventHandler(
-        kModuleName,
         "dblclick",
-        &HandleRmlEvent);
-
-    (void)Ultron_RegisterRmlEventHandler(
-        kModuleName,
-        "touchcancel",
         &HandleRmlEvent);
 
     (void)Ultron_RegisterEventHandler(
