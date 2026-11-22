@@ -114,7 +114,7 @@ struct InputState
     std::array<TouchSample, kVelocitySampleCapacity> velocity_samples{};
     size_t velocity_sample_count = 0;
 
-    // Long-press detection state for chat bubbles.
+    // Long-press detection state for chat bubbles (active only when expanded).
     bool long_press_pending = false;
     bool long_press_triggered = false;
     bool long_press_posted = false;
@@ -144,6 +144,13 @@ InputState& State()
 {
     static InputState state;
     return state;
+}
+
+
+bool IsBarExpanded(const InputState& state)
+{
+    return state.bar != nullptr &&
+           state.bar->IsClassSet("expanded");
 }
 
 
@@ -891,9 +898,8 @@ float GetBarTargetClientWidth(const InputState& state)
 {
     float width = state.bar ? state.bar->GetClientWidth() : 0.0f;
 
-    // When #input-bar is expanding via CSS transition, measure against its
-    // full expanded width (88%) so loaded edit text never wraps prematurely.
-    if (state.bar && state.bar->IsClassSet("expanded") && state.document)
+    // Measure against full expanded width (88%) even mid-transition.
+    if (IsBarExpanded(state) && state.document)
     {
         if (Rml::Context* context = state.document->GetContext())
         {
@@ -1353,13 +1359,14 @@ void ResetMultiline(InputState& state)
 
 
 /* ---------------------------------------------------------
-   LONG-PRESS EDIT LIFECYCLE (BEGIN / CANCEL)
+   LONG-PRESS EDIT LIFECYCLE (EXPANDED PANEL ONLY)
 
-   - BeginEditMessage: backs up the selected bubble and every
-     bubble below it, removes them from #chat-area, and loads
-     the selected message into #message-input.
+   - BeginEditMessage: only active while #input-bar is expanded.
+     Backs up the selected bubble and all bubbles below it,
+     removes them from #chat-area, and loads the selected text
+     into #message-input.
    - CancelEdit: restores the selected bubble and all bubbles
-     below it in exact original order when input is cleared.
+     below it in exact original order if input is cleared.
 --------------------------------------------------------- */
 
 void UpdateInput(InputState& state);
@@ -1412,7 +1419,7 @@ void BeginEditMessage(
     Rml::Element* target_bubble)
 {
     if (!state.document ||
-        !state.bar ||
+        !IsBarExpanded(state) ||
         !state.chat ||
         !state.input ||
         !target_bubble)
@@ -1420,8 +1427,8 @@ void BeginEditMessage(
         return;
     }
 
-    // If another message was already being edited, restore its backup first
-    // so nothing is ever lost before starting the new edit.
+    // Restore any active edit session first so nothing is lost before
+    // switching to a newly selected message.
     if (state.edit_active)
     {
         CancelEdit(state, false);
@@ -1486,17 +1493,11 @@ void BeginEditMessage(
 
     EditEntryGuard entry_guard(state.entering_edit);
 
-    if (!state.bar->IsClassSet("expanded"))
-    {
-        Ultron_SetElementClass(
-            kBarId,
-            "expanded",
-            true);
-    }
-
     ResetMultiline(state);
 
-    if (SDL_Window* window = SDL_GetKeyboardFocus())
+    SDL_Window* window = SDL_GetKeyboardFocus();
+
+    if (window != nullptr)
     {
         SDL_ClearComposition(window);
     }
@@ -1507,9 +1508,21 @@ void BeginEditMessage(
     UpdateInput(state);
     state.document->UpdateDocument();
 
+    // If the soft keyboard was dismissed while #input-bar stayed expanded,
+    // cycle focus so Android brings it up cleanly without flickering if open.
+    if (window != nullptr && !SDL_ScreenKeyboardShown(window))
+    {
+        if (Rml::Context* context = state.document->GetContext();
+            context != nullptr && context->GetFocusElement() == state.input)
+        {
+            state.input->Blur();
+        }
+    }
+
+    state.input->Focus();
+
     const int end_pos = static_cast<int>(selected_text.size());
     state.input->SetSelectionRange(end_pos, end_pos);
-    state.input->Focus();
 
     SyncScroll(state, false, true);
 
@@ -1546,6 +1559,7 @@ void StepLongPress(InputState& state)
         state.is_scrolling ||
         state.touch_moved ||
         !state.long_press_bubble ||
+        !IsBarExpanded(state) ||
         !state.document ||
         !state.document->IsVisible())
     {
@@ -1582,15 +1596,12 @@ void StepLongPressTask(void*)
 void SendCurrentMessage(InputState& state)
 {
     if (!state.document ||
-        !state.bar ||
+        !IsBarExpanded(state) ||
         !state.chat ||
         !state.input)
     {
         return;
     }
-
-    if (!state.bar->IsClassSet("expanded"))
-        return;
 
     const Rml::String message =
         TrimMessage(state.input->GetValue());
@@ -2022,8 +2033,8 @@ float ComputeFlingVelocity(
 
    Isolates touch dragging from RmlUi's desktop mouse-drag
    selection, drives 1:1 finger scrolling while touching,
-   detects 650ms long-press on chat bubbles to edit, and
-   launches VSync-locked momentum glide on release.
+   detects 650ms long-press on chat bubbles when #input-bar
+   is expanded, and launches VSync-locked momentum glide.
 --------------------------------------------------------- */
 
 bool HandleTouchScrollEvent(
@@ -2118,7 +2129,7 @@ bool HandleTouchScrollEvent(
         TouchTarget target = TouchTarget::None;
         float start_scroll_top = 0.0f;
 
-        if (state.bar->IsClassSet("expanded") &&
+        if (IsBarExpanded(state) &&
             is_point_inside(state.scroll))
         {
             target = TouchTarget::InputScroll;
@@ -2161,7 +2172,11 @@ bool HandleTouchScrollEvent(
 
         PushVelocitySample(state, now, y);
 
-        if (target == TouchTarget::ChatArea)
+        // Long-press to edit is enabled only while #input-bar is expanded
+        // and the user isn't catching an active momentum scroll.
+        if (target == TouchTarget::ChatArea &&
+            IsBarExpanded(state) &&
+            !was_gliding)
         {
             if (Rml::Element* bubble = FindChatBubbleAtPoint(state, x, y))
             {
@@ -2350,8 +2365,7 @@ bool HandleRmlEvent(
 
         InputState& state = State();
 
-        const bool expand =
-            !state.bar->IsClassSet("expanded");
+        const bool expand = !IsBarExpanded(state);
 
         Ultron_SetElementClass(
             kBarId,
@@ -2364,6 +2378,8 @@ bool HandleRmlEvent(
         }
         else
         {
+            CancelPendingLongPress(state);
+
             if (state.touch_target == TouchTarget::InputScroll)
                 ResetTouchScroll(state);
 
