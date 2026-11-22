@@ -453,9 +453,9 @@ float GetDpRatio(const InputState& state)
 /* ---------------------------------------------------------
    HORIZONTAL CHAT BUBBLE SIZING
 
-   Measures the message's natural horizontal width so short
-   messages become crisp horizontal pills and long messages
-   fill the full 88% horizontal width before wrapping.
+   Measures the message's natural horizontal width AND accounts
+   for both padding + border frame so bubbles fit cleanly inside
+   #chat-area right up to the right edge with zero clipping.
 --------------------------------------------------------- */
 
 float GetChatContentWidth(const InputState& state)
@@ -463,15 +463,27 @@ float GetChatContentWidth(const InputState& state)
     if (!state.chat)
         return 0.0f;
 
-    float width =
+    const float content_width =
         state.chat->GetBox().GetSize(Rml::BoxArea::Content).x;
 
-    if (width <= kGeometryEpsilon)
-    {
-        width = state.chat->GetClientWidth();
-    }
+    const float client_width =
+        state.chat->GetClientWidth();
 
-    if (width <= kGeometryEpsilon && state.document)
+    float width = 0.0f;
+
+    if (content_width > kGeometryEpsilon && client_width > kGeometryEpsilon)
+    {
+        width = std::min(content_width, client_width);
+    }
+    else if (content_width > kGeometryEpsilon)
+    {
+        width = content_width;
+    }
+    else if (client_width > kGeometryEpsilon)
+    {
+        width = client_width;
+    }
+    else if (state.document)
     {
         if (Rml::Context* context = state.document->GetContext())
         {
@@ -533,8 +545,11 @@ void LayoutChatBubble(
         Rml::ElementUtilities::GetDensityIndependentPixelRatio(text_el),
         1.0f);
 
+    // Include BOTH horizontal padding and horizontal border thickness.
+    const Rml::Box& box = bubble->GetBox();
     const float horizontal_frame =
-        bubble->GetBox().GetFrameSize(Rml::BoxArea::Border).x;
+        box.GetFrameSize(Rml::BoxArea::Padding).x +
+        box.GetFrameSize(Rml::BoxArea::Border).x;
 
     const float max_outer_width = chat_content_width * 0.88f;
     const float max_content_width =
@@ -542,19 +557,19 @@ void LayoutChatBubble(
 
     const float line_height = std::max(bubble->GetLineHeight(), 1.0f);
     const float min_content_width =
-        std::min(max_content_width, line_height * 1.15f);
+        std::min(max_content_width, line_height * 0.7f);
 
-    const float safety_px = std::ceil(dp_ratio * 4.0f);
-    const float target_content_width = std::clamp(
+    const float safety_px = std::ceil(dp_ratio * 3.0f);
+    const float target_content_width = std::ceil(std::clamp(
         widest_line + safety_px,
         min_content_width,
-        max_content_width);
+        max_content_width));
 
     const float bubble_outer_width =
         target_content_width + horizontal_frame;
 
-    const float left_margin =
-        std::max(0.0f, chat_content_width - bubble_outer_width);
+    const float left_margin = std::floor(
+        std::max(0.0f, chat_content_width - bubble_outer_width));
 
     bubble->SetProperty("box-sizing", "content-box");
     bubble->SetProperty("width", Pixels(target_content_width));
