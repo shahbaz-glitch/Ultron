@@ -12,6 +12,7 @@
 #include <cctype>
 #include <cmath>
 #include <string>
+#include <utility>
 
 namespace
 {
@@ -21,6 +22,7 @@ constexpr char kBarId[] = "input-bar";
 constexpr char kWingHitId[] = "wing-hit";
 constexpr char kScrollId[] = "input-scroll";
 constexpr char kInputId[] = "message-input";
+constexpr char kSendButtonId[] = "send-button";
 constexpr char kChatId[] = "chat-area";
 
 constexpr float kControlUnits = 14.22f;
@@ -30,6 +32,13 @@ constexpr float kMultilineLeft = 4.17f;
 constexpr float kMultilineRight = 2.45f;
 constexpr float kExtraGap = 1.5f;
 constexpr float kGeometryEpsilon = 0.5f;
+
+enum class TouchTarget
+{
+    None,
+    InputScroll,
+    ChatArea
+};
 
 
 /* ---------------------------------------------------------
@@ -62,7 +71,8 @@ struct InputState
     float last_bar_height = -1.0f;
     float last_chat_bottom = -1.0f;
 
-    // Touch state for #input-scroll (isolated from RmlUi mouse-drag).
+    // Isolated mobile touch scroll state for #input-scroll and #chat-area.
+    TouchTarget touch_target = TouchTarget::None;
     bool touch_active = false;
     bool is_scrolling = false;
     bool touch_moved = false;
@@ -85,6 +95,7 @@ InputState& State()
 
 void ResetTouchScroll(InputState& state)
 {
+    state.touch_target = TouchTarget::None;
     state.touch_active = false;
     state.is_scrolling = false;
     state.touch_moved = false;
@@ -96,19 +107,26 @@ void ResetTouchScroll(InputState& state)
 }
 
 
-bool IsInsideInput(Rml::Element* element)
+bool IsInsideElement(
+    Rml::Element* element,
+    const char* target_id)
 {
     while (element != nullptr)
     {
-        const Rml::String& id = element->GetId();
-
-        if (id == kInputId || id == kScrollId)
+        if (element->GetId() == target_id)
             return true;
 
         element = element->GetParentNode();
     }
 
     return false;
+}
+
+
+bool IsInsideInput(Rml::Element* element)
+{
+    return IsInsideElement(element, kInputId) ||
+           IsInsideElement(element, kScrollId);
 }
 
 
@@ -228,6 +246,28 @@ bool HasVisibleText(const Rml::String& value)
         {
             return std::isspace(ch) == 0;
         });
+}
+
+
+Rml::String TrimMessage(const Rml::String& value)
+{
+    size_t start = 0;
+
+    while (start < value.size() &&
+           std::isspace(static_cast<unsigned char>(value[start])) != 0)
+    {
+        ++start;
+    }
+
+    size_t end = value.size();
+
+    while (end > start &&
+           std::isspace(static_cast<unsigned char>(value[end - 1])) != 0)
+    {
+        --end;
+    }
+
+    return value.substr(start, end - start);
 }
 
 
@@ -466,15 +506,12 @@ float GetTextWidth(
 
 
 /* ---------------------------------------------------------
-   MANUAL SCROLL RANGE
-
-   Caps manual finger scroll at the real hidden rows so the
-   extra bottom buffer row is never exposed.
+   MANUAL SCROLL RANGES
 --------------------------------------------------------- */
 
-float GetMaxManualScroll(const InputState& state)
+float GetMaxInputScroll(const InputState& state)
 {
-    if (!state.input || !state.scroll)
+    if (!state.input || !state.scroll || !state.first_line_shifted)
         return 0.0f;
 
     const float line_height =
@@ -502,8 +539,29 @@ float GetMaxManualScroll(const InputState& state)
 }
 
 
+float GetMaxChatScroll(const InputState& state)
+{
+    if (!state.chat)
+        return 0.0f;
+
+    return std::max(
+        0.0f,
+        state.chat->GetScrollHeight() -
+        state.chat->GetClientHeight());
+}
+
+
+void ScrollChatToBottom(InputState& state)
+{
+    if (!state.chat)
+        return;
+
+    state.chat->SetScrollTop(GetMaxChatScroll(state));
+}
+
+
 /* ---------------------------------------------------------
-   SCROLL SYNC
+   SCROLL SYNC (#input-scroll)
 
    Textarea itself stays pinned at (0, 0).
    Only the outer #input-scroll container scrolls 1 row at a time:
@@ -585,7 +643,10 @@ void SyncScroll(
 
 void ResetMultiline(InputState& state)
 {
-    ResetTouchScroll(state);
+    if (state.touch_target == TouchTarget::InputScroll)
+    {
+        ResetTouchScroll(state);
+    }
 
     state.first_line_shifted = false;
 
@@ -631,6 +692,60 @@ void ResetMultiline(InputState& state)
 
     state.input->SetScrollTop(0.0f);
     state.input->SetScrollLeft(0.0f);
+}
+
+
+/* ---------------------------------------------------------
+   SEND CURRENT MESSAGE (#send-button arrow)
+--------------------------------------------------------- */
+
+void SendCurrentMessage(InputState& state)
+{
+    if (!state.document ||
+        !state.bar ||
+        !state.chat ||
+        !state.input)
+    {
+        return;
+    }
+
+    if (!state.bar->IsClassSet("expanded"))
+        return;
+
+    const Rml::String message =
+        TrimMessage(state.input->GetValue());
+
+    if (message.empty())
+        return;
+
+    Rml::ElementPtr bubble =
+        state.document->CreateElement("div");
+
+    if (bubble)
+    {
+        bubble->SetClass("chat-message", true);
+        bubble->SetProperty("word-break", "break-word");
+
+        if (Rml::ElementPtr text_node =
+                state.document->CreateTextNode(message))
+        {
+            bubble->AppendChild(std::move(text_node));
+        }
+
+        state.chat->AppendChild(std::move(bubble));
+    }
+
+    state.input->SetValue("");
+    ResetMultiline(state);
+    SetClass(state.bar, kBarId, "has-text", false);
+
+    if (SDL_Window* window = SDL_GetKeyboardFocus())
+    {
+        SDL_ClearComposition(window);
+    }
+
+    state.document->UpdateDocument();
+    ScrollChatToBottom(state);
 }
 
 
@@ -946,14 +1061,12 @@ void UpdateInput(InputState& state)
 
 
 /* ---------------------------------------------------------
-   MOBILE TOUCH HANDLER FOR #input-scroll
+   MOBILE TOUCH HANDLER (#input-scroll + #chat-area)
 
-   Intercepts FINGER_DOWN / FINGER_MOTION / FINGER_UP inside
-   the input viewport so RmlUi never enters desktop mouse-drag
-   selection mode (which draws the white highlight):
-   - Dragging scrolls #input-scroll smoothly 1:1.
-   - A clean tap (release without dragging) dispatches a single
-     instantaneous click to place the caret and focus the input.
+   Isolates touch dragging from RmlUi's desktop mouse-drag
+   selection so both #input-scroll and #chat-area scroll
+   smoothly 1:1 without drawing white selection highlights.
+   Clean taps pass through on release.
 --------------------------------------------------------- */
 
 bool HandleTouchScrollEvent(
@@ -982,6 +1095,7 @@ bool HandleTouchScrollEvent(
         !state.document->IsVisible() ||
         !state.bar ||
         !state.scroll ||
+        !state.chat ||
         !state.input)
     {
         return false;
@@ -1003,29 +1117,48 @@ bool HandleTouchScrollEvent(
     const float y =
         event->tfinger.y * static_cast<float>(dims.y);
 
-    if (event->type == SDL_EVENT_FINGER_DOWN)
+    const auto is_point_inside =
+        [x, y](Rml::Element* element)
     {
-        if (state.touch_active ||
-            !state.bar->IsClassSet("expanded"))
-        {
+        if (!element)
             return false;
-        }
 
         const Rml::Vector2f box_pos =
-            state.scroll->GetAbsoluteOffset(Rml::BoxArea::Border);
+            element->GetAbsoluteOffset(Rml::BoxArea::Border);
 
         const Rml::Vector2f box_size =
-            state.scroll->GetBox().GetSize(Rml::BoxArea::Border);
+            element->GetBox().GetSize(Rml::BoxArea::Border);
 
-        const bool inside =
-            x >= box_pos.x &&
-            x <= box_pos.x + box_size.x &&
-            y >= box_pos.y &&
-            y <= box_pos.y + box_size.y;
+        return x >= box_pos.x &&
+               x <= box_pos.x + box_size.x &&
+               y >= box_pos.y &&
+               y <= box_pos.y + box_size.y;
+    };
 
-        if (!inside)
+    if (event->type == SDL_EVENT_FINGER_DOWN)
+    {
+        if (state.touch_active)
             return false;
 
+        TouchTarget target = TouchTarget::None;
+        float start_scroll_top = 0.0f;
+
+        if (state.bar->IsClassSet("expanded") &&
+            is_point_inside(state.scroll))
+        {
+            target = TouchTarget::InputScroll;
+            start_scroll_top = state.scroll->GetScrollTop();
+        }
+        else if (is_point_inside(state.chat))
+        {
+            target = TouchTarget::ChatArea;
+            start_scroll_top = state.chat->GetScrollTop();
+        }
+
+        if (target == TouchTarget::None)
+            return false;
+
+        state.touch_target = target;
         state.touch_active = true;
         state.is_scrolling = false;
         state.touch_moved = false;
@@ -1033,10 +1166,8 @@ bool HandleTouchScrollEvent(
         state.finger_id = event->tfinger.fingerID;
         state.touch_start_x = x;
         state.touch_start_y = y;
-        state.touch_start_scroll_top =
-            state.scroll->GetScrollTop();
+        state.touch_start_scroll_top = start_scroll_top;
 
-        // Consume FINGER_DOWN so RmlUi never starts desktop drag-selection.
         return true;
     }
 
@@ -1060,7 +1191,9 @@ bool HandleTouchScrollEvent(
         const float dy = y - state.touch_start_y;
 
         const float max_scroll =
-            state.first_line_shifted ? GetMaxManualScroll(state) : 0.0f;
+            state.touch_target == TouchTarget::InputScroll
+            ? GetMaxInputScroll(state)
+            : GetMaxChatScroll(state);
 
         if (!state.is_scrolling)
         {
@@ -1076,7 +1209,9 @@ bool HandleTouchScrollEvent(
                 state.is_scrolling = true;
                 state.touch_start_y = y;
                 state.touch_start_scroll_top =
-                    state.scroll->GetScrollTop();
+                    state.touch_target == TouchTarget::InputScroll
+                    ? state.scroll->GetScrollTop()
+                    : state.chat->GetScrollTop();
             }
 
             return true;
@@ -1086,18 +1221,27 @@ bool HandleTouchScrollEvent(
             return true;
 
         const float delta_y = y - state.touch_start_y;
-        const float target = std::clamp(
+        const float target_scroll = std::clamp(
             state.touch_start_scroll_top - delta_y,
             0.0f,
             max_scroll);
 
-        state.scroll->SetScrollTop(target);
-        state.input->SetScrollTop(0.0f);
+        if (state.touch_target == TouchTarget::InputScroll)
+        {
+            state.scroll->SetScrollTop(target_scroll);
+            state.input->SetScrollTop(0.0f);
+        }
+        else if (state.touch_target == TouchTarget::ChatArea)
+        {
+            state.chat->SetScrollTop(target_scroll);
+        }
+
         return true;
     }
 
     if (event->type == SDL_EVENT_FINGER_UP)
     {
+        const TouchTarget target = state.touch_target;
         const bool was_scrolling = state.is_scrolling;
         const bool was_moved = state.touch_moved;
         const float tap_x = state.touch_start_x;
@@ -1105,7 +1249,7 @@ bool HandleTouchScrollEvent(
 
         ResetTouchScroll(state);
 
-        // Only forward a clean tap (never a drag) to place the caret & focus.
+        // Forward clean taps only (never drags).
         if (!was_scrolling && !was_moved)
         {
             const int px = static_cast<int>(std::round(tap_x));
@@ -1115,12 +1259,15 @@ bool HandleTouchScrollEvent(
             context->ProcessMouseButtonDown(0, 0);
             context->ProcessMouseButtonUp(0, 0);
 
-            if (context->GetFocusElement() != state.input)
+            if (target == TouchTarget::InputScroll)
             {
-                state.input->Focus();
-            }
+                if (context->GetFocusElement() != state.input)
+                {
+                    state.input->Focus();
+                }
 
-            ClearTextSelection(state);
+                ClearTextSelection(state);
+            }
         }
 
         return true;
@@ -1149,9 +1296,10 @@ bool HandleRmlEvent(
 
     const Rml::String& type = event->GetType();
 
-    /* BLOCK DOUBLE-TAP WORD SELECTION INSIDE INPUT */
+    /* BLOCK DOUBLE-TAP WORD SELECTION INSIDE INPUT & CHAT */
 
-    if (type == "dblclick" && IsInsideInput(target))
+    if (type == "dblclick" &&
+        (IsInsideInput(target) || IsInsideElement(target, kChatId)))
     {
         ClearTextSelection(State());
         return true;
@@ -1160,7 +1308,7 @@ bool HandleRmlEvent(
     /* WING CLICK */
 
     if (type == "click" &&
-        target->GetId() == kWingHitId)
+        IsInsideElement(target, kWingHitId))
     {
         if (!BindElements(target))
             return false;
@@ -1179,12 +1327,24 @@ bool HandleRmlEvent(
         {
             state.input->Focus();
         }
-        else
+        else if (state.touch_target == TouchTarget::InputScroll)
         {
             ResetTouchScroll(state);
         }
 
         return false;
+    }
+
+    /* SEND BUTTON (ARROW) CLICK */
+
+    if (type == "click" &&
+        IsInsideElement(target, kSendButtonId))
+    {
+        if (!BindElements(target))
+            return false;
+
+        SendCurrentMessage(State());
+        return true;
     }
 
     /* TEXTAREA CHANGE */
@@ -1201,7 +1361,7 @@ bool HandleRmlEvent(
 
     /* ANIMATED RESIZE FINISHED */
 
-    if (event->GetType() == "transitionend")
+    if (type == "transitionend")
     {
         const Rml::String& id = target->GetId();
 
