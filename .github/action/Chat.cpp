@@ -44,7 +44,7 @@ constexpr float kGeometryEpsilon = 0.5f;
 
 // Breathing gap between soft keyboard and #input-bar.
 constexpr float kKeyboardBreathingGapDp = 10.0f;
-constexpr float kImeEaseSnappiness = 28.0f;
+constexpr float kImeEaseSnappiness = 22.0f;
 
 // Long-press to edit threshold (600–700ms range).
 constexpr Uint64 kLongPressDurationMs = 650;
@@ -54,13 +54,15 @@ constexpr size_t kVelocitySampleCapacity = 8;
 constexpr Uint64 kVelocityWindowMs = 100;
 constexpr Uint64 kFlingStationaryCutoffMs = 65;
 constexpr float kMomentumFriction = 3.2f;
-constexpr float kAutoScrollSnappiness = 16.0f;
+constexpr float kAutoScrollSnappiness = 20.0f;
 
 enum class TouchTarget
 {
     None,
     InputScroll,
-    ChatArea
+    ChatArea,
+    SendButton,
+    WingHit
 };
 
 enum class ScrollAnimMode
@@ -358,6 +360,7 @@ struct InputState
     Rml::Element* bar = nullptr;
     Rml::Element* wing_hit = nullptr;
     Rml::Element* scroll = nullptr;
+    Rml::Element* send_button = nullptr;
     Rml::Element* chat = nullptr;
 
     Rml::ElementFormControlTextArea* input = nullptr;
@@ -392,7 +395,8 @@ struct InputState
     Uint64 insets_last_ms = 0;
     bool insets_monitor_posted = false;
 
-    // Isolated mobile touch scroll state for #input-scroll and #chat-area.
+    // Isolated mobile touch state for #input-scroll, #chat-area,
+    // #send-button, and #wing-hit.
     TouchTarget touch_target = TouchTarget::None;
     bool touch_active = false;
     bool is_scrolling = false;
@@ -424,6 +428,7 @@ struct InputState
     // VSync-locked smooth momentum & ease-to-bottom animation state.
     ScrollAnimMode anim_mode = ScrollAnimMode::None;
     TouchTarget anim_target = TouchTarget::None;
+    bool anim_goal_is_bottom = false;
     float anim_scroll_pos = 0.0f;
     float anim_velocity = 0.0f;
     float anim_goal_scroll = 0.0f;
@@ -452,6 +457,7 @@ void StopScrollAnimation(InputState& state)
 {
     state.anim_mode = ScrollAnimMode::None;
     state.anim_target = TouchTarget::None;
+    state.anim_goal_is_bottom = false;
     state.anim_velocity = 0.0f;
 }
 
@@ -545,14 +551,36 @@ void ClearTextSelection(InputState& state)
 }
 
 
+void DismissKeyboard(InputState& state)
+{
+    if (state.input)
+    {
+        state.input->Blur();
+    }
+
+    if (SDL_Window* window = SDL_GetKeyboardFocus())
+    {
+        SDL_ClearComposition(window);
+
+        if (SDL_TextInputActive(window))
+        {
+            SDL_StopTextInput(window);
+        }
+    }
+}
+
+
 /* ---------------------------------------------------------
    FORWARD DECLARATIONS
 --------------------------------------------------------- */
 
 void ConfigureChatArea(InputState& state);
-void SyncViewportAndChatLayout(InputState& state);
+void SyncViewportAndChatLayout(InputState& state, bool from_ime_step = false);
 void EnsureInsetsMonitor(InputState& state);
+void StartSmoothScrollToBottom(InputState& state);
 void UpdateInput(InputState& state);
+void SendCurrentMessage(InputState& state);
+void ToggleBarExpanded(InputState& state);
 
 
 /* ---------------------------------------------------------
@@ -581,6 +609,7 @@ bool BindElements(Rml::Element* source)
     state.bar = document->GetElementById(kBarId);
     state.wing_hit = document->GetElementById(kWingHitId);
     state.scroll = document->GetElementById(kScrollId);
+    state.send_button = document->GetElementById(kSendButtonId);
     state.chat = document->GetElementById(kChatId);
 
     Rml::Element* input =
@@ -591,12 +620,12 @@ bool BindElements(Rml::Element* source)
         ? static_cast<Rml::ElementFormControlTextArea*>(input)
         : nullptr;
 
-    if (!state.bar || !state.wing_hit ||
-        !state.scroll || !state.chat || !state.input)
+    if (!state.bar || !state.wing_hit || !state.scroll ||
+        !state.send_button || !state.chat || !state.input)
         return false;
 
     ConfigureChatArea(state);
-    SyncViewportAndChatLayout(state);
+    SyncViewportAndChatLayout(state, false);
     EnsureInsetsMonitor(state);
     return true;
 }
@@ -814,17 +843,21 @@ float GetDpRatio(const InputState& state)
 /* ---------------------------------------------------------
    VIEWPORT-ANCHORED LAYOUT (#chat-area + #input-bar)
 
-   - Locks #chat-area's top edge cleanly below the status bar
-     so sent messages NEVER shift up when the keyboard opens
-     or when #input-bar expands from 1 to 4 lines.
-   - Positions #input-bar cleanly above the soft keyboard with
-     10dp breathing space, and adjusts #chat-area's bottom &
-     height strictly between top and #input-bar.
+   ChatGPT-style anchored chat behavior:
+   - #chat-area's top stays locked below the status bar so
+     messages that haven't reached #input-bar NEVER shift up.
+   - As soon as messages reach #input-bar (from keyboard open
+     or 1->4 line typing expansion), #chat-area auto-scrolls
+     so the latest message never hides beneath #input-bar.
+   - When the keyboard dismisses and #input-bar glides down,
+     the bottom messages glide down smoothly WITH #input-bar.
 --------------------------------------------------------- */
 
 float GetMaxChatScroll(const InputState& state);
 
-void SyncViewportAndChatLayout(InputState& state)
+void SyncViewportAndChatLayout(
+    InputState& state,
+    bool from_ime_step)
 {
     if (!state.document ||
         !state.bar ||
@@ -897,39 +930,107 @@ void SyncViewportAndChatLayout(InputState& state)
         state.last_bar_bottom = bar_bottom;
     }
 
-    bool chat_geometry_changed = false;
+    const bool top_changed =
+        std::fabs(chat_top - state.last_chat_top) > kGeometryEpsilon;
+    const bool bottom_changed =
+        std::fabs(chat_bottom - state.last_chat_bottom) > kGeometryEpsilon;
+    const bool height_changed =
+        std::fabs(chat_height - state.last_chat_height) > kGeometryEpsilon;
 
-    if (std::fabs(chat_top - state.last_chat_top) > kGeometryEpsilon)
+    if (!top_changed && !bottom_changed && !height_changed)
+        return;
+
+    // Measure scroll pinning BEFORE resizing #chat-area.
+    const float prev_max_scroll = GetMaxChatScroll(state);
+    const float prev_scroll_top = state.chat->GetScrollTop();
+    const float bottom_pin_slop = 28.0f * dp_ratio;
+
+    const bool user_touching_chat =
+        state.touch_active &&
+        state.touch_target == TouchTarget::ChatArea;
+
+    const bool ease_to_bottom =
+        state.anim_mode == ScrollAnimMode::EaseToTarget &&
+        state.anim_target == TouchTarget::ChatArea &&
+        state.anim_goal_is_bottom;
+
+    const bool was_at_bottom =
+        !user_touching_chat &&
+        (ease_to_bottom ||
+         prev_max_scroll <= kGeometryEpsilon ||
+         (prev_max_scroll - prev_scroll_top) <= bottom_pin_slop);
+
+    if (top_changed)
     {
         state.chat->SetProperty("top", Pixels(chat_top));
         state.last_chat_top = chat_top;
-        chat_geometry_changed = true;
     }
 
-    if (std::fabs(chat_bottom - state.last_chat_bottom) > kGeometryEpsilon)
+    if (bottom_changed)
     {
         state.chat->SetProperty("bottom", Pixels(chat_bottom));
         state.last_chat_bottom = chat_bottom;
-        chat_geometry_changed = true;
     }
 
-    if (std::fabs(chat_height - state.last_chat_height) > kGeometryEpsilon)
+    if (height_changed)
     {
         state.chat->SetProperty("height", Pixels(chat_height));
         state.last_chat_height = chat_height;
-        chat_geometry_changed = true;
     }
 
-    if (chat_geometry_changed)
+    state.document->UpdateDocument();
+    HideNativeScrollbars(state.chat);
+
+    const float new_max_scroll = GetMaxChatScroll(state);
+
+    if (was_at_bottom)
     {
-        state.document->UpdateDocument();
-        HideNativeScrollbars(state.chat);
-
-        const float max_scroll = GetMaxChatScroll(state);
-
-        if (state.chat->GetScrollTop() > max_scroll + kGeometryEpsilon)
+        if (ease_to_bottom)
         {
-            state.chat->SetScrollTop(max_scroll);
+            state.anim_goal_scroll = new_max_scroll;
+
+            if (state.chat->GetScrollTop() > new_max_scroll + kGeometryEpsilon)
+            {
+                state.chat->SetScrollTop(new_max_scroll);
+                state.anim_scroll_pos = new_max_scroll;
+            }
+        }
+        else if (new_max_scroll > prev_max_scroll + kGeometryEpsilon)
+        {
+            // Input bar rose or expanded into the latest sent message.
+            if (from_ime_step)
+            {
+                state.chat->SetScrollTop(new_max_scroll);
+
+                if (state.anim_target == TouchTarget::ChatArea)
+                {
+                    state.anim_scroll_pos = new_max_scroll;
+                }
+            }
+            else
+            {
+                StartSmoothScrollToBottom(state);
+            }
+        }
+        else
+        {
+            // Input bar is gliding back down: bring bottom messages smoothly
+            // down in exact lockstep with #input-bar.
+            state.chat->SetScrollTop(new_max_scroll);
+
+            if (state.anim_target == TouchTarget::ChatArea)
+            {
+                state.anim_scroll_pos = new_max_scroll;
+            }
+        }
+    }
+    else if (state.chat->GetScrollTop() > new_max_scroll + kGeometryEpsilon)
+    {
+        state.chat->SetScrollTop(new_max_scroll);
+
+        if (state.anim_target == TouchTarget::ChatArea)
+        {
+            state.anim_scroll_pos = new_max_scroll;
         }
     }
 }
@@ -1007,10 +1108,15 @@ void StepInsetsMonitor(InputState& state)
     state.insets_last_ms = now;
 
     const float diff = state.target_ime_bottom - state.display_ime_bottom;
+    bool ime_moved = false;
 
     if (std::fabs(diff) <= kGeometryEpsilon)
     {
-        state.display_ime_bottom = state.target_ime_bottom;
+        if (state.display_ime_bottom != state.target_ime_bottom)
+        {
+            state.display_ime_bottom = state.target_ime_bottom;
+            ime_moved = true;
+        }
     }
     else
     {
@@ -1019,6 +1125,7 @@ void StepInsetsMonitor(InputState& state)
             0.05f);
         const float alpha = 1.0f - std::exp(-kImeEaseSnappiness * dt);
         state.display_ime_bottom += diff * alpha;
+        ime_moved = true;
 
         if (std::fabs(state.target_ime_bottom - state.display_ime_bottom) <= kGeometryEpsilon)
         {
@@ -1026,7 +1133,7 @@ void StepInsetsMonitor(InputState& state)
         }
     }
 
-    SyncViewportAndChatLayout(state);
+    SyncViewportAndChatLayout(state, ime_moved);
     EnsureInsetsMonitor(state);
 }
 #endif
@@ -1543,8 +1650,11 @@ void StartMomentumScroll(
     TouchTarget target,
     float velocity_px_per_sec)
 {
-    if (target == TouchTarget::None)
+    if (target != TouchTarget::InputScroll &&
+        target != TouchTarget::ChatArea)
+    {
         return;
+    }
 
     const float dp_ratio = GetDpRatio(state);
     const float min_fling_velocity = 110.0f * dp_ratio;
@@ -1568,6 +1678,7 @@ void StartMomentumScroll(
 
     state.anim_mode = ScrollAnimMode::Momentum;
     state.anim_target = target;
+    state.anim_goal_is_bottom = false;
     state.anim_scroll_pos = current_scroll;
     state.anim_velocity = clamped_velocity;
     state.anim_last_ms = SDL_GetTicks();
@@ -1576,37 +1687,24 @@ void StartMomentumScroll(
 }
 
 
-void StartSmoothScrollTo(
-    InputState& state,
-    TouchTarget target,
-    float goal_scroll)
+void StartSmoothScrollToBottom(InputState& state)
 {
-    if (target == TouchTarget::None)
+    if (!state.chat)
         return;
 
-    const float current_scroll =
-        target == TouchTarget::InputScroll
-        ? (state.scroll ? state.scroll->GetScrollTop() : 0.0f)
-        : (state.chat ? state.chat->GetScrollTop() : 0.0f);
+    const float goal_scroll = GetMaxChatScroll(state);
+    const float current_scroll = state.chat->GetScrollTop();
 
     if (std::fabs(goal_scroll - current_scroll) <= kGeometryEpsilon)
     {
         StopScrollAnimation(state);
-
-        if (target == TouchTarget::ChatArea && state.chat)
-        {
-            state.chat->SetScrollTop(goal_scroll);
-        }
-        else if (target == TouchTarget::InputScroll && state.scroll)
-        {
-            state.scroll->SetScrollTop(goal_scroll);
-        }
-
+        state.chat->SetScrollTop(goal_scroll);
         return;
     }
 
     state.anim_mode = ScrollAnimMode::EaseToTarget;
-    state.anim_target = target;
+    state.anim_target = TouchTarget::ChatArea;
+    state.anim_goal_is_bottom = true;
     state.anim_scroll_pos = current_scroll;
     state.anim_goal_scroll = goal_scroll;
     state.anim_velocity = 0.0f;
@@ -1716,10 +1814,10 @@ void StepScrollAnimation(InputState& state)
 
     if (state.anim_mode == ScrollAnimMode::EaseToTarget)
     {
-        const float goal = std::clamp(
-            state.anim_goal_scroll,
-            0.0f,
-            max_scroll);
+        const float goal =
+            state.anim_goal_is_bottom
+            ? max_scroll
+            : std::clamp(state.anim_goal_scroll, 0.0f, max_scroll);
 
         const float alpha =
             1.0f - std::exp(-kAutoScrollSnappiness * dt);
@@ -1887,7 +1985,41 @@ void ResetMultiline(InputState& state)
     state.input->SetScrollTop(0.0f);
     state.input->SetScrollLeft(0.0f);
 
-    SyncViewportAndChatLayout(state);
+    SyncViewportAndChatLayout(state, false);
+}
+
+
+/* ---------------------------------------------------------
+   WING EXPAND / COLLAPSE TOGGLE
+--------------------------------------------------------- */
+
+void ToggleBarExpanded(InputState& state)
+{
+    if (!state.bar || !state.input)
+        return;
+
+    const bool expand = !IsBarExpanded(state);
+
+    Ultron_SetElementClass(
+        kBarId,
+        "expanded",
+        expand);
+
+    if (expand)
+    {
+        state.input->Focus();
+    }
+    else
+    {
+        CancelPendingLongPress(state);
+        DismissKeyboard(state);
+
+        if (state.touch_target == TouchTarget::InputScroll)
+            ResetTouchScroll(state);
+
+        if (state.anim_target == TouchTarget::InputScroll)
+            StopScrollAnimation(state);
+    }
 }
 
 
@@ -2122,6 +2254,11 @@ void StepLongPressTask(void*)
 
 /* ---------------------------------------------------------
    SEND CURRENT MESSAGE (#send-button arrow)
+
+   Sends the message FIRST on single tap, auto-scrolls chat
+   to keep the new bubble visible, and THEN dismisses the
+   soft keyboard so #input-bar (and bottom messages) glide
+   smoothly back down together.
 --------------------------------------------------------- */
 
 void SendCurrentMessage(InputState& state)
@@ -2157,11 +2294,6 @@ void SendCurrentMessage(InputState& state)
     ResetMultiline(state);
     SetClass(state.bar, kBarId, "has-text", false);
 
-    if (SDL_Window* window = SDL_GetKeyboardFocus())
-    {
-        SDL_ClearComposition(window);
-    }
-
     // First layout pass resolves font size, padding, and chat-area width.
     state.document->UpdateDocument();
     HideNativeScrollbars(state.chat);
@@ -2181,10 +2313,10 @@ void SendCurrentMessage(InputState& state)
     state.document->UpdateDocument();
     HideNativeScrollbars(state.chat);
 
-    StartSmoothScrollTo(
-        state,
-        TouchTarget::ChatArea,
-        GetMaxChatScroll(state));
+    // Smoothly bring the newly sent message into view, then dismiss keyboard
+    // so #input-bar and latest messages glide back down smoothly together.
+    StartSmoothScrollToBottom(state);
+    DismissKeyboard(state);
 }
 
 
@@ -2195,7 +2327,8 @@ void SendCurrentMessage(InputState& state)
    #message-input always grows to (line_count + 1) rows once
    at/above maximum_rows so it NEVER overflows internally.
    #chat-area adjusts strictly from the bottom via
-   SyncViewportAndChatLayout so top messages never move up.
+   SyncViewportAndChatLayout so top messages stay anchored
+   and bottom messages never hide under #input-bar.
 --------------------------------------------------------- */
 
 void ApplyMultilineLayout(
@@ -2316,7 +2449,7 @@ void ApplyMultilineLayout(
     state.last_max_rows = maximum_rows;
     state.last_control_height = control_height;
 
-    SyncViewportAndChatLayout(state);
+    SyncViewportAndChatLayout(state, false);
 }
 
 
@@ -2546,12 +2679,14 @@ float ComputeFlingVelocity(
 
 
 /* ---------------------------------------------------------
-   MOBILE TOUCH HANDLER (#input-scroll + #chat-area)
+   MOBILE TOUCH HANDLER
 
-   Isolates touch dragging from RmlUi's desktop mouse-drag
-   selection, drives 1:1 finger scrolling while touching,
-   detects 650ms long-press on chat bubbles when #input-bar
-   is expanded, and launches VSync-locked momentum glide.
+   - Captures #send-button and #wing-hit BEFORE RmlUi blurs
+     #message-input so single-tap send ALWAYS fires immediately
+     even while the Android soft keyboard is open.
+   - Isolates touch dragging from RmlUi's desktop mouse-drag
+     selection, drives 1:1 finger scrolling + VSync momentum,
+     and detects 650ms long-press on bubbles when expanded.
 --------------------------------------------------------- */
 
 bool HandleTouchScrollEvent(
@@ -2584,7 +2719,7 @@ bool HandleTouchScrollEvent(
         if (state.document && state.document->IsVisible() && state.chat)
         {
             state.document->UpdateDocument();
-            SyncViewportAndChatLayout(state);
+            SyncViewportAndChatLayout(state, false);
             RelayoutAllChatBubbles(state);
         }
 
@@ -2607,7 +2742,9 @@ bool HandleTouchScrollEvent(
     if (!state.document ||
         !state.document->IsVisible() ||
         !state.bar ||
+        !state.wing_hit ||
         !state.scroll ||
+        !state.send_button ||
         !state.chat ||
         !state.input)
     {
@@ -2631,7 +2768,7 @@ bool HandleTouchScrollEvent(
         event->tfinger.y * static_cast<float>(dims.y);
 
     const auto is_point_inside =
-        [x, y](Rml::Element* element)
+        [x, y](Rml::Element* element, float pad)
     {
         if (!element)
             return false;
@@ -2642,11 +2779,17 @@ bool HandleTouchScrollEvent(
         const Rml::Vector2f box_size =
             element->GetBox().GetSize(Rml::BoxArea::Border);
 
-        return x >= box_pos.x &&
-               x <= box_pos.x + box_size.x &&
-               y >= box_pos.y &&
-               y <= box_pos.y + box_size.y;
+        if (box_size.x <= 0.0f || box_size.y <= 0.0f)
+            return false;
+
+        return x >= box_pos.x - pad &&
+               x <= box_pos.x + box_size.x + pad &&
+               y >= box_pos.y - pad &&
+               y <= box_pos.y + box_size.y + pad;
     };
+
+    const float control_height =
+        state.wing_hit->GetOffsetHeight();
 
     if (event->type == SDL_EVENT_FINGER_DOWN)
     {
@@ -2656,13 +2799,29 @@ bool HandleTouchScrollEvent(
         TouchTarget target = TouchTarget::None;
         float start_scroll_top = 0.0f;
 
+        const float send_pad = std::max(8.0f, control_height * 0.18f);
+
+        // Priority 1: #send-button (when text is ready to send) so RmlUi
+        // never blurs #message-input and drops the bar before FINGER_UP.
         if (IsBarExpanded(state) &&
-            is_point_inside(state.scroll))
+            HasVisibleText(state.input->GetValue()) &&
+            is_point_inside(state.send_button, send_pad))
+        {
+            target = TouchTarget::SendButton;
+        }
+        // Priority 2: #wing-hit so tapping wing while keyboard is open
+        // toggles cleanly on the very first tap.
+        else if (is_point_inside(state.wing_hit, 0.0f))
+        {
+            target = TouchTarget::WingHit;
+        }
+        else if (IsBarExpanded(state) &&
+                 is_point_inside(state.scroll, 0.0f))
         {
             target = TouchTarget::InputScroll;
             start_scroll_top = state.scroll->GetScrollTop();
         }
-        else if (is_point_inside(state.chat))
+        else if (is_point_inside(state.chat, 0.0f))
         {
             target = TouchTarget::ChatArea;
             start_scroll_top = state.chat->GetScrollTop();
@@ -2672,6 +2831,8 @@ bool HandleTouchScrollEvent(
             return false;
 
         const bool was_gliding =
+            (target == TouchTarget::InputScroll ||
+             target == TouchTarget::ChatArea) &&
             state.anim_mode == ScrollAnimMode::Momentum &&
             state.anim_target == target &&
             std::fabs(state.anim_velocity) > 80.0f * GetDpRatio(state);
@@ -2697,7 +2858,11 @@ bool HandleTouchScrollEvent(
         state.last_motion_ms = now;
         state.velocity_sample_count = 0;
 
-        PushVelocitySample(state, now, y);
+        if (target == TouchTarget::InputScroll ||
+            target == TouchTarget::ChatArea)
+        {
+            PushVelocitySample(state, now, y);
+        }
 
         // Long-press to edit is enabled only while #input-bar is expanded
         // and the user isn't catching an active momentum scroll.
@@ -2734,15 +2899,18 @@ bool HandleTouchScrollEvent(
 
     if (event->type == SDL_EVENT_FINGER_MOTION)
     {
+        if (state.touch_target == TouchTarget::SendButton ||
+            state.touch_target == TouchTarget::WingHit)
+        {
+            return true;
+        }
+
         if (state.long_press_triggered)
             return true;
 
         const Uint64 now = SDL_GetTicks();
         state.last_motion_ms = now;
         PushVelocitySample(state, now, y);
-
-        const float control_height =
-            state.wing_hit ? state.wing_hit->GetOffsetHeight() : 0.0f;
 
         const float drag_threshold = std::max(
             10.0f,
@@ -2804,6 +2972,40 @@ bool HandleTouchScrollEvent(
 
     if (event->type == SDL_EVENT_FINGER_UP)
     {
+        const TouchTarget target = state.touch_target;
+
+        if (target == TouchTarget::SendButton)
+        {
+            const float release_slop = std::max(18.0f, control_height * 0.45f);
+            const bool still_on_button =
+                is_point_inside(state.send_button, release_slop);
+
+            ResetTouchScroll(state);
+
+            if (still_on_button)
+            {
+                SendCurrentMessage(state);
+            }
+
+            return true;
+        }
+
+        if (target == TouchTarget::WingHit)
+        {
+            const float release_slop = std::max(14.0f, control_height * 0.30f);
+            const bool still_on_wing =
+                is_point_inside(state.wing_hit, release_slop);
+
+            ResetTouchScroll(state);
+
+            if (still_on_wing)
+            {
+                ToggleBarExpanded(state);
+            }
+
+            return true;
+        }
+
         if (state.long_press_triggered)
         {
             ResetTouchScroll(state);
@@ -2811,7 +3013,6 @@ bool HandleTouchScrollEvent(
         }
 
         const Uint64 now = SDL_GetTicks();
-        const TouchTarget target = state.touch_target;
         const bool was_scrolling = state.is_scrolling;
         const bool was_moved = state.touch_moved;
         const bool was_catching = state.caught_momentum;
@@ -2838,6 +3039,14 @@ bool HandleTouchScrollEvent(
 
             if (target == TouchTarget::InputScroll)
             {
+                if (SDL_Window* window = SDL_GetKeyboardFocus();
+                    window != nullptr &&
+                    !SDL_ScreenKeyboardShown(window) &&
+                    context->GetFocusElement() == state.input)
+                {
+                    state.input->Blur();
+                }
+
                 if (context->GetFocusElement() != state.input)
                 {
                     state.input->Focus();
@@ -2890,7 +3099,7 @@ bool HandleRmlEvent(
         return true;
     }
 
-    /* WING CLICK */
+    /* WING CLICK (desktop mouse fallback) */
 
     if (type == "click" &&
         IsInsideElement(target, kWingHitId))
@@ -2898,35 +3107,11 @@ bool HandleRmlEvent(
         if (!BindElements(target))
             return false;
 
-        InputState& state = State();
-
-        const bool expand = !IsBarExpanded(state);
-
-        Ultron_SetElementClass(
-            kBarId,
-            "expanded",
-            expand);
-
-        if (expand)
-        {
-            state.input->Focus();
-        }
-        else
-        {
-            CancelPendingLongPress(state);
-            state.input->Blur();
-
-            if (state.touch_target == TouchTarget::InputScroll)
-                ResetTouchScroll(state);
-
-            if (state.anim_target == TouchTarget::InputScroll)
-                StopScrollAnimation(state);
-        }
-
+        ToggleBarExpanded(State());
         return false;
     }
 
-    /* SEND BUTTON (ARROW) CLICK */
+    /* SEND BUTTON (ARROW) CLICK (desktop mouse fallback) */
 
     if (type == "click" &&
         IsInsideElement(target, kSendButtonId))
