@@ -14,6 +14,7 @@
 #include <cmath>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace
 {
@@ -33,6 +34,9 @@ constexpr float kMultilineLeft = 4.17f;
 constexpr float kMultilineRight = 2.45f;
 constexpr float kExtraGap = 1.5f;
 constexpr float kGeometryEpsilon = 0.5f;
+
+// Long-press to edit threshold (600–700ms range).
+constexpr Uint64 kLongPressDurationMs = 650;
 
 // Gemini-style smooth scroll physics constants.
 constexpr size_t kVelocitySampleCapacity = 8;
@@ -110,6 +114,19 @@ struct InputState
     std::array<TouchSample, kVelocitySampleCapacity> velocity_samples{};
     size_t velocity_sample_count = 0;
 
+    // Long-press detection state for chat bubbles.
+    bool long_press_pending = false;
+    bool long_press_triggered = false;
+    bool long_press_posted = false;
+    Uint64 long_press_start_ms = 0;
+    Rml::Element* long_press_bubble = nullptr;
+
+    // Active edit session backup (restored if user clears input bar).
+    bool edit_active = false;
+    bool entering_edit = false;
+    float edit_saved_scroll_top = 0.0f;
+    std::vector<Rml::String> edit_backup_texts;
+
     // VSync-locked smooth momentum & ease-to-bottom animation state.
     ScrollAnimMode anim_mode = ScrollAnimMode::None;
     TouchTarget anim_target = TouchTarget::None;
@@ -138,8 +155,19 @@ void StopScrollAnimation(InputState& state)
 }
 
 
+void CancelPendingLongPress(InputState& state)
+{
+    state.long_press_pending = false;
+    state.long_press_start_ms = 0;
+    state.long_press_bubble = nullptr;
+}
+
+
 void ResetTouchScroll(InputState& state)
 {
+    CancelPendingLongPress(state);
+    state.long_press_triggered = false;
+
     state.touch_target = TouchTarget::None;
     state.touch_active = false;
     state.is_scrolling = false;
@@ -279,6 +307,28 @@ Rml::ElementText* GetTextElement(
         return nullptr;
 
     return static_cast<Rml::ElementText*>(child);
+}
+
+
+Rml::String GetBubbleText(Rml::Element* bubble)
+{
+    if (!bubble)
+        return {};
+
+    Rml::String result;
+    const int child_count = bubble->GetNumChildren(true);
+
+    for (int i = 0; i < child_count; ++i)
+    {
+        Rml::Element* child = bubble->GetChild(i);
+
+        if (child && child->GetTagName() == "#text")
+        {
+            result += static_cast<Rml::ElementText*>(child)->GetText();
+        }
+    }
+
+    return result;
 }
 
 
@@ -607,6 +657,59 @@ void RelayoutAllChatBubbles(InputState& state)
 }
 
 
+Rml::Element* AppendChatBubble(
+    InputState& state,
+    const Rml::String& message)
+{
+    if (!state.document || !state.chat)
+        return nullptr;
+
+    Rml::ElementPtr bubble =
+        state.document->CreateElement("div");
+
+    if (!bubble)
+        return nullptr;
+
+    bubble->SetClass("chat-message", true);
+    bubble->SetProperty("word-break", "break-word");
+
+    if (Rml::ElementPtr text_node =
+            state.document->CreateTextNode(message))
+    {
+        bubble->AppendChild(std::move(text_node));
+    }
+
+    return state.chat->AppendChild(std::move(bubble));
+}
+
+
+Rml::Element* FindChatBubbleAtPoint(
+    const InputState& state,
+    float x,
+    float y)
+{
+    if (!state.chat)
+        return nullptr;
+
+    const Rml::Vector2f point{x, y};
+    const int child_count = state.chat->GetNumChildren(false);
+
+    for (int i = 0; i < child_count; ++i)
+    {
+        Rml::Element* child = state.chat->GetChild(i);
+
+        if (child &&
+            child->IsClassSet("chat-message") &&
+            child->IsPointWithinElement(point))
+        {
+            return child;
+        }
+    }
+
+    return nullptr;
+}
+
+
 /* ---------------------------------------------------------
    FIRST-LINE SHIFT DETECTION
 --------------------------------------------------------- */
@@ -784,6 +887,30 @@ int CountWrappedLines(
    RESPONSIVE TEXT WIDTH
 --------------------------------------------------------- */
 
+float GetBarTargetClientWidth(const InputState& state)
+{
+    float width = state.bar ? state.bar->GetClientWidth() : 0.0f;
+
+    // When #input-bar is expanding via CSS transition, measure against its
+    // full expanded width (88%) so loaded edit text never wraps prematurely.
+    if (state.bar && state.bar->IsClassSet("expanded") && state.document)
+    {
+        if (Rml::Context* context = state.document->GetContext())
+        {
+            const float viewport_width =
+                static_cast<float>(context->GetDimensions().x);
+
+            if (viewport_width > 0.0f)
+            {
+                width = std::max(width, viewport_width * 0.88f);
+            }
+        }
+    }
+
+    return width;
+}
+
+
 float GetTextWidth(
     InputState& state,
     float control_height,
@@ -799,7 +926,7 @@ float GetTextWidth(
 
     return std::max(
         1.0f,
-        state.bar->GetClientWidth() -
+        GetBarTargetClientWidth(state) -
         (left_units + right_units) * scale -
         horizontal_frame);
 }
@@ -1226,6 +1353,229 @@ void ResetMultiline(InputState& state)
 
 
 /* ---------------------------------------------------------
+   LONG-PRESS EDIT LIFECYCLE (BEGIN / CANCEL)
+
+   - BeginEditMessage: backs up the selected bubble and every
+     bubble below it, removes them from #chat-area, and loads
+     the selected message into #message-input.
+   - CancelEdit: restores the selected bubble and all bubbles
+     below it in exact original order when input is cleared.
+--------------------------------------------------------- */
+
+void UpdateInput(InputState& state);
+
+void CancelEdit(
+    InputState& state,
+    bool restore_scroll)
+{
+    if (!state.edit_active)
+        return;
+
+    state.edit_active = false;
+
+    std::vector<Rml::String> backup =
+        std::move(state.edit_backup_texts);
+    state.edit_backup_texts.clear();
+
+    if (backup.empty() || !state.document || !state.chat)
+        return;
+
+    ConfigureChatArea(state);
+
+    for (const Rml::String& text : backup)
+    {
+        AppendChatBubble(state, text);
+    }
+
+    state.document->UpdateDocument();
+    HideNativeScrollbars(state.chat);
+
+    RelayoutAllChatBubbles(state);
+
+    state.document->UpdateDocument();
+    HideNativeScrollbars(state.chat);
+
+    if (restore_scroll)
+    {
+        StopScrollAnimation(state);
+        const float clamped_scroll = std::clamp(
+            state.edit_saved_scroll_top,
+            0.0f,
+            GetMaxChatScroll(state));
+        state.chat->SetScrollTop(clamped_scroll);
+    }
+}
+
+
+void BeginEditMessage(
+    InputState& state,
+    Rml::Element* target_bubble)
+{
+    if (!state.document ||
+        !state.bar ||
+        !state.chat ||
+        !state.input ||
+        !target_bubble)
+    {
+        return;
+    }
+
+    // If another message was already being edited, restore its backup first
+    // so nothing is ever lost before starting the new edit.
+    if (state.edit_active)
+    {
+        CancelEdit(state, false);
+    }
+
+    std::vector<Rml::Element*> to_remove;
+    std::vector<Rml::String> backup_texts;
+
+    bool found_target = false;
+    const int child_count = state.chat->GetNumChildren(false);
+
+    for (int i = 0; i < child_count; ++i)
+    {
+        Rml::Element* child = state.chat->GetChild(i);
+
+        if (!child || !child->IsClassSet("chat-message"))
+            continue;
+
+        if (child == target_bubble)
+        {
+            found_target = true;
+        }
+
+        if (found_target)
+        {
+            to_remove.push_back(child);
+            backup_texts.push_back(GetBubbleText(child));
+        }
+    }
+
+    if (!found_target || backup_texts.empty())
+        return;
+
+    StopScrollAnimation(state);
+    state.edit_saved_scroll_top = state.chat->GetScrollTop();
+
+    const Rml::String selected_text = backup_texts.front();
+
+    for (Rml::Element* element : to_remove)
+    {
+        state.chat->RemoveChild(element);
+    }
+
+    state.edit_backup_texts = std::move(backup_texts);
+    state.edit_active = true;
+
+    struct EditEntryGuard
+    {
+        bool& flag;
+
+        explicit EditEntryGuard(bool& value)
+            : flag(value)
+        {
+            flag = true;
+        }
+
+        ~EditEntryGuard()
+        {
+            flag = false;
+        }
+    };
+
+    EditEntryGuard entry_guard(state.entering_edit);
+
+    if (!state.bar->IsClassSet("expanded"))
+    {
+        Ultron_SetElementClass(
+            kBarId,
+            "expanded",
+            true);
+    }
+
+    ResetMultiline(state);
+
+    if (SDL_Window* window = SDL_GetKeyboardFocus())
+    {
+        SDL_ClearComposition(window);
+    }
+
+    state.input->SetValue(selected_text);
+    state.document->UpdateDocument();
+
+    UpdateInput(state);
+    state.document->UpdateDocument();
+
+    const int end_pos = static_cast<int>(selected_text.size());
+    state.input->SetSelectionRange(end_pos, end_pos);
+    state.input->Focus();
+
+    SyncScroll(state, false, true);
+
+    const float max_chat_scroll = GetMaxChatScroll(state);
+
+    if (state.chat->GetScrollTop() > max_chat_scroll)
+    {
+        state.chat->SetScrollTop(max_chat_scroll);
+    }
+}
+
+
+void StepLongPressTask(void*);
+
+void ScheduleLongPressCheck(InputState& state)
+{
+    if (state.long_press_posted || !state.long_press_pending)
+        return;
+
+    if (Ultron_PostToUI(&StepLongPressTask, nullptr))
+    {
+        state.long_press_posted = true;
+    }
+}
+
+
+void StepLongPress(InputState& state)
+{
+    state.long_press_posted = false;
+
+    if (!state.long_press_pending ||
+        !state.touch_active ||
+        state.touch_target != TouchTarget::ChatArea ||
+        state.is_scrolling ||
+        state.touch_moved ||
+        !state.long_press_bubble ||
+        !state.document ||
+        !state.document->IsVisible())
+    {
+        CancelPendingLongPress(state);
+        return;
+    }
+
+    const Uint64 now = SDL_GetTicks();
+
+    if (now >= state.long_press_start_ms &&
+        now - state.long_press_start_ms >= kLongPressDurationMs)
+    {
+        Rml::Element* target_bubble = state.long_press_bubble;
+        CancelPendingLongPress(state);
+        state.long_press_triggered = true;
+        BeginEditMessage(state, target_bubble);
+        return;
+    }
+
+    ScheduleLongPressCheck(state);
+}
+
+
+void StepLongPressTask(void*)
+{
+    StepLongPress(State());
+}
+
+
+/* ---------------------------------------------------------
    SEND CURRENT MESSAGE (#send-button arrow)
 --------------------------------------------------------- */
 
@@ -1248,27 +1598,18 @@ void SendCurrentMessage(InputState& state)
     if (message.empty())
         return;
 
+    // Commit edit permanently before clearing input so SetValue("")
+    // does not trigger CancelEdit.
+    if (state.edit_active)
+    {
+        state.edit_active = false;
+        state.edit_backup_texts.clear();
+    }
+
     ConfigureChatArea(state);
 
-    Rml::ElementPtr bubble =
-        state.document->CreateElement("div");
-
-    Rml::Element* appended_bubble = nullptr;
-
-    if (bubble)
-    {
-        bubble->SetClass("chat-message", true);
-        bubble->SetProperty("word-break", "break-word");
-
-        if (Rml::ElementPtr text_node =
-                state.document->CreateTextNode(message))
-        {
-            bubble->AppendChild(std::move(text_node));
-        }
-
-        appended_bubble =
-            state.chat->AppendChild(std::move(bubble));
-    }
+    Rml::Element* appended_bubble =
+        AppendChatBubble(state, message);
 
     state.input->SetValue("");
     ResetMultiline(state);
@@ -1497,6 +1838,14 @@ void UpdateInput(InputState& state)
     if (value.empty())
     {
         ResetMultiline(state);
+
+        // Completely clearing the input bar cancels active editing
+        // and restores the original message plus all messages below it.
+        if (state.edit_active && !state.entering_edit)
+        {
+            CancelEdit(state, true);
+        }
+
         return;
     }
 
@@ -1673,7 +2022,8 @@ float ComputeFlingVelocity(
 
    Isolates touch dragging from RmlUi's desktop mouse-drag
    selection, drives 1:1 finger scrolling while touching,
-   and launches VSync-locked momentum glide on release.
+   detects 650ms long-press on chat bubbles to edit, and
+   launches VSync-locked momentum glide on release.
 --------------------------------------------------------- */
 
 bool HandleTouchScrollEvent(
@@ -1800,6 +2150,7 @@ bool HandleTouchScrollEvent(
         state.is_scrolling = false;
         state.touch_moved = false;
         state.caught_momentum = was_gliding;
+        state.long_press_triggered = false;
         state.touch_id = event->tfinger.touchID;
         state.finger_id = event->tfinger.fingerID;
         state.touch_start_x = x;
@@ -1809,6 +2160,26 @@ bool HandleTouchScrollEvent(
         state.velocity_sample_count = 0;
 
         PushVelocitySample(state, now, y);
+
+        if (target == TouchTarget::ChatArea)
+        {
+            if (Rml::Element* bubble = FindChatBubbleAtPoint(state, x, y))
+            {
+                state.long_press_pending = true;
+                state.long_press_start_ms = now;
+                state.long_press_bubble = bubble;
+                ScheduleLongPressCheck(state);
+            }
+            else
+            {
+                CancelPendingLongPress(state);
+            }
+        }
+        else
+        {
+            CancelPendingLongPress(state);
+        }
+
         return true;
     }
 
@@ -1821,6 +2192,9 @@ bool HandleTouchScrollEvent(
 
     if (event->type == SDL_EVENT_FINGER_MOTION)
     {
+        if (state.long_press_triggered)
+            return true;
+
         const Uint64 now = SDL_GetTicks();
         state.last_motion_ms = now;
         PushVelocitySample(state, now, y);
@@ -1846,12 +2220,14 @@ bool HandleTouchScrollEvent(
                 std::fabs(dy) >= drag_threshold)
             {
                 state.touch_moved = true;
+                CancelPendingLongPress(state);
             }
 
             if (max_scroll > kGeometryEpsilon &&
                 std::fabs(dy) >= drag_threshold)
             {
                 state.is_scrolling = true;
+                CancelPendingLongPress(state);
                 state.touch_start_y = y;
                 state.touch_start_scroll_top =
                     state.touch_target == TouchTarget::InputScroll
@@ -1886,6 +2262,12 @@ bool HandleTouchScrollEvent(
 
     if (event->type == SDL_EVENT_FINGER_UP)
     {
+        if (state.long_press_triggered)
+        {
+            ResetTouchScroll(state);
+            return true;
+        }
+
         const Uint64 now = SDL_GetTicks();
         const TouchTarget target = state.touch_target;
         const bool was_scrolling = state.is_scrolling;
