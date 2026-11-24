@@ -8,7 +8,6 @@
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
-#include <RmlUi/Core/Elements/ElementFormControl.h>
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/FileInterface.h>
@@ -21,7 +20,6 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
-#include <cmath>
 #include <cstdio>
 #include <exception>
 #include <functional>
@@ -65,234 +63,13 @@ std::vector<std::string> g_document_history;
 std::thread::id g_ui_thread_id{};
 
 // -------------------------------------------------------------
-// Android smooth backspace state
-// -------------------------------------------------------------
-
-#if defined(__ANDROID__)
-constexpr Uint64 kSmoothBackspaceBaseMs = 26;
-constexpr Uint64 kSmoothBackspaceFastMs = 16;
-
-int g_pending_backspaces = 0;
-Uint64 g_last_backspace_ms = 0;
-SDL_Event g_pending_backspace_event{};
-
-void ResetPendingBackspaces()
-{
-    g_pending_backspaces = 0;
-    g_last_backspace_ms = 0;
-}
-#endif
-
-// -------------------------------------------------------------
 // SDL3 / RmlUi IME integration
 //
-// Desktop platforms use RmlUi's SDL IME editor directly.
-// Android uses cached non-composing SDL text input properties
-// with the normal keyboard layout and zero redundant JNI churn.
+// The object must remain alive until after Rml::Shutdown().
+// The SDL backend header provides this implementation.
 // -------------------------------------------------------------
 
-#if !defined(__ANDROID__)
 TextInputMethodEditor_SDL g_text_input_method_editor;
-#endif
-
-class UltronSystemInterface_SDL final : public SystemInterface_SDL
-{
-public:
-    explicit UltronSystemInterface_SDL(SDL_Window* window)
-        : SystemInterface_SDL(window),
-          window_(window)
-    {
-#if defined(__ANDROID__)
-        android_text_input_props_ = SDL_CreateProperties();
-
-        if (android_text_input_props_ != 0)
-        {
-            // Normal Android keyboard layout with composing/autocorrect disabled.
-            constexpr Sint64 kTypeClassText = 0x00000001;
-            constexpr Sint64 kTypeTextVariationFilter = 0x000000b0;
-            constexpr Sint64 kTypeTextFlagMultiLine = 0x00020000;
-            constexpr Sint64 kTypeTextFlagNoSuggestions = 0x00080000;
-
-            SDL_SetNumberProperty(
-                android_text_input_props_,
-                SDL_PROP_TEXTINPUT_TYPE_NUMBER,
-                SDL_TEXTINPUT_TYPE_TEXT);
-
-            SDL_SetBooleanProperty(
-                android_text_input_props_,
-                SDL_PROP_TEXTINPUT_AUTOCORRECT_BOOLEAN,
-                false);
-
-            SDL_SetBooleanProperty(
-                android_text_input_props_,
-                SDL_PROP_TEXTINPUT_MULTILINE_BOOLEAN,
-                true);
-
-            SDL_SetNumberProperty(
-                android_text_input_props_,
-                SDL_PROP_TEXTINPUT_ANDROID_INPUTTYPE_NUMBER,
-                kTypeClassText |
-                kTypeTextVariationFilter |
-                kTypeTextFlagMultiLine |
-                kTypeTextFlagNoSuggestions);
-        }
-#endif
-    }
-
-    ~UltronSystemInterface_SDL() override
-    {
-#if defined(__ANDROID__)
-        if (android_text_input_props_ != 0)
-        {
-            SDL_DestroyProperties(android_text_input_props_);
-            android_text_input_props_ = 0;
-        }
-#endif
-    }
-
-    void ActivateKeyboard(
-        Rml::Vector2f caret_position,
-        float line_height) override
-    {
-#if defined(__ANDROID__)
-        if (window_ != nullptr)
-        {
-            const float safe_line_height = std::max(line_height, 1.0f);
-            float anchor_top = std::max(caret_position.y, 0.0f);
-            float anchor_bottom = anchor_top + safe_line_height;
-
-            if (g_context != nullptr)
-            {
-                Rml::Element* focused = g_context->GetFocusElement();
-
-                if (focused != nullptr)
-                {
-                    const auto extend_bottom_to =
-                        [&anchor_bottom](Rml::Element* element)
-                    {
-                        if (element == nullptr)
-                        {
-                            return;
-                        }
-
-                        const float elem_bottom =
-                            element->GetAbsoluteOffset(Rml::BoxArea::Border).y +
-                            element->GetBox().GetSize(Rml::BoxArea::Border).y;
-
-                        if (elem_bottom > anchor_bottom)
-                        {
-                            anchor_bottom = elem_bottom;
-                        }
-                    };
-
-                    extend_bottom_to(focused);
-
-                    // Extend the IME anchor to the bottom of the containing
-                    // input panel so Android leaves clean breathing space above
-                    // the soft keyboard instead of clipping the panel's border.
-                    Rml::Element* ancestor = focused->GetParentNode();
-
-                    for (int depth = 0; ancestor != nullptr && depth < 4; ++depth)
-                    {
-                        if (ancestor->GetId() == "input-bar" ||
-                            ancestor->HasAttribute("data-keyboard-anchor"))
-                        {
-                            extend_bottom_to(ancestor);
-                            break;
-                        }
-
-                        ancestor = ancestor->GetParentNode();
-                    }
-                }
-
-                // Breathing space below the panel (adjust dp if needed).
-                constexpr float kKeyboardBreathingGapDp = 10.0f;
-                const float dp_ratio = std::max(
-                    g_context->GetDensityIndependentPixelRatio(),
-                    1.0f);
-
-                anchor_bottom += kKeyboardBreathingGapDp * dp_ratio;
-
-                const float max_y = static_cast<float>(
-                    std::max(g_context->GetDimensions().y, 1));
-
-                anchor_top = std::min(anchor_top, std::max(max_y - 1.0f, 0.0f));
-                anchor_bottom = std::min(anchor_bottom, max_y);
-            }
-
-            const int rect_x = static_cast<int>(std::max(caret_position.x, 0.0f));
-            const int rect_y = static_cast<int>(std::floor(anchor_top));
-            const int rect_h = static_cast<int>(
-                std::ceil(std::max(anchor_bottom - static_cast<float>(rect_y), 1.0f)));
-
-            const SDL_Rect area{
-                rect_x,
-                rect_y,
-                1,
-                rect_h
-            };
-
-            const bool area_changed =
-                !has_text_input_area_ ||
-                area.x != last_text_input_area_.x ||
-                area.y != last_text_input_area_.y ||
-                area.w != last_text_input_area_.w ||
-                area.h != last_text_input_area_.h;
-
-            if (area_changed)
-            {
-                SDL_SetTextInputArea(window_, &area, 0);
-                last_text_input_area_ = area;
-                has_text_input_area_ = true;
-            }
-
-            if (!SDL_TextInputActive(window_))
-            {
-                if (android_text_input_props_ != 0)
-                {
-                    SDL_StartTextInputWithProperties(
-                        window_,
-                        android_text_input_props_);
-                }
-                else
-                {
-                    SDL_StartTextInput(window_);
-                }
-            }
-
-            return;
-        }
-#endif
-        SystemInterface_SDL::ActivateKeyboard(
-            caret_position,
-            line_height);
-    }
-
-    void DeactivateKeyboard() override
-    {
-#if defined(__ANDROID__)
-        ResetPendingBackspaces();
-        has_text_input_area_ = false;
-
-        if (window_ != nullptr && SDL_TextInputActive(window_))
-        {
-            SDL_StopTextInput(window_);
-        }
-        return;
-#else
-        SystemInterface_SDL::DeactivateKeyboard();
-#endif
-    }
-
-private:
-    SDL_Window* window_ = nullptr;
-
-#if defined(__ANDROID__)
-    SDL_PropertiesID android_text_input_props_ = 0;
-    SDL_Rect last_text_input_area_{};
-    bool has_text_input_area_ = false;
-#endif
-};
 
 
 // -------------------------------------------------------------
@@ -1846,108 +1623,6 @@ void HandleTouchEvent(const SDL_Event& event)
     }
 }
 
-// -------------------------------------------------------------
-// Android smooth backspace helpers
-// -------------------------------------------------------------
-
-#if defined(__ANDROID__)
-Rml::ElementFormControl* GetFocusedTextControl()
-{
-    if (g_context == nullptr)
-    {
-        return nullptr;
-    }
-
-    Rml::Element* focused = g_context->GetFocusElement();
-
-    if (focused == nullptr)
-    {
-        return nullptr;
-    }
-
-    const Rml::String& tag = focused->GetTagName();
-
-    if (tag != "textarea" && tag != "input")
-    {
-        return nullptr;
-    }
-
-    return static_cast<Rml::ElementFormControl*>(focused);
-}
-
-void ApplyOneBackspace(
-    SDL_Window* window,
-    SDL_Event& event)
-{
-    Rml::ElementFormControl* control = GetFocusedTextControl();
-
-    if (control == nullptr || control->GetValue().empty())
-    {
-        g_pending_backspaces = 0;
-        return;
-    }
-
-    RmlSDL::InputEventHandler(
-        g_context,
-        window,
-        event);
-
-    // Flush Android IME buffer once on the exact transition to empty.
-    if (control->GetValue().empty())
-    {
-        g_pending_backspaces = 0;
-        SDL_ClearComposition(window);
-    }
-}
-
-void FlushPendingBackspaces(SDL_Window* window)
-{
-    while (g_pending_backspaces > 0 && g_context != nullptr)
-    {
-        --g_pending_backspaces;
-        ApplyOneBackspace(window, g_pending_backspace_event);
-    }
-}
-
-void StepSmoothBackspace(SDL_Window* window)
-{
-    if (g_pending_backspaces <= 0 || g_context == nullptr)
-    {
-        return;
-    }
-
-    const Uint64 now = SDL_GetTicks();
-
-    // Adaptive Gemini-style cadence:
-    // crisp 1-by-1 deletion initially, smoothly accelerating on long holds.
-    Uint64 interval_ms = kSmoothBackspaceBaseMs;
-    int chars_per_step = 1;
-
-    if (g_pending_backspaces > 18)
-    {
-        interval_ms = kSmoothBackspaceFastMs;
-        chars_per_step = 2;
-    }
-    else if (g_pending_backspaces > 6)
-    {
-        interval_ms = kSmoothBackspaceFastMs;
-    }
-
-    if (now - g_last_backspace_ms < interval_ms)
-    {
-        return;
-    }
-
-    g_last_backspace_ms = now;
-
-    for (int i = 0; i < chars_per_step && g_pending_backspaces > 0; ++i)
-    {
-        --g_pending_backspaces;
-        ApplyOneBackspace(window, g_pending_backspace_event);
-    }
-}
-#endif
-
 void HandleInputEvent(
     SDL_Window* window,
     SDL_Event& event)
@@ -1960,12 +1635,6 @@ void HandleInputEvent(
     switch (event.type)
     {
         case SDL_EVENT_FINGER_DOWN:
-#if defined(__ANDROID__)
-            FlushPendingBackspaces(window);
-#endif
-            HandleTouchEvent(event);
-            return;
-
         case SDL_EVENT_FINGER_MOTION:
         case SDL_EVENT_FINGER_UP:
         case SDL_EVENT_FINGER_CANCELED:
@@ -1974,67 +1643,22 @@ void HandleInputEvent(
 
         // -----------------------------------------------------
         // IME COMPOSITION EVENT
-        // Forward desktop SDL editing text to RmlUi.
-        // Ignored on Android to avoid SDLInputConnection clash.
+        // Forward Android/SDL editing text to RmlUi.
         // -----------------------------------------------------
 
         case SDL_EVENT_TEXT_EDITING:
         {
-#if !defined(__ANDROID__)
             g_text_input_method_editor.HandleEdit(
                 event.edit);
-#endif
             return;
         }
 
         default:
-        {
-#if defined(__ANDROID__)
-            if (event.type == SDL_EVENT_KEY_DOWN &&
-                event.key.key == SDLK_BACKSPACE)
-            {
-                Rml::ElementFormControl* control = GetFocusedTextControl();
-
-                if (control != nullptr)
-                {
-                    if (control->GetValue().empty())
-                    {
-                        g_pending_backspaces = 0;
-                        return;
-                    }
-
-                    const Uint64 now = SDL_GetTicks();
-
-                    if (g_pending_backspaces == 0 &&
-                        (g_last_backspace_ms == 0 ||
-                         now - g_last_backspace_ms >= kSmoothBackspaceBaseMs))
-                    {
-                        g_last_backspace_ms = now;
-                        ApplyOneBackspace(window, event);
-                    }
-                    else
-                    {
-                        g_pending_backspace_event = event;
-                        ++g_pending_backspaces;
-                    }
-
-                    return;
-                }
-            }
-
-            if (event.type == SDL_EVENT_TEXT_INPUT ||
-                (event.type == SDL_EVENT_KEY_DOWN &&
-                 event.key.key != SDLK_BACKSPACE))
-            {
-                FlushPendingBackspaces(window);
-            }
-#endif
             RmlSDL::InputEventHandler(
                 g_context,
                 window,
                 event);
             return;
-        }
     }
 }
 
@@ -2052,9 +1676,6 @@ void HandleApplicationEvent(const SDL_Event& event)
         {
             g_paused.store(true, std::memory_order_relaxed);
             CancelAllActiveTouches();
-#if defined(__ANDROID__)
-            ResetPendingBackspaces();
-#endif
             break;
         }
 
@@ -2067,9 +1688,7 @@ void HandleApplicationEvent(const SDL_Event& event)
         case SDL_EVENT_WINDOW_FOCUS_LOST:
         {
             CancelAllActiveTouches();
-#if defined(__ANDROID__)
-            ResetPendingBackspaces();
-#endif
+
             if (g_context != nullptr)
             {
                 g_context->ProcessMouseLeave();
@@ -2086,9 +1705,6 @@ void HandleApplicationEvent(const SDL_Event& event)
         case SDL_EVENT_TERMINATING:
         {
             CancelAllActiveTouches();
-#if defined(__ANDROID__)
-            ResetPendingBackspaces();
-#endif
             g_running.store(false, std::memory_order_relaxed);
             break;
         }
@@ -2545,9 +2161,6 @@ int main(int argc, char** argv)
 
     g_active_touches.clear();
     g_next_rml_touch_id = 1;
-#if defined(__ANDROID__)
-    ResetPendingBackspaces();
-#endif
 
     SDL_SetLogPriority(
         SDL_LOG_CATEGORY_APPLICATION,
@@ -2566,9 +2179,7 @@ int main(int argc, char** argv)
 
     g_sdl_initialized.store(true, std::memory_order_release);
 
-#if !defined(__ANDROID__)
     SDL_SetHint(SDL_HINT_IME_IMPLEMENTED_UI, "composition");
-#endif
     SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
     SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
 
@@ -2744,7 +2355,7 @@ int main(int argc, char** argv)
     int exit_code = 0;
 
     {
-        UltronSystemInterface_SDL system_interface(window);
+        SystemInterface_SDL system_interface(window);
         RenderInterface_GL3 render_interface;
         SDLFileInterface file_interface;
 
@@ -2764,12 +2375,13 @@ int main(int argc, char** argv)
         Rml::SetRenderInterface(&render_interface);
         Rml::SetFileInterface(&file_interface);
 
-#if !defined(__ANDROID__)
+        // -----------------------------------------------------
         // Register SDL3 IME handler BEFORE Rml::Initialise().
         // The global editor remains alive until after Shutdown.
+        // -----------------------------------------------------
+
         Rml::SetTextInputHandler(
             &g_text_input_method_editor);
-#endif
 
         const bool rml_initialized = Rml::Initialise();
 
@@ -2887,7 +2499,7 @@ int main(int argc, char** argv)
                     SDL_Log("Ultron: automatic TTF/OTF font loader initialized.");
                     SDL_Log("Ultron: shared RML event bridge initialized.");
                     SDL_Log("Ultron: universal SDL event dispatcher initialized.");
-                    SDL_Log("Ultron: SDL3 text input initialized.");
+                    SDL_Log("Ultron: SDL3 IME text editing handler initialized.");
 
                     while (g_running.load(std::memory_order_relaxed))
                     {
@@ -2948,10 +2560,6 @@ int main(int argc, char** argv)
 
                         ProcessPendingUITasks();
 
-#if defined(__ANDROID__)
-                        StepSmoothBackspace(window);
-#endif
-
                         if (g_paused.load(std::memory_order_relaxed))
                         {
                             SDL_Delay(16);
@@ -2979,59 +2587,4 @@ int main(int argc, char** argv)
                         }
 
                         const float new_scale =
-                            SDL_GetWindowDisplayScale(window);
-
-                        if (new_scale > 0.0f && new_scale != window_scale)
-                        {
-                            window_scale = new_scale;
-                            g_context->SetDensityIndependentPixelRatio(window_scale);
-                        }
-
-                        glDisable(GL_SCISSOR_TEST);
-                        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-                        glClear(GL_COLOR_BUFFER_BIT);
-
-                        g_context->Update();
-
-                        render_interface.BeginFrame();
-                        g_context->Render();
-                        render_interface.EndFrame();
-
-                        SDL_GL_SwapWindow(window);
-                    }
-
-                    StopAcceptingUITasks();
-                    CancelAllActiveTouches();
-
-                    g_documents.clear();
-                    g_document_history.clear();
-                    g_active_document = nullptr;
-                    g_active_document_name.clear();
-
-                    // Listener objects remain alive until after Rml::Shutdown().
-                    g_rml_context_ready.store(false, std::memory_order_release);
-                    g_context_root = nullptr;
-                    g_context = nullptr;
-
-                    Rml::RemoveContext("main");
-                    Rml::Shutdown();
-                    g_rml_event_listeners.clear();
-                }
-            }
-        }
-    }
-
-    // Interfaces and context are shut down before the GL context.
-    RmlGL3::Shutdown();
-
-    SDL_GL_DestroyContext(gl_context);
-    SDL_DestroyWindow(window);
-
-    g_sdl_initialized.store(false, std::memory_order_release);
-    SDL_Quit();
-
-    g_ui_thread_id = std::thread::id{};
-
-    SDL_Log("Ultron shutdown cleanly.");
-    return exit_code;
-}
+       
