@@ -149,7 +149,7 @@ jobs:
           echo "ANDROID_PROJECT=${ANDROID_PROJECT}" >> "${GITHUB_ENV}"
 
       # ============================================================
-      # PATCH SDL3 ANDROID IME (FIX GHOST TEXT & MID-LINE INSERTION)
+      # PATCH SDL3 ANDROID IME (FIX GHOST TEXT & ENTER DUPLICATION)
       # ============================================================
 
       - name: Patch SDL3 Android IME (SDLInputConnection)
@@ -185,6 +185,7 @@ jobs:
 
           patched = f"""package org.libsdl.app;
 
+          import android.content.Context;
           import android.text.Editable;
           import android.view.KeyCharacterMap;
           import android.view.KeyEvent;
@@ -192,11 +193,14 @@ jobs:
           import android.view.inputmethod.BaseInputConnection;
           import android.view.inputmethod.ExtractedText;
           import android.view.inputmethod.ExtractedTextRequest;
+          import android.view.inputmethod.InputMethodManager;
 
           class SDLInputConnection extends BaseInputConnection {{
 
               protected String mCommittedText = "";
               private String mComposingText = "";
+              private final View mTargetView;
+              private boolean mResetScheduled = false;
 
           {native_block}
 
@@ -204,11 +208,37 @@ jobs:
                   // Always run in stateless mode (no hidden Editable shadow buffer)
                   // so external text controls (RmlUi) remain the single source of truth.
                   super(targetView, false);
+                  mTargetView = targetView;
               }}
 
               public void reset() {{
                   mComposingText = "";
                   mCommittedText = "";
+              }}
+
+              private void scheduleImeReset() {{
+                  if (mResetScheduled || mTargetView == null) {{
+                      return;
+                  }}
+                  mResetScheduled = true;
+                  mTargetView.post(new Runnable() {{
+                      @Override
+                      public void run() {{
+                          mResetScheduled = false;
+                          mComposingText = "";
+                          mCommittedText = "";
+                          final Context ctx = mTargetView.getContext();
+                          if (ctx == null) {{
+                              return;
+                          }}
+                          final InputMethodManager imm =
+                              (InputMethodManager) ctx.getSystemService(
+                                  Context.INPUT_METHOD_SERVICE);
+                          if (imm != null && imm.isActive(mTargetView)) {{
+                              imm.restartInput(mTargetView);
+                          }}
+                      }}
+                  }});
               }}
 
               @Override
@@ -251,6 +281,7 @@ jobs:
                       return;
                   }}
 
+                  boolean hadNewline = false;
                   int start = 0;
                   final int len = text.length();
                   for (int i = 0; i < len; ++i) {{
@@ -260,6 +291,7 @@ jobs:
                               nativeCommitText(text.substring(start, i), 1);
                           }}
                           if (ch == '\\n') {{
+                              hadNewline = true;
                               sendKeyPress(KeyEvent.KEYCODE_ENTER);
                           }}
                           start = i + 1;
@@ -268,6 +300,10 @@ jobs:
 
                   if (start < len) {{
                       nativeCommitText(text.substring(start), 1);
+                  }}
+
+                  if (hadNewline) {{
+                      scheduleImeReset();
                   }}
               }}
 
@@ -415,8 +451,10 @@ jobs:
                       if (action == KeyEvent.ACTION_DOWN) {{
                           mComposingText = "";
                           SDLActivity.onNativeKeyDown(keyCode);
+                          scheduleImeReset();
                       }} else if (action == KeyEvent.ACTION_UP) {{
                           SDLActivity.onNativeKeyUp(keyCode);
+                          scheduleImeReset();
                       }}
                       return true;
                   }}
@@ -444,6 +482,7 @@ jobs:
 
               @Override
               public void closeConnection() {{
+                  mResetScheduled = false;
                   mComposingText = "";
                   mCommittedText = "";
                   super.closeConnection();
