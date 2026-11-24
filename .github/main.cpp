@@ -8,9 +8,11 @@
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Elements/ElementFormControl.h>
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/FileInterface.h>
+#include <RmlUi/Core/Log.h>
 #include <RmlUi/Debugger.h>
 
 #include "RmlUi_Platform_SDL.h"
@@ -20,6 +22,8 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <exception>
 #include <functional>
@@ -32,6 +36,12 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+
+// Matches ultron_api.h declaration (safe to repeat identically in C++20).
+typedef void (*UltronFrameCallback)(
+    float delta_seconds,
+    Uint64 now_ms,
+    void* user_data);
 
 namespace
 {
@@ -63,14 +73,265 @@ std::vector<std::string> g_document_history;
 std::thread::id g_ui_thread_id{};
 
 // -------------------------------------------------------------
-// SDL3 / RmlUi IME integration
-//
-// The object must remain alive until after Rml::Shutdown().
-// The SDL backend header provides this implementation.
+// Auto-Check Visual Debugger diagnostics (UI thread only)
 // -------------------------------------------------------------
 
-TextInputMethodEditor_SDL g_text_input_method_editor;
+bool g_startup_health_check_active = false;
+std::vector<std::string> g_startup_issues;
 
+void RecordStartupIssue(std::string issue)
+{
+    if (!g_startup_health_check_active || issue.empty())
+    {
+        return;
+    }
+
+    constexpr size_t kMaxRecordedIssues = 64;
+
+    if (g_startup_issues.size() < kMaxRecordedIssues)
+    {
+        g_startup_issues.push_back(std::move(issue));
+    }
+}
+
+// -------------------------------------------------------------
+// Android smooth backspace state
+// -------------------------------------------------------------
+
+#if defined(__ANDROID__)
+constexpr Uint64 kSmoothBackspaceBaseMs = 26;
+constexpr Uint64 kSmoothBackspaceFastMs = 16;
+
+int g_pending_backspaces = 0;
+Uint64 g_last_backspace_ms = 0;
+SDL_Event g_pending_backspace_event{};
+
+void ResetPendingBackspaces()
+{
+    g_pending_backspaces = 0;
+    g_last_backspace_ms = 0;
+}
+#endif
+
+// -------------------------------------------------------------
+// SDL3 / RmlUi IME & Log integration
+//
+// Desktop platforms use RmlUi's SDL IME editor directly.
+// Android uses cached non-composing SDL text input properties
+// with the normal keyboard layout and zero redundant JNI churn.
+// -------------------------------------------------------------
+
+#if !defined(__ANDROID__)
+TextInputMethodEditor_SDL g_text_input_method_editor;
+#endif
+
+class UltronSystemInterface_SDL final : public SystemInterface_SDL
+{
+public:
+    explicit UltronSystemInterface_SDL(SDL_Window* window)
+        : SystemInterface_SDL(window),
+          window_(window)
+    {
+#if defined(__ANDROID__)
+        android_text_input_props_ = SDL_CreateProperties();
+
+        if (android_text_input_props_ != 0)
+        {
+            // Normal Android keyboard layout with composing/autocorrect disabled.
+            constexpr Sint64 kTypeClassText = 0x00000001;
+            constexpr Sint64 kTypeTextVariationFilter = 0x000000b0;
+            constexpr Sint64 kTypeTextFlagMultiLine = 0x00020000;
+            constexpr Sint64 kTypeTextFlagNoSuggestions = 0x00080000;
+
+            SDL_SetNumberProperty(
+                android_text_input_props_,
+                SDL_PROP_TEXTINPUT_TYPE_NUMBER,
+                SDL_TEXTINPUT_TYPE_TEXT);
+
+            SDL_SetBooleanProperty(
+                android_text_input_props_,
+                SDL_PROP_TEXTINPUT_AUTOCORRECT_BOOLEAN,
+                false);
+
+            SDL_SetBooleanProperty(
+                android_text_input_props_,
+                SDL_PROP_TEXTINPUT_MULTILINE_BOOLEAN,
+                true);
+
+            SDL_SetNumberProperty(
+                android_text_input_props_,
+                SDL_PROP_TEXTINPUT_ANDROID_INPUTTYPE_NUMBER,
+                kTypeClassText |
+                kTypeTextVariationFilter |
+                kTypeTextFlagMultiLine |
+                kTypeTextFlagNoSuggestions);
+        }
+#endif
+    }
+
+    ~UltronSystemInterface_SDL() override
+    {
+#if defined(__ANDROID__)
+        if (android_text_input_props_ != 0)
+        {
+            SDL_DestroyProperties(android_text_input_props_);
+            android_text_input_props_ = 0;
+        }
+#endif
+    }
+
+    bool LogMessage(
+        Rml::Log::Type type,
+        const Rml::String& message) override
+    {
+        if (g_startup_health_check_active &&
+            (type == Rml::Log::LT_ERROR || type == Rml::Log::LT_ASSERT))
+        {
+            RecordStartupIssue(std::string(message.c_str(), message.size()));
+        }
+
+        return SystemInterface_SDL::LogMessage(type, message);
+    }
+
+    void ActivateKeyboard(
+        Rml::Vector2f caret_position,
+        float line_height) override
+    {
+#if defined(__ANDROID__)
+        if (window_ != nullptr)
+        {
+            const float safe_line_height = std::max(line_height, 1.0f);
+            float anchor_top = std::max(caret_position.y, 0.0f);
+            float anchor_bottom = anchor_top + safe_line_height;
+
+            if (g_context != nullptr)
+            {
+                Rml::Element* focused = g_context->GetFocusElement();
+
+                if (focused != nullptr)
+                {
+                    const auto extend_bottom_to =
+                        [&anchor_bottom](Rml::Element* element)
+                    {
+                        if (element == nullptr)
+                        {
+                            return;
+                        }
+
+                        const float elem_bottom =
+                            element->GetAbsoluteOffset(Rml::BoxArea::Border).y +
+                            element->GetBox().GetSize(Rml::BoxArea::Border).y;
+
+                        if (elem_bottom > anchor_bottom)
+                        {
+                            anchor_bottom = elem_bottom;
+                        }
+                    };
+
+                    extend_bottom_to(focused);
+
+                    Rml::Element* ancestor = focused->GetParentNode();
+
+                    for (int depth = 0; ancestor != nullptr && depth < 4; ++depth)
+                    {
+                        if (ancestor->GetId() == "input-bar" ||
+                            ancestor->HasAttribute("data-keyboard-anchor"))
+                        {
+                            extend_bottom_to(ancestor);
+                            break;
+                        }
+
+                        ancestor = ancestor->GetParentNode();
+                    }
+                }
+
+                constexpr float kKeyboardBreathingGapDp = 10.0f;
+                const float dp_ratio = std::max(
+                    g_context->GetDensityIndependentPixelRatio(),
+                    1.0f);
+
+                anchor_bottom += kKeyboardBreathingGapDp * dp_ratio;
+
+                const float max_y = static_cast<float>(
+                    std::max(g_context->GetDimensions().y, 1));
+
+                anchor_top = std::min(anchor_top, std::max(max_y - 1.0f, 0.0f));
+                anchor_bottom = std::min(anchor_bottom, max_y);
+            }
+
+            const int rect_x = static_cast<int>(std::max(caret_position.x, 0.0f));
+            const int rect_y = static_cast<int>(std::floor(anchor_top));
+            const int rect_h = static_cast<int>(
+                std::ceil(std::max(anchor_bottom - static_cast<float>(rect_y), 1.0f)));
+
+            const SDL_Rect area{
+                rect_x,
+                rect_y,
+                1,
+                rect_h
+            };
+
+            const bool area_changed =
+                !has_text_input_area_ ||
+                area.x != last_text_input_area_.x ||
+                area.y != last_text_input_area_.y ||
+                area.w != last_text_input_area_.w ||
+                area.h != last_text_input_area_.h;
+
+            if (area_changed)
+            {
+                SDL_SetTextInputArea(window_, &area, 0);
+                last_text_input_area_ = area;
+                has_text_input_area_ = true;
+            }
+
+            if (!SDL_TextInputActive(window_))
+            {
+                if (android_text_input_props_ != 0)
+                {
+                    SDL_StartTextInputWithProperties(
+                        window_,
+                        android_text_input_props_);
+                }
+                else
+                {
+                    SDL_StartTextInput(window_);
+                }
+            }
+
+            return;
+        }
+#endif
+        SystemInterface_SDL::ActivateKeyboard(
+            caret_position,
+            line_height);
+    }
+
+    void DeactivateKeyboard() override
+    {
+#if defined(__ANDROID__)
+        ResetPendingBackspaces();
+        has_text_input_area_ = false;
+
+        if (window_ != nullptr && SDL_TextInputActive(window_))
+        {
+            SDL_StopTextInput(window_);
+        }
+        return;
+#else
+        SystemInterface_SDL::DeactivateKeyboard();
+#endif
+    }
+
+private:
+    SDL_Window* window_ = nullptr;
+
+#if defined(__ANDROID__)
+    SDL_PropertiesID android_text_input_props_ = 0;
+    SDL_Rect last_text_input_area_{};
+    bool has_text_input_area_ = false;
+#endif
+};
 
 // -------------------------------------------------------------
 // Robust touch identity
@@ -180,7 +441,7 @@ void DispatchAction(const Rml::String& action_name)
 }
 
 // -------------------------------------------------------------
-// Universal SDL event registry
+// Universal SDL event registry (pre-sorted, zero-alloc dispatch)
 // -------------------------------------------------------------
 
 struct SDLEventHandler
@@ -205,6 +466,8 @@ std::mutex& GetSDLEventRegistryMutex()
     static std::mutex mutex;
     return mutex;
 }
+
+std::atomic<uint64_t> g_sdl_registry_version{1};
 
 bool RegisterSDLEventHandlerInternal(
     const char* name,
@@ -243,41 +506,32 @@ bool RegisterSDLEventHandlerInternal(
         priority
     });
 
-    return true;
-}
-
-bool DispatchRegisteredSDLEvent(const SDL_Event& event)
-{
-    std::vector<SDLEventHandler> handlers;
-
-    {
-        std::lock_guard lock(GetSDLEventRegistryMutex());
-        const SDLEventRegistry& registry = GetSDLEventRegistry();
-
-        handlers.reserve(registry.size());
-
-        for (const SDLEventHandler& handler : registry)
-        {
-            if (handler.event_type == ULTRON_EVENT_ANY ||
-                handler.event_type == event.type)
-            {
-                handlers.push_back(handler);
-            }
-        }
-    }
-
-    // Higher priority runs first. Equal priorities preserve registration order.
+    // Higher priority runs first; equal priorities preserve registration order.
     std::stable_sort(
-        handlers.begin(),
-        handlers.end(),
+        registry.begin(),
+        registry.end(),
         [](const SDLEventHandler& left,
            const SDLEventHandler& right)
         {
             return left.priority > right.priority;
         });
 
+    g_sdl_registry_version.fetch_add(1, std::memory_order_release);
+    return true;
+}
+
+bool DispatchRegisteredSDLEventList(
+    const SDLEventRegistry& handlers,
+    const SDL_Event& event)
+{
     for (const SDLEventHandler& handler : handlers)
     {
+        if (handler.event_type != ULTRON_EVENT_ANY &&
+            handler.event_type != event.type)
+        {
+            continue;
+        }
+
         try
         {
             if (handler.callback(&event, handler.user_data))
@@ -305,8 +559,47 @@ bool DispatchRegisteredSDLEvent(const SDL_Event& event)
     return false;
 }
 
+bool DispatchRegisteredSDLEvent(const SDL_Event& event)
+{
+    static SDLEventRegistry cached_handlers;
+    static uint64_t cached_version = 0;
+    static bool dispatching = false;
+
+    const uint64_t current_version =
+        g_sdl_registry_version.load(std::memory_order_acquire);
+
+    if (!dispatching)
+    {
+        if (cached_version != current_version)
+        {
+            std::lock_guard lock(GetSDLEventRegistryMutex());
+            cached_handlers = GetSDLEventRegistry();
+            cached_version =
+                g_sdl_registry_version.load(std::memory_order_relaxed);
+        }
+
+        struct DispatchGuard
+        {
+            bool& flag;
+            explicit DispatchGuard(bool& value) : flag(value) { flag = true; }
+            ~DispatchGuard() { flag = false; }
+        } guard(dispatching);
+
+        return DispatchRegisteredSDLEventList(cached_handlers, event);
+    }
+
+    // Safe snapshot fallback only for nested/re-entrant dispatches.
+    SDLEventRegistry local_handlers;
+    {
+        std::lock_guard lock(GetSDLEventRegistryMutex());
+        local_handlers = GetSDLEventRegistry();
+    }
+
+    return DispatchRegisteredSDLEventList(local_handlers, event);
+}
+
 // -------------------------------------------------------------
-// Universal RmlUi element/document event registry
+// Universal RmlUi event registry (pre-sorted, zero-alloc dispatch)
 // -------------------------------------------------------------
 
 struct RmlEventHandler
@@ -331,6 +624,8 @@ std::mutex& GetRmlEventRegistryMutex()
     static std::mutex mutex;
     return mutex;
 }
+
+std::atomic<uint64_t> g_rml_registry_version{1};
 
 class RmlEventBridgeListener final : public Rml::EventListener
 {
@@ -408,6 +703,17 @@ bool RegisterRmlEventHandlerInternal(
             user_data,
             priority
         });
+
+        std::stable_sort(
+            registry.begin(),
+            registry.end(),
+            [](const RmlEventHandler& left,
+               const RmlEventHandler& right)
+            {
+                return left.priority > right.priority;
+            });
+
+        g_rml_registry_version.fetch_add(1, std::memory_order_release);
     }
 
     // Feature modules normally register during static initialization, before
@@ -427,6 +733,7 @@ bool RegisterRmlEventHandlerInternal(
                     return handler.name == module_name &&
                            handler.event_name == registered_event_name;
                 });
+            g_rml_registry_version.fetch_add(1, std::memory_order_release);
             return false;
         }
     }
@@ -434,37 +741,20 @@ bool RegisterRmlEventHandlerInternal(
     return true;
 }
 
-bool DispatchRegisteredRmlEvent(Rml::Event& event)
+bool DispatchRegisteredRmlEventList(
+    const RmlEventRegistry& handlers,
+    Rml::Event& event)
 {
-    std::vector<RmlEventHandler> handlers;
-    const std::string event_name(event.GetType().c_str());
-
-    {
-        std::lock_guard lock(GetRmlEventRegistryMutex());
-        const RmlEventRegistry& registry = GetRmlEventRegistry();
-
-        handlers.reserve(registry.size());
-
-        for (const RmlEventHandler& handler : registry)
-        {
-            if (handler.event_name == event_name)
-            {
-                handlers.push_back(handler);
-            }
-        }
-    }
-
-    std::stable_sort(
-        handlers.begin(),
-        handlers.end(),
-        [](const RmlEventHandler& left,
-           const RmlEventHandler& right)
-        {
-            return left.priority > right.priority;
-        });
+    const Rml::String& raw_type = event.GetType();
+    const std::string_view event_name(raw_type.c_str(), raw_type.size());
 
     for (const RmlEventHandler& handler : handlers)
     {
+        if (handler.event_name != event_name)
+        {
+            continue;
+        }
+
         try
         {
             if (handler.callback(&event, handler.user_data))
@@ -492,6 +782,119 @@ bool DispatchRegisteredRmlEvent(Rml::Event& event)
     }
 
     return false;
+}
+
+bool DispatchRegisteredRmlEvent(Rml::Event& event)
+{
+    static RmlEventRegistry cached_handlers;
+    static uint64_t cached_version = 0;
+    static bool dispatching = false;
+
+    const uint64_t current_version =
+        g_rml_registry_version.load(std::memory_order_acquire);
+
+    if (!dispatching)
+    {
+        if (cached_version != current_version)
+        {
+            std::lock_guard lock(GetRmlEventRegistryMutex());
+            cached_handlers = GetRmlEventRegistry();
+            cached_version =
+                g_rml_registry_version.load(std::memory_order_relaxed);
+        }
+
+        struct DispatchGuard
+        {
+            bool& flag;
+            explicit DispatchGuard(bool& value) : flag(value) { flag = true; }
+            ~DispatchGuard() { flag = false; }
+        } guard(dispatching);
+
+        return DispatchRegisteredRmlEventList(cached_handlers, event);
+    }
+
+    RmlEventRegistry local_handlers;
+    {
+        std::lock_guard lock(GetRmlEventRegistryMutex());
+        local_handlers = GetRmlEventRegistry();
+    }
+
+    return DispatchRegisteredRmlEventList(local_handlers, event);
+}
+
+// -------------------------------------------------------------
+// Per-frame callback registry (pre-sorted, zero-alloc tick)
+// -------------------------------------------------------------
+
+struct FrameCallbackHandler
+{
+    std::string name;
+    UltronFrameCallback callback = nullptr;
+    void* user_data = nullptr;
+    int priority = 0;
+};
+
+using FrameCallbackRegistry = std::vector<FrameCallbackHandler>;
+
+FrameCallbackRegistry& GetFrameCallbackRegistry()
+{
+    static FrameCallbackRegistry registry;
+    return registry;
+}
+
+std::mutex& GetFrameCallbackRegistryMutex()
+{
+    static std::mutex mutex;
+    return mutex;
+}
+
+std::atomic<uint64_t> g_frame_registry_version{1};
+
+void DispatchFrameCallbacks(
+    float delta_seconds,
+    Uint64 now_ms)
+{
+    static FrameCallbackRegistry cached_callbacks;
+    static uint64_t cached_version = 0;
+
+    const uint64_t current_version =
+        g_frame_registry_version.load(std::memory_order_acquire);
+
+    if (cached_version != current_version)
+    {
+        std::lock_guard lock(GetFrameCallbackRegistryMutex());
+        cached_callbacks = GetFrameCallbackRegistry();
+        cached_version =
+            g_frame_registry_version.load(std::memory_order_relaxed);
+    }
+
+    for (const FrameCallbackHandler& entry : cached_callbacks)
+    {
+        if (entry.callback == nullptr)
+        {
+            continue;
+        }
+
+        try
+        {
+            entry.callback(delta_seconds, now_ms, entry.user_data);
+        }
+        catch (const std::exception& exception)
+        {
+            SDL_LogError(
+                SDL_LOG_CATEGORY_APPLICATION,
+                "Ultron: frame callback '%s' threw: %s",
+                entry.name.c_str(),
+                exception.what());
+        }
+        catch (...)
+        {
+            SDL_LogError(
+                SDL_LOG_CATEGORY_APPLICATION,
+                "Ultron: frame callback '%s' threw an unknown exception.",
+                entry.name.c_str());
+        }
+    }
 }
 
 // -------------------------------------------------------------
@@ -1019,6 +1422,7 @@ size_t AutoLoadFontsFromFonts()
         }
         else
         {
+            RecordStartupIssue("Failed to register font: " + font_path);
             SDL_LogWarn(
                 SDL_LOG_CATEGORY_APPLICATION,
                 "Ultron: unable to register font '%s'; skipping.",
@@ -1180,6 +1584,9 @@ size_t AutoLoadDocumentsFromUI(std::string& first_document_name)
 
         if (document == nullptr)
         {
+            RecordStartupIssue(
+                "Failed to load RML screen '" + candidate.name +
+                "' from '" + candidate.path + "'.");
             SDL_LogWarn(
                 SDL_LOG_CATEGORY_APPLICATION,
                 "Ultron: failed to load screen '%s' from '%s'.",
@@ -1371,6 +1778,9 @@ bool ShowBlackFallback()
     {
         return false;
     }
+
+    RecordStartupIssue(
+        "No valid UI screen could be loaded; showing embedded black fallback.");
 
     const Rml::String fallback_ui = R"rml(
 <rml>
@@ -1623,6 +2033,108 @@ void HandleTouchEvent(const SDL_Event& event)
     }
 }
 
+// -------------------------------------------------------------
+// Android smooth backspace helpers
+// -------------------------------------------------------------
+
+#if defined(__ANDROID__)
+Rml::ElementFormControl* GetFocusedTextControl()
+{
+    if (g_context == nullptr)
+    {
+        return nullptr;
+    }
+
+    Rml::Element* focused = g_context->GetFocusElement();
+
+    if (focused == nullptr)
+    {
+        return nullptr;
+    }
+
+    const Rml::String& tag = focused->GetTagName();
+
+    if (tag != "textarea" && tag != "input")
+    {
+        return nullptr;
+    }
+
+    return static_cast<Rml::ElementFormControl*>(focused);
+}
+
+void ApplyOneBackspace(
+    SDL_Window* window,
+    SDL_Event& event)
+{
+    Rml::ElementFormControl* control = GetFocusedTextControl();
+
+    if (control == nullptr || control->GetValue().empty())
+    {
+        g_pending_backspaces = 0;
+        return;
+    }
+
+    RmlSDL::InputEventHandler(
+        g_context,
+        window,
+        event);
+
+    // Flush Android IME buffer once on the exact transition to empty.
+    if (control->GetValue().empty())
+    {
+        g_pending_backspaces = 0;
+        SDL_ClearComposition(window);
+    }
+}
+
+void FlushPendingBackspaces(SDL_Window* window)
+{
+    while (g_pending_backspaces > 0 && g_context != nullptr)
+    {
+        --g_pending_backspaces;
+        ApplyOneBackspace(window, g_pending_backspace_event);
+    }
+}
+
+void StepSmoothBackspace(SDL_Window* window)
+{
+    if (g_pending_backspaces <= 0 || g_context == nullptr)
+    {
+        return;
+    }
+
+    const Uint64 now = SDL_GetTicks();
+
+    // Adaptive Gemini-style cadence:
+    // crisp 1-by-1 deletion initially, smoothly accelerating on long holds.
+    Uint64 interval_ms = kSmoothBackspaceBaseMs;
+    int chars_per_step = 1;
+
+    if (g_pending_backspaces > 18)
+    {
+        interval_ms = kSmoothBackspaceFastMs;
+        chars_per_step = 2;
+    }
+    else if (g_pending_backspaces > 6)
+    {
+        interval_ms = kSmoothBackspaceFastMs;
+    }
+
+    if (now - g_last_backspace_ms < interval_ms)
+    {
+        return;
+    }
+
+    g_last_backspace_ms = now;
+
+    for (int i = 0; i < chars_per_step && g_pending_backspaces > 0; ++i)
+    {
+        --g_pending_backspaces;
+        ApplyOneBackspace(window, g_pending_backspace_event);
+    }
+}
+#endif
+
 void HandleInputEvent(
     SDL_Window* window,
     SDL_Event& event)
@@ -1635,6 +2147,12 @@ void HandleInputEvent(
     switch (event.type)
     {
         case SDL_EVENT_FINGER_DOWN:
+#if defined(__ANDROID__)
+            FlushPendingBackspaces(window);
+#endif
+            HandleTouchEvent(event);
+            return;
+
         case SDL_EVENT_FINGER_MOTION:
         case SDL_EVENT_FINGER_UP:
         case SDL_EVENT_FINGER_CANCELED:
@@ -1643,22 +2161,67 @@ void HandleInputEvent(
 
         // -----------------------------------------------------
         // IME COMPOSITION EVENT
-        // Forward Android/SDL editing text to RmlUi.
+        // Forward desktop SDL editing text to RmlUi.
+        // Ignored on Android to avoid SDLInputConnection clash.
         // -----------------------------------------------------
 
         case SDL_EVENT_TEXT_EDITING:
         {
+#if !defined(__ANDROID__)
             g_text_input_method_editor.HandleEdit(
                 event.edit);
+#endif
             return;
         }
 
         default:
+        {
+#if defined(__ANDROID__)
+            if (event.type == SDL_EVENT_KEY_DOWN &&
+                event.key.key == SDLK_BACKSPACE)
+            {
+                Rml::ElementFormControl* control = GetFocusedTextControl();
+
+                if (control != nullptr)
+                {
+                    if (control->GetValue().empty())
+                    {
+                        g_pending_backspaces = 0;
+                        return;
+                    }
+
+                    const Uint64 now = SDL_GetTicks();
+
+                    if (g_pending_backspaces == 0 &&
+                        (g_last_backspace_ms == 0 ||
+                         now - g_last_backspace_ms >= kSmoothBackspaceBaseMs))
+                    {
+                        g_last_backspace_ms = now;
+                        ApplyOneBackspace(window, event);
+                    }
+                    else
+                    {
+                        g_pending_backspace_event = event;
+                        ++g_pending_backspaces;
+                    }
+
+                    return;
+                }
+            }
+
+            if (event.type == SDL_EVENT_TEXT_INPUT ||
+                (event.type == SDL_EVENT_KEY_DOWN &&
+                 event.key.key != SDLK_BACKSPACE))
+            {
+                FlushPendingBackspaces(window);
+            }
+#endif
             RmlSDL::InputEventHandler(
                 g_context,
                 window,
                 event);
             return;
+        }
     }
 }
 
@@ -1676,6 +2239,9 @@ void HandleApplicationEvent(const SDL_Event& event)
         {
             g_paused.store(true, std::memory_order_relaxed);
             CancelAllActiveTouches();
+#if defined(__ANDROID__)
+            ResetPendingBackspaces();
+#endif
             break;
         }
 
@@ -1688,7 +2254,9 @@ void HandleApplicationEvent(const SDL_Event& event)
         case SDL_EVENT_WINDOW_FOCUS_LOST:
         {
             CancelAllActiveTouches();
-
+#if defined(__ANDROID__)
+            ResetPendingBackspaces();
+#endif
             if (g_context != nullptr)
             {
                 g_context->ProcessMouseLeave();
@@ -1705,6 +2273,9 @@ void HandleApplicationEvent(const SDL_Event& event)
         case SDL_EVENT_TERMINATING:
         {
             CancelAllActiveTouches();
+#if defined(__ANDROID__)
+            ResetPendingBackspaces();
+#endif
             g_running.store(false, std::memory_order_relaxed);
             break;
         }
@@ -1829,7 +2400,7 @@ bool CreateWindowAndContext(
 } // namespace
 
 // -------------------------------------------------------------
-// Public action / event registration APIs
+// Public action / event / frame registration APIs
 // -------------------------------------------------------------
 
 extern "C" bool Ultron_RegisterAction(
@@ -1908,7 +2479,11 @@ extern "C" bool Ultron_UnregisterEventHandlers(const char* name)
                 return handler.name == module_name;
             });
 
-        removed_count += old_size - registry.size();
+        if (registry.size() != old_size)
+        {
+            removed_count += old_size - registry.size();
+            g_sdl_registry_version.fetch_add(1, std::memory_order_release);
+        }
     }
 
     {
@@ -1923,10 +2498,95 @@ extern "C" bool Ultron_UnregisterEventHandlers(const char* name)
                 return handler.name == module_name;
             });
 
-        removed_count += old_size - registry.size();
+        if (registry.size() != old_size)
+        {
+            removed_count += old_size - registry.size();
+            g_rml_registry_version.fetch_add(1, std::memory_order_release);
+        }
     }
 
     return removed_count != 0;
+}
+
+extern "C" bool Ultron_RegisterFrameCallback(
+    const char* name,
+    UltronFrameCallback callback,
+    void* user_data,
+    int priority)
+{
+    if (name == nullptr || name[0] == '\0' || callback == nullptr)
+    {
+        return false;
+    }
+
+    std::lock_guard lock(GetFrameCallbackRegistryMutex());
+    FrameCallbackRegistry& registry = GetFrameCallbackRegistry();
+
+    const auto duplicate = std::find_if(
+        registry.begin(),
+        registry.end(),
+        [name](const FrameCallbackHandler& entry)
+        {
+            return entry.name == name;
+        });
+
+    if (duplicate != registry.end())
+    {
+        return false;
+    }
+
+    registry.push_back(FrameCallbackHandler{
+        name,
+        callback,
+        user_data,
+        priority
+    });
+
+    std::stable_sort(
+        registry.begin(),
+        registry.end(),
+        [](const FrameCallbackHandler& left,
+           const FrameCallbackHandler& right)
+        {
+            return left.priority > right.priority;
+        });
+
+    g_frame_registry_version.fetch_add(1, std::memory_order_release);
+    return true;
+}
+
+extern "C" bool Ultron_UnregisterFrameCallback(const char* name)
+{
+    if (name == nullptr || name[0] == '\0')
+    {
+        return false;
+    }
+
+    const std::string module_name(name);
+    std::lock_guard lock(GetFrameCallbackRegistryMutex());
+    auto& registry = GetFrameCallbackRegistry();
+    const size_t old_size = registry.size();
+
+    std::erase_if(
+        registry,
+        [&module_name](const FrameCallbackHandler& entry)
+        {
+            return entry.name == module_name;
+        });
+
+    if (registry.size() != old_size)
+    {
+        g_frame_registry_version.fetch_add(1, std::memory_order_release);
+        return true;
+    }
+
+    return false;
+}
+
+extern "C" bool Ultron_IsRunning()
+{
+    return g_running.load(std::memory_order_acquire) &&
+           g_accept_ui_tasks.load(std::memory_order_acquire);
 }
 
 extern "C" Uint32 Ultron_RegisterCustomEventType()
@@ -2161,6 +2821,11 @@ int main(int argc, char** argv)
 
     g_active_touches.clear();
     g_next_rml_touch_id = 1;
+    g_startup_issues.clear();
+    g_startup_health_check_active = false;
+#if defined(__ANDROID__)
+    ResetPendingBackspaces();
+#endif
 
     SDL_SetLogPriority(
         SDL_LOG_CATEGORY_APPLICATION,
@@ -2179,7 +2844,9 @@ int main(int argc, char** argv)
 
     g_sdl_initialized.store(true, std::memory_order_release);
 
+#if !defined(__ANDROID__)
     SDL_SetHint(SDL_HINT_IME_IMPLEMENTED_UI, "composition");
+#endif
     SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
     SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
 
@@ -2355,7 +3022,7 @@ int main(int argc, char** argv)
     int exit_code = 0;
 
     {
-        SystemInterface_SDL system_interface(window);
+        UltronSystemInterface_SDL system_interface(window);
         RenderInterface_GL3 render_interface;
         SDLFileInterface file_interface;
 
@@ -2375,18 +3042,22 @@ int main(int argc, char** argv)
         Rml::SetRenderInterface(&render_interface);
         Rml::SetFileInterface(&file_interface);
 
-        // -----------------------------------------------------
+#if !defined(__ANDROID__)
         // Register SDL3 IME handler BEFORE Rml::Initialise().
         // The global editor remains alive until after Shutdown.
-        // -----------------------------------------------------
-
         Rml::SetTextInputHandler(
             &g_text_input_method_editor);
+#endif
+
+        // Monitor every RML/CSS/font/load error during startup.
+        g_startup_issues.clear();
+        g_startup_health_check_active = true;
 
         const bool rml_initialized = Rml::Initialise();
 
         if (!rml_initialized)
         {
+            g_startup_health_check_active = false;
             SDL_LogError(
                 SDL_LOG_CATEGORY_APPLICATION,
                 "Ultron startup failure: Rml::Initialise failed.");
@@ -2400,6 +3071,7 @@ int main(int argc, char** argv)
 
             if (g_context == nullptr)
             {
+                g_startup_health_check_active = false;
                 SDL_LogError(
                     SDL_LOG_CATEGORY_APPLICATION,
                     "Ultron startup failure: Rml::CreateContext failed.");
@@ -2410,26 +3082,6 @@ int main(int argc, char** argv)
             {
                 g_context_root = g_context->GetRootElement();
                 g_rml_context_ready.store(true, std::memory_order_release);
-
-                // -------------------------------------------------
-                // Visual Debugger initialization
-                // -------------------------------------------------
-
-                const bool debugger_initialized =
-                    Rml::Debugger::Initialise(g_context);
-
-                if (debugger_initialized)
-                {
-                    SDL_LogInfo(
-                        SDL_LOG_CATEGORY_APPLICATION,
-                        "Ultron: Visual Debugger initialized. Press F8 to toggle visibility.");
-                }
-                else
-                {
-                    SDL_LogWarn(
-                        SDL_LOG_CATEGORY_APPLICATION,
-                        "Ultron: Visual Debugger initialization failed; continuing without the debugger.");
-                }
 
                 float window_scale = SDL_GetWindowDisplayScale(window);
 
@@ -2467,6 +3119,7 @@ int main(int argc, char** argv)
 
                 if (!startup_ready)
                 {
+                    g_startup_health_check_active = false;
                     SDL_LogError(
                         SDL_LOG_CATEGORY_APPLICATION,
                         "Ultron startup failure: unable to show any screen or the black fallback.");
@@ -2493,16 +3146,100 @@ int main(int argc, char** argv)
                 }
                 else
                 {
+                    // Run one initial layout/update pass while health check is active
+                    // so deferred style/layout errors are also caught before deciding.
+                    g_context->Update();
+                    g_startup_health_check_active = false;
+
+                    // -------------------------------------------------
+                    // Auto-Check Visual Debugger
+                    // Only initializes and opens if startup detected issues.
+                    // Otherwise stays completely unloaded (0% overhead).
+                    // -------------------------------------------------
+
+                    bool debugger_initialized = false;
+
+                    if (!g_startup_issues.empty())
+                    {
+                        debugger_initialized = Rml::Debugger::Initialise(g_context);
+
+                        if (debugger_initialized)
+                        {
+                            for (const std::string& issue : g_startup_issues)
+                            {
+                                Rml::Log::Message(
+                                    Rml::Log::LT_ERROR,
+                                    "[Startup Check] %s",
+                                    issue.c_str());
+                            }
+
+                            Rml::Debugger::SetVisible(true);
+
+                            SDL_LogWarn(
+                                SDL_LOG_CATEGORY_APPLICATION,
+                                "Ultron: startup check found %zu issue(s); Visual Debugger auto-enabled.",
+                                g_startup_issues.size());
+                        }
+                        else
+                        {
+                            SDL_LogWarn(
+                                SDL_LOG_CATEGORY_APPLICATION,
+                                "Ultron: startup check found %zu issue(s), but Visual Debugger failed to initialize.",
+                                g_startup_issues.size());
+                        }
+                    }
+                    else
+                    {
+                        SDL_LogInfo(
+                            SDL_LOG_CATEGORY_APPLICATION,
+                            "Ultron: startup check passed (0 issues); Visual Debugger off.");
+                    }
+
+                    g_startup_issues.clear();
+
                     g_accept_ui_tasks.store(true, std::memory_order_release);
 
                     SDL_Log("Ultron: automatic RML loader initialized.");
                     SDL_Log("Ultron: automatic TTF/OTF font loader initialized.");
                     SDL_Log("Ultron: shared RML event bridge initialized.");
                     SDL_Log("Ultron: universal SDL event dispatcher initialized.");
-                    SDL_Log("Ultron: SDL3 IME text editing handler initialized.");
+                    SDL_Log("Ultron: SDL3 text input initialized.");
+
+                    Uint64 last_frame_ms = SDL_GetTicks();
 
                     while (g_running.load(std::memory_order_relaxed))
                     {
+                        // 0% background CPU: sleep in OS kernel while minimized.
+                        if (g_paused.load(std::memory_order_relaxed))
+                        {
+                            SDL_Event paused_event;
+
+                            if (SDL_WaitEvent(&paused_event))
+                            {
+                                HandleApplicationEvent(paused_event);
+                                (void)DispatchRegisteredSDLEvent(paused_event);
+
+                                if (paused_event.type == SDL_EVENT_QUIT)
+                                {
+                                    g_running.store(
+                                        false,
+                                        std::memory_order_relaxed);
+                                    break;
+                                }
+
+                                if (!g_paused.load(std::memory_order_relaxed))
+                                {
+                                    last_frame_ms = SDL_GetTicks();
+                                }
+                            }
+                            else
+                            {
+                                SDL_Delay(16);
+                            }
+
+                            continue;
+                        }
+
                         SDL_Event event;
 
                         while (SDL_PollEvent(&event))
@@ -2528,21 +3265,74 @@ int main(int argc, char** argv)
                                 break;
                             }
 
+                            // Unified Android Back button / gesture flow:
+                            // 1. Dismiss keyboard if open
+                            // 2. Navigate back in screen history
+                            // 3. Cleanly minimize / exit on root screen
                             if (!event_consumed &&
-                                debugger_initialized &&
+                                event.type == SDL_EVENT_KEY_DOWN &&
+                                event.key.key == SDLK_AC_BACK &&
+                                !event.key.repeat)
+                            {
+                                bool back_handled = false;
+
+#if defined(__ANDROID__)
+                                if (SDL_TextInputActive(window) ||
+                                    SDL_ScreenKeyboardShown(window))
+                                {
+                                    if (Rml::Element* focused = g_context->GetFocusElement())
+                                    {
+                                        focused->Blur();
+                                    }
+
+                                    SDL_ClearComposition(window);
+                                    SDL_StopTextInput(window);
+                                    back_handled = true;
+                                }
+#endif
+
+                                if (!back_handled && Ultron_GoBack())
+                                {
+                                    back_handled = true;
+                                }
+
+                                if (!back_handled)
+                                {
+                                    if (!SDL_MinimizeWindow(window))
+                                    {
+                                        g_running.store(
+                                            false,
+                                            std::memory_order_relaxed);
+                                    }
+                                }
+
+                                continue;
+                            }
+
+                            // Desktop F8 on-demand Visual Debugger toggle.
+                            if (!event_consumed &&
                                 event.type == SDL_EVENT_KEY_DOWN &&
                                 event.key.key == SDLK_F8 &&
                                 !event.key.repeat)
                             {
-                                const bool make_visible =
-                                    !Rml::Debugger::IsVisible();
+                                if (!debugger_initialized)
+                                {
+                                    debugger_initialized =
+                                        Rml::Debugger::Initialise(g_context);
+                                }
 
-                                Rml::Debugger::SetVisible(make_visible);
+                                if (debugger_initialized)
+                                {
+                                    const bool make_visible =
+                                        !Rml::Debugger::IsVisible();
 
-                                SDL_LogInfo(
-                                    SDL_LOG_CATEGORY_APPLICATION,
-                                    "Ultron: Visual Debugger %s.",
-                                    make_visible ? "shown" : "hidden");
+                                    Rml::Debugger::SetVisible(make_visible);
+
+                                    SDL_LogInfo(
+                                        SDL_LOG_CATEGORY_APPLICATION,
+                                        "Ultron: Visual Debugger %s.",
+                                        make_visible ? "shown" : "hidden");
+                                }
 
                                 continue;
                             }
@@ -2560,11 +3350,25 @@ int main(int argc, char** argv)
 
                         ProcessPendingUITasks();
 
+#if defined(__ANDROID__)
+                        StepSmoothBackspace(window);
+#endif
+
                         if (g_paused.load(std::memory_order_relaxed))
                         {
-                            SDL_Delay(16);
                             continue;
                         }
+
+                        const Uint64 now_ms = SDL_GetTicks();
+                        const Uint64 elapsed_ms =
+                            now_ms >= last_frame_ms ? (now_ms - last_frame_ms) : 0;
+                        last_frame_ms = now_ms;
+
+                        const float delta_seconds = std::min(
+                            static_cast<float>(elapsed_ms) * 0.001f,
+                            0.05f);
+
+                        DispatchFrameCallbacks(delta_seconds, now_ms);
 
                         int new_width = 0;
                         int new_height = 0;
@@ -2587,4 +3391,60 @@ int main(int argc, char** argv)
                         }
 
                         const float new_scale =
-       
+                            SDL_GetWindowDisplayScale(window);
+
+                        if (new_scale > 0.0f && new_scale != window_scale)
+                        {
+                            window_scale = new_scale;
+                            g_context->SetDensityIndependentPixelRatio(window_scale);
+                        }
+
+                        glDisable(GL_SCISSOR_TEST);
+                        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+                        glClear(GL_COLOR_BUFFER_BIT);
+
+                        g_context->Update();
+
+                        render_interface.BeginFrame();
+                        g_context->Render();
+                        render_interface.EndFrame();
+
+                        SDL_GL_SwapWindow(window);
+                    }
+
+                    g_running.store(false, std::memory_order_release);
+                    StopAcceptingUITasks();
+                    CancelAllActiveTouches();
+
+                    g_documents.clear();
+                    g_document_history.clear();
+                    g_active_document = nullptr;
+                    g_active_document_name.clear();
+
+                    // Listener objects remain alive until after Rml::Shutdown().
+                    g_rml_context_ready.store(false, std::memory_order_release);
+                    g_context_root = nullptr;
+                    g_context = nullptr;
+
+                    Rml::RemoveContext("main");
+                    Rml::Shutdown();
+                    g_rml_event_listeners.clear();
+                }
+            }
+        }
+    }
+
+    // Interfaces and context are shut down before the GL context.
+    RmlGL3::Shutdown();
+
+    SDL_GL_DestroyContext(gl_context);
+    SDL_DestroyWindow(window);
+
+    g_sdl_initialized.store(false, std::memory_order_release);
+    SDL_Quit();
+
+    g_ui_thread_id = std::thread::id{};
+
+    SDL_Log("Ultron shutdown cleanly.");
+    return exit_code;
+}
