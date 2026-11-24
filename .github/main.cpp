@@ -37,12 +37,6 @@
 #include <utility>
 #include <vector>
 
-// Matches ultron_api.h declaration (safe to repeat identically in C++20).
-typedef void (*UltronFrameCallback)(
-    float delta_seconds,
-    Uint64 now_ms,
-    void* user_data);
-
 namespace
 {
 
@@ -200,75 +194,11 @@ public:
 #if defined(__ANDROID__)
         if (window_ != nullptr)
         {
-            const float safe_line_height = std::max(line_height, 1.0f);
-            float anchor_top = std::max(caret_position.y, 0.0f);
-            float anchor_bottom = anchor_top + safe_line_height;
-
-            if (g_context != nullptr)
-            {
-                Rml::Element* focused = g_context->GetFocusElement();
-
-                if (focused != nullptr)
-                {
-                    const auto extend_bottom_to =
-                        [&anchor_bottom](Rml::Element* element)
-                    {
-                        if (element == nullptr)
-                        {
-                            return;
-                        }
-
-                        const float elem_bottom =
-                            element->GetAbsoluteOffset(Rml::BoxArea::Border).y +
-                            element->GetBox().GetSize(Rml::BoxArea::Border).y;
-
-                        if (elem_bottom > anchor_bottom)
-                        {
-                            anchor_bottom = elem_bottom;
-                        }
-                    };
-
-                    extend_bottom_to(focused);
-
-                    Rml::Element* ancestor = focused->GetParentNode();
-
-                    for (int depth = 0; ancestor != nullptr && depth < 4; ++depth)
-                    {
-                        if (ancestor->GetId() == "input-bar" ||
-                            ancestor->HasAttribute("data-keyboard-anchor"))
-                        {
-                            extend_bottom_to(ancestor);
-                            break;
-                        }
-
-                        ancestor = ancestor->GetParentNode();
-                    }
-                }
-
-                constexpr float kKeyboardBreathingGapDp = 10.0f;
-                const float dp_ratio = std::max(
-                    g_context->GetDensityIndependentPixelRatio(),
-                    1.0f);
-
-                anchor_bottom += kKeyboardBreathingGapDp * dp_ratio;
-
-                const float max_y = static_cast<float>(
-                    std::max(g_context->GetDimensions().y, 1));
-
-                anchor_top = std::min(anchor_top, std::max(max_y - 1.0f, 0.0f));
-                anchor_bottom = std::min(anchor_bottom, max_y);
-            }
-
-            const int rect_x = static_cast<int>(std::max(caret_position.x, 0.0f));
-            const int rect_y = static_cast<int>(std::floor(anchor_top));
-            const int rect_h = static_cast<int>(
-                std::ceil(std::max(anchor_bottom - static_cast<float>(rect_y), 1.0f)));
-
             const SDL_Rect area{
-                rect_x,
-                rect_y,
+                static_cast<int>(std::max(caret_position.x, 0.0f)),
+                static_cast<int>(std::max(caret_position.y, 0.0f)),
                 1,
-                rect_h
+                static_cast<int>(std::ceil(std::max(line_height, 1.0f)))
             };
 
             const bool area_changed =
