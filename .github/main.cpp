@@ -66,8 +66,6 @@ std::string g_active_document_name;
 std::vector<std::string> g_document_history;
 std::thread::id g_ui_thread_id{};
 
-void CancelAllActiveTouches();
-
 // -------------------------------------------------------------
 // Auto-Check Visual Debugger diagnostics (UI thread only)
 // -------------------------------------------------------------
@@ -830,14 +828,13 @@ void DispatchFrameCallbacks(
 }
 
 // -------------------------------------------------------------
-// UI-thread task queue (memory-safe cleanup on run or shutdown)
+// UI-thread task queue (existing API, preserved)
 // -------------------------------------------------------------
 
 struct PendingUITask
 {
     UltronUITaskCallback callback = nullptr;
     void* user_data = nullptr;
-    UltronUITaskCleanupCallback cleanup = nullptr;
 };
 
 struct UITaskQueue
@@ -943,32 +940,6 @@ void AttachRegisteredRmlEventListeners()
     }
 }
 
-void RunUITaskCleanup(const PendingUITask& task)
-{
-    if (task.cleanup == nullptr)
-    {
-        return;
-    }
-
-    try
-    {
-        task.cleanup(task.user_data);
-    }
-    catch (const std::exception& exception)
-    {
-        SDL_LogError(
-            SDL_LOG_CATEGORY_APPLICATION,
-            "Ultron: UI task cleanup threw an exception: %s",
-            exception.what());
-    }
-    catch (...)
-    {
-        SDL_LogError(
-            SDL_LOG_CATEGORY_APPLICATION,
-            "Ultron: UI task cleanup threw an unknown exception.");
-    }
-}
-
 void ProcessPendingUITasks()
 {
     UITaskQueue& queue = GetUITaskQueue();
@@ -984,28 +955,28 @@ void ProcessPendingUITasks()
         const PendingUITask task = pending.front();
         pending.pop();
 
-        if (task.callback != nullptr)
+        if (task.callback == nullptr)
         {
-            try
-            {
-                task.callback(task.user_data);
-            }
-            catch (const std::exception& exception)
-            {
-                SDL_LogError(
-                    SDL_LOG_CATEGORY_APPLICATION,
-                    "Ultron: UI task threw an exception: %s",
-                    exception.what());
-            }
-            catch (...)
-            {
-                SDL_LogError(
-                    SDL_LOG_CATEGORY_APPLICATION,
-                    "Ultron: UI task threw an unknown exception.");
-            }
+            continue;
         }
 
-        RunUITaskCleanup(task);
+        try
+        {
+            task.callback(task.user_data);
+        }
+        catch (const std::exception& exception)
+        {
+            SDL_LogError(
+                SDL_LOG_CATEGORY_APPLICATION,
+                "Ultron: UI task threw an exception: %s",
+                exception.what());
+        }
+        catch (...)
+        {
+            SDL_LogError(
+                SDL_LOG_CATEGORY_APPLICATION,
+                "Ultron: UI task threw an unknown exception.");
+        }
     }
 }
 
@@ -1013,20 +984,11 @@ void StopAcceptingUITasks()
 {
     g_accept_ui_tasks.store(false, std::memory_order_release);
 
-    std::queue<PendingUITask> discarded;
+    UITaskQueue& queue = GetUITaskQueue();
+    std::lock_guard lock(queue.mutex);
 
-    {
-        UITaskQueue& queue = GetUITaskQueue();
-        std::lock_guard lock(queue.mutex);
-        discarded.swap(queue.tasks);
-    }
-
-    while (!discarded.empty())
-    {
-        const PendingUITask task = discarded.front();
-        discarded.pop();
-        RunUITaskCleanup(task);
-    }
+    std::queue<PendingUITask> empty;
+    queue.tasks.swap(empty);
 }
 
 // -------------------------------------------------------------
@@ -1641,18 +1603,6 @@ bool SwitchToLoadedDocument(
 
     if (g_active_document != nullptr)
     {
-        CancelAllActiveTouches();
-#if defined(__ANDROID__)
-        ResetPendingBackspaces();
-#endif
-        if (g_context != nullptr)
-        {
-            if (Rml::Element* focused = g_context->GetFocusElement())
-            {
-                focused->Blur();
-            }
-        }
-
         g_active_document->Hide();
     }
 
@@ -2759,8 +2709,7 @@ extern "C" bool Ultron_RemoveElementAttribute(
 
 extern "C" bool Ultron_PostToUI(
     UltronUITaskCallback callback,
-    void* user_data,
-    UltronUITaskCleanupCallback cleanup)
+    void* user_data)
 {
     if (callback == nullptr ||
         !g_accept_ui_tasks.load(std::memory_order_acquire))
@@ -2776,7 +2725,7 @@ extern "C" bool Ultron_PostToUI(
         return false;
     }
 
-    queue.tasks.push(PendingUITask{callback, user_data, cleanup});
+    queue.tasks.push(PendingUITask{callback, user_data});
     return true;
 }
 
