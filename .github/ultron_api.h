@@ -20,6 +20,13 @@ using UltronEventCallback = bool (*)(const SDL_Event* event, void* user_data);
 // The Rml::Event pointer is valid only for the duration of the callback.
 using UltronRmlEventCallback = bool (*)(Rml::Event* event, void* user_data);
 
+// Runs once per active frame on the UI thread before rendering.
+// delta_seconds is clamped to avoid large jumps after app resume.
+using UltronFrameCallback = void (*)(
+    float delta_seconds,
+    Uint64 now_ms,
+    void* user_data);
+
 // Register for every SDL event type. Otherwise register for a specific SDL type.
 inline constexpr Uint32 ULTRON_EVENT_ANY = 0xFFFFFFFFu;
 
@@ -54,6 +61,22 @@ extern "C"
     // Removes all SDL and RmlUi event handlers registered under this module name.
     bool Ultron_UnregisterEventHandlers(
         const char* name);
+
+    // Register a per-frame UI-thread callback for smooth animations/updates.
+    // Higher priority callbacks run first. Module name must be unique.
+    bool Ultron_RegisterFrameCallback(
+        const char* name,
+        UltronFrameCallback callback,
+        void* user_data = nullptr,
+        int priority = 0);
+
+    // Removes the per-frame callback registered under this module name.
+    bool Ultron_UnregisterFrameCallback(
+        const char* name);
+
+    // Thread-safe shutdown check for background workers (e.g. AI/audio threads).
+    // Returns true while the app is running and accepting Ultron_PostToUI tasks.
+    bool Ultron_IsRunning();
 
     // Allocate one SDL user-event type. Call after SDL has initialized.
     // Returns 0 on failure.
