@@ -11,7 +11,6 @@
 
 using UltronActionCallback = void (*)();
 using UltronUITaskCallback = void (*)(void* user_data);
-using UltronUITaskCleanupCallback = void (*)(void* user_data);
 
 // Return true from an SDL callback to consume the event and prevent the normal
 // RmlUi SDL input handler from receiving it. Return false to observe/pass it on.
@@ -115,13 +114,9 @@ extern "C"
         const char* element_id,
         const char* attribute_name);
 
-    // Safe to call from a worker thread.
-    // If this returns true and cleanup != nullptr, cleanup(user_data) is
-    // guaranteed to run exactly once on the UI thread—either right after
-    // callback executes or if the task is discarded during shutdown.
-    // If this returns false, nothing was queued and the caller owns user_data.
+    // Safe to call from a worker thread. user_data must remain valid until
+    // the callback has executed (or the application shuts down).
     bool Ultron_PostToUI(
         UltronUITaskCallback callback,
-        void* user_data,
-        UltronUITaskCleanupCallback cleanup = nullptr);
+        void* user_data);
 }
